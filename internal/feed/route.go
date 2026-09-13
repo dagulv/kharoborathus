@@ -1,15 +1,17 @@
 package feed
 
 import (
+	"database/sql"
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
+	"errors"
 	"log"
 	"net/http"
 )
 
-// Routes registers the feed endpoints on mux.
 func Routes(mux *http.ServeMux, db *database) {
 	mux.HandleFunc("GET /feeds", listFeed(db))
+	mux.HandleFunc("GET /feeds/{id}", getFeed(db))
 }
 
 func listFeed(db *database) http.HandlerFunc {
@@ -26,10 +28,6 @@ func listFeed(db *database) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 
-		// Stream each feed straight to the response as it is yielded, so the
-		// full result set is never held in memory. The status is already
-		// committed once the first bytes are written, so a later failure can
-		// only cut the response short.
 		enc := jsontext.NewEncoder(w)
 
 		if err := enc.WriteToken(jsontext.BeginArray); err != nil {
@@ -50,6 +48,29 @@ func listFeed(db *database) http.HandlerFunc {
 		}
 
 		if err := enc.WriteToken(jsontext.EndArray); err != nil {
+			log.Printf("feed: write response: %v", err)
+		}
+	}
+}
+
+func getFeed(db *database) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		feed, err := db.GetFeed(r.Context(), r.PathValue("id"))
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+				return
+			}
+
+			log.Printf("feed error: %v", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		if err := json.MarshalWrite(w, feed); err != nil {
 			log.Printf("feed: write response: %v", err)
 		}
 	}
