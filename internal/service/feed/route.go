@@ -6,24 +6,27 @@ import (
 	json "encoding/json/v2"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
+
+	"github.com/dagulv/palantir/internal/lib/query"
 )
 
-func Routes(mux *http.ServeMux, db *database) {
-	mux.HandleFunc("GET /feeds", listFeed(db))
-	mux.HandleFunc("GET /feeds/{id}", getFeed(db))
+func Routes(mux *http.ServeMux, s Store, l *slog.Logger) {
+	mux.HandleFunc("GET /feeds", listFeed(s, l))
+	mux.HandleFunc("GET /feeds/{id}", getFeed(s, l))
 }
 
-func listFeed(db *database) http.HandlerFunc {
+func listFeed(s Store, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query()
+		q := r.URL.Query()
 
-		filter := Filter{
-			Limit:   query.Get("limit"),
-			Offset:  query.Get("offset"),
-			Order:   query.Get("order"),
-			OrderBy: query.Get("orderBy"),
-			Search:  query.Get("search"),
+		filter := query.Filter{
+			Limit:   q.Get("limit"),
+			Offset:  q.Get("offset"),
+			Order:   q.Get("order"),
+			OrderBy: q.Get("orderBy"),
+			Search:  q.Get("search"),
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -35,7 +38,7 @@ func listFeed(db *database) http.HandlerFunc {
 			return
 		}
 
-		for feed, err := range db.ListFeed(r.Context(), filter) {
+		for feed, err := range s.ListFeeds(r.Context(), filter) {
 			if err != nil {
 				log.Printf("feed: list feeds: %v", err)
 				return
@@ -53,9 +56,9 @@ func listFeed(db *database) http.HandlerFunc {
 	}
 }
 
-func getFeed(db *database) http.HandlerFunc {
+func getFeed(s Store, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		feed, err := db.GetFeed(r.Context(), r.PathValue("id"))
+		feed, err := s.GetFeed(r.Context(), r.PathValue("id"))
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)

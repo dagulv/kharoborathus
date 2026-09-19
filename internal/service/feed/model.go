@@ -1,0 +1,19 @@
+package feed
+
+import "time"
+
+// Feed also stores Raw HTML Content on S3 at /feeds/<id>/content
+type Feed struct {
+	ID           string   `json:"id"`
+	SourceID     string   `json:"sourceId"`
+	URL          string   `json:"url"`
+	Lang         string   `json:"lang"`
+	Domain       string   `json:"domain"` // Used for icon/brand and link, derived from url
+	Title        string   `json:"title"`
+	ShortContent string   `json:"shortContent"` // Used for preview, derived from content, maybe stripped from html tags
+	Content      string   `json:"content"`      // Html content
+	Tags         []string `json:"tags"`
+	// MD5Hash      string    `json:"md5Hash"` // Maybe needed, derived from external ids, URL, other.
+	PostedAt  time.Time `json:"postedAt"`
+	CreatedAt time.Time `json:"createdAt"`
+}
