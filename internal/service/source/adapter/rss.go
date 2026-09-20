@@ -34,7 +34,17 @@ func NewRSS(l *slog.Logger) Adapter {
 }
 
 func (r rss) FetchFromSource(ctx context.Context, url string) (data [][]byte, err error) {
-	fmt.Println("fetching feed")
+	feed, err := r.fp.ParseURLWithContext(url, ctx)
+	if err != nil {
+		return
+	}
+
+	// for _, item := range feed.Items {
+	// 	var
+
+	// 	authors := make([]string, 0, len(item.Authors))
+
+	// }
 
 	return
 }

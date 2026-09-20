@@ -13,6 +13,7 @@ type Feed struct {
 	ShortContent string   `json:"shortContent"` // Used for preview, derived from content, maybe stripped from html tags
 	Content      string   `json:"content"`      // Html content
 	Tags         []string `json:"tags"`
+	Authors      []string `json:"authors"`
 	// MD5Hash      string    `json:"md5Hash"` // Maybe needed, derived from external ids, URL, other.
 	PostedAt  time.Time `json:"postedAt"`
 	CreatedAt time.Time `json:"createdAt"`

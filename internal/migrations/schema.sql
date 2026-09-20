@@ -41,8 +41,9 @@ CREATE TABLE IF NOT EXISTS sources (
   url TEXT NOT NULL,
   active BOOLEAN NOT NULL DEFAULT false,
   rate INT NOT NULL DEFAULT 15,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  -- metadata JSONB NOT NULL DEFAULT '{}',
+  metadata JSONB NOT NULL DEFAULT '{}',
+  target_tags TEXT[] NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 );
 
 CREATE INDEX IF NOT EXISTS sources_url_idx ON sources (url);
@@ -60,8 +61,9 @@ CREATE TABLE IF NOT EXISTS feeds (
   content TEXT NOT NULL,
   tags TEXT[] NOT NULL DEFAULT '{}',
   posted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  authors TEXT[] NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  -- md5_hash TEXT NOT NULL,
+  md5_hash TEXT NOT NULL,
   ts tsvector GENERATED ALWAYS AS (
     CASE lang
       WHEN 'sv' THEN setweight(to_tsvector('ts_swedish', title), 'A') || setweight(
@@ -88,7 +90,8 @@ CREATE INDEX IF NOT EXISTS feed_url_idx ON feeds (url);
 
 CREATE INDEX IF NOT EXISTS feed_domain_idx ON feeds (domain);
 
--- CREATE INDEX IF NOT EXISTS feed_md5_hash_idx ON feeds (md5_hash);
+CREATE INDEX IF NOT EXISTS feed_md5_hash_idx ON feeds (md5_hash);
+
 CREATE INDEX IF NOT EXISTS feed_tags_idx ON feeds USING gin (tags);
 
 CREATE INDEX IF NOT EXISTS feed_posted_at_idx ON feeds (posted_at DESC);
