@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -18,25 +20,54 @@ const (
 	refreshInterval = time.Minute
 )
 
-type found struct {
-	source Source
-	url    string
+type Pipeline interface {
+	Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed
+	Sink() chan Source
+	Close()
 }
 
-type fetched struct {
-	source Source
-	url    string
-	data   []byte
+func initPipelines(ctx context.Context, in <-chan Source, l *slog.Logger) []Pipeline {
+	pipelines := map[string]Pipeline{
+		"rss": newPipeline(adapter.NewRSS(l), make(chan Source)),
+	}
+
+	go func() {
+		defer func() {
+			for _, c := range pipelines {
+				c.Close()
+			}
+		}()
+
+		for s := range in {
+			p, ok := pipelines[s.Adapter]
+			if !ok {
+				l.Error("unknown adapter", "adapter", s.Adapter, "source", s.ID)
+				continue
+			}
+
+			select {
+			case p.Sink() <- s:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return slices.Collect(maps.Values(pipelines))
 }
 
 func Run(ctx context.Context, s *Store, l *slog.Logger) error {
-	adapters := adapter.InitAdapters(l)
-
 	sources := continuousSources(ctx, s, l)
-	data := fanOut(ctx, adapters, workers, sources, l, fetchFromSource)
-	feeds := fanOut(ctx, adapters, workers, data, l, processFeed)
 
-	for f := range feeds {
+	pipelines := initPipelines(ctx, sources, l)
+
+	feeds := make([]<-chan feed.Feed, 0, len(pipelines))
+
+	for _, p := range pipelines {
+		feeds = append(feeds, p.Run(ctx, l))
+	}
+
+	for f := range merge(ctx, feeds...) {
 		if _, err := s.feedStore.CreateFeed(ctx, f); err != nil {
 			l.Error("create feed", "source", f.SourceID, "url", f.URL, "err", err)
 		}
@@ -64,7 +95,7 @@ func continuousSources(ctx context.Context, s *Store, l *slog.Logger) <-chan Sou
 				sources, err = iterx.Collect(s.ListSources(ctx, Filter{Active: sql.Null[bool]{V: true}}))
 				if err != nil {
 					l.Error("unable to get sources", "err", err)
-					continue
+					return
 				}
 
 				lastInterval = time.Now()
@@ -94,20 +125,43 @@ func continuousSources(ctx context.Context, s *Store, l *slog.Logger) <-chan Sou
 	return out
 }
 
-func fetchFromSource(ctx context.Context, adapters map[string]adapter.Adapter, in <-chan Source, l *slog.Logger) <-chan fetched {
-	out := make(chan fetched)
+type fetched[T any] struct {
+	source Source
+	data   T
+}
+
+type pipeline[T any] struct {
+	adapter.Adapter[T]
+
+	sink chan Source
+}
+
+func newPipeline[T any](a adapter.Adapter[T], sink chan Source) Pipeline {
+	return pipeline[T]{Adapter: a, sink: sink}
+}
+
+func (p pipeline[T]) Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed {
+	data := fanOut(ctx, workers, p.sink, l, p.fetchFromSource)
+
+	return fanOut(ctx, workers, data, l, p.processFeed)
+}
+
+func (p pipeline[T]) Sink() chan Source {
+	return p.sink
+}
+
+func (p pipeline[T]) Close() {
+	close(p.sink)
+}
+
+func (p pipeline[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-chan Source) <-chan fetched[T] {
+	out := make(chan fetched[T])
 
 	go func() {
 		defer close(out)
 
 		for source := range in {
-			a, ok := adapters[source.Adapter]
-			if !ok {
-				l.Error("unknown adapter", "adapter", source.Adapter, "source", source.ID)
-				continue
-			}
-
-			dataset, err := a.FetchFromSource(ctx, source.URL)
+			dataset, err := p.FetchFromSource(ctx, source.URL)
 			if err != nil {
 				l.Error("fetchFromSource", "source", source.ID, "url", source.URL, "err", err)
 				continue
@@ -115,7 +169,7 @@ func fetchFromSource(ctx context.Context, adapters map[string]adapter.Adapter, i
 
 			for _, data := range dataset {
 				select {
-				case out <- fetched{source: source, url: source.URL, data: data}:
+				case out <- fetched[T]{source: source, data: data}:
 				case <-ctx.Done():
 					return
 				}
@@ -126,27 +180,20 @@ func fetchFromSource(ctx context.Context, adapters map[string]adapter.Adapter, i
 	return out
 }
 
-func processFeed(ctx context.Context, adapters map[string]adapter.Adapter, in <-chan fetched, l *slog.Logger) <-chan feed.Feed {
+func (p pipeline[T]) processFeed(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan feed.Feed {
 	out := make(chan feed.Feed)
 
 	go func() {
 		defer close(out)
 
 		for f := range in {
-			a, ok := adapters[f.source.Adapter]
-			if !ok {
-				l.Error("unknown adapter", "adapter", f.source.Adapter, "source", f.source.ID)
-				continue
-			}
-
-			parsed, err := a.ProcessFeed(ctx, f.data)
+			parsed, err := p.ProcessFeed(ctx, f.data)
 			if err != nil {
-				l.Error("processFeed", "source", f.source.ID, "url", f.url, "err", err)
+				l.Error("processFeed", "source", f.source.ID, "url", f.source.URL, "err", err)
 				continue
 			}
 
 			parsed.SourceID = f.source.ID
-			parsed.URL = f.url
 
 			select {
 			case out <- parsed:
@@ -159,11 +206,11 @@ func processFeed(ctx context.Context, adapters map[string]adapter.Adapter, in <-
 	return out
 }
 
-func fanOut[In, Out any](ctx context.Context, adapters map[string]adapter.Adapter, n int, in <-chan In, l *slog.Logger, stage func(context.Context, map[string]adapter.Adapter, <-chan In, *slog.Logger) <-chan Out) <-chan Out {
+func fanOut[In, Out any](ctx context.Context, n int, in <-chan In, l *slog.Logger, stage func(context.Context, *slog.Logger, <-chan In) <-chan Out) <-chan Out {
 	outs := make([]<-chan Out, n)
 
 	for i := range outs {
-		outs[i] = stage(ctx, adapters, in, l)
+		outs[i] = stage(ctx, l, in)
 	}
 
 	return merge(ctx, outs...)
