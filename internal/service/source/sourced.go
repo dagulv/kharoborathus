@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
-	"maps"
-	"slices"
 	"sync"
 	"time"
 
@@ -22,38 +20,45 @@ const (
 
 type Pipeline interface {
 	Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed
-	Sink() chan Source
-	Close()
 }
 
 func initPipelines(ctx context.Context, in <-chan Source, l *slog.Logger) []Pipeline {
-	pipelines := map[string]Pipeline{
-		"rss": newPipeline(adapter.NewRSS(l), make(chan Source)),
+	sinks := make(map[string]chan Source)
+
+	pipelines := []Pipeline{
+		newPipeline(adapter.NewRSS(l), addSink(sinks, "rss")),
 	}
 
 	go func() {
 		defer func() {
-			for _, c := range pipelines {
-				c.Close()
+			for _, c := range sinks {
+				close(c)
 			}
 		}()
 
 		for s := range in {
-			p, ok := pipelines[s.Adapter]
+			c, ok := sinks[s.Adapter]
 			if !ok {
 				l.Error("unknown adapter", "adapter", s.Adapter, "source", s.ID)
 				continue
 			}
 
 			select {
-			case p.Sink() <- s:
+			case c <- s:
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
 
-	return slices.Collect(maps.Values(pipelines))
+	return pipelines
+}
+
+func addSink(sinks map[string]chan Source, name string) <-chan Source {
+	c := make(chan Source)
+	sinks[name] = c
+
+	return c
 }
 
 func Run(ctx context.Context, s *Store, l *slog.Logger) error {
@@ -133,25 +138,17 @@ type fetched[T any] struct {
 type pipeline[T any] struct {
 	adapter.Adapter[T]
 
-	sink chan Source
+	in <-chan Source
 }
 
-func newPipeline[T any](a adapter.Adapter[T], sink chan Source) Pipeline {
-	return pipeline[T]{Adapter: a, sink: sink}
+func newPipeline[T any](a adapter.Adapter[T], in <-chan Source) Pipeline {
+	return pipeline[T]{Adapter: a, in: in}
 }
 
 func (p pipeline[T]) Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed {
-	data := fanOut(ctx, workers, p.sink, l, p.fetchFromSource)
+	data := fanOut(ctx, workers, p.in, l, p.fetchFromSource)
 
 	return fanOut(ctx, workers, data, l, p.processFeed)
-}
-
-func (p pipeline[T]) Sink() chan Source {
-	return p.sink
-}
-
-func (p pipeline[T]) Close() {
-	close(p.sink)
 }
 
 func (p pipeline[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-chan Source) <-chan fetched[T] {
