@@ -2,16 +2,18 @@ package adapter
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/dagulv/palantir/internal/service/feed"
 )
 
 type Adapter interface {
-	Find(ctx context.Context, url string) ([]string, error)
-	Fetch(ctx context.Context, url string) ([]byte, error)
-	Process(ctx context.Context, data []byte) (feed.Feed, error)
+	FetchFromSource(ctx context.Context, url string) ([][]byte, error)
+	ProcessFeed(ctx context.Context, data []byte) (feed.Feed, error)
 }
 
-var Adapters = map[string]Adapter{
-	"rss": NewRSS(),
+func InitAdapters(l *slog.Logger) map[string]Adapter {
+	return map[string]Adapter{
+		"rss": NewRSS(l),
+	}
 }

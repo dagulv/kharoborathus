@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -15,9 +16,10 @@ import (
 type rss struct {
 	client *http.Client
 	fp     *gofeed.Parser
+	l      *slog.Logger
 }
 
-func NewRSS() Adapter {
+func NewRSS(l *slog.Logger) Adapter {
 	client := &http.Client{
 		Timeout: time.Second * 20,
 	}
@@ -27,18 +29,16 @@ func NewRSS() Adapter {
 	return rss{
 		client: client,
 		fp:     fp,
+		l:      l,
 	}
 }
 
-func (r rss) Find(ctx context.Context, url string) (urls []string, err error) {
-	fmt.Println("finding feeds")
-	return
-}
-func (r rss) Fetch(ctx context.Context, url string) (data []byte, err error) {
+func (r rss) FetchFromSource(ctx context.Context, url string) (data [][]byte, err error) {
 	fmt.Println("fetching feed")
+
 	return
 }
-func (r rss) Process(ctx context.Context, data []byte) (out feed.Feed, err error) {
+func (r rss) ProcessFeed(ctx context.Context, data []byte) (out feed.Feed, err error) {
 	fmt.Println("processing feed")
 	return
 }
