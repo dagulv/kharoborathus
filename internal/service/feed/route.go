@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/dagulv/palantir/internal/lib/query"
+	"github.com/dagulv/kharoborathus/internal/lib/query"
 )
 
 func Routes(mux *http.ServeMux, s Store, l *slog.Logger) {

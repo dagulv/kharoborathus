@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"iter"
 
-	"github.com/dagulv/palantir/internal/lib/database"
-	"github.com/dagulv/palantir/internal/lib/query"
+	"github.com/dagulv/kharoborathus/internal/lib/database"
+	"github.com/dagulv/kharoborathus/internal/lib/query"
 )
 
 type Store struct {

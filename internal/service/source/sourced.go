@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dagulv/palantir/internal/lib/iterx"
-	"github.com/dagulv/palantir/internal/service/feed"
-	"github.com/dagulv/palantir/internal/service/source/adapter"
+	"github.com/dagulv/kharoborathus/internal/lib/iterx"
+	"github.com/dagulv/kharoborathus/internal/service/feed"
+	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
 )
 
 const (

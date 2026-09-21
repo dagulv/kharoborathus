@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/dagulv/palantir/internal/lib/query"
+	"github.com/dagulv/kharoborathus/internal/lib/query"
 )
 
 type Source struct {

@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dagulv/palantir/internal/lib/config"
-	"github.com/dagulv/palantir/internal/lib/database"
-	"github.com/dagulv/palantir/internal/service/feed"
-	"github.com/dagulv/palantir/internal/service/source"
+	"github.com/dagulv/kharoborathus/internal/lib/config"
+	"github.com/dagulv/kharoborathus/internal/lib/database"
+	"github.com/dagulv/kharoborathus/internal/service/feed"
+	"github.com/dagulv/kharoborathus/internal/service/source"
 	"golang.org/x/sync/errgroup"
 )
 

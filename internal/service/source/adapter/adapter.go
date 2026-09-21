@@ -3,7 +3,7 @@ package adapter
 import (
 	"context"
 
-	"github.com/dagulv/palantir/internal/service/feed"
+	"github.com/dagulv/kharoborathus/internal/service/feed"
 )
 
 type Adapter[T any] interface {

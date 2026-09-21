@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/dagulv/palantir/internal/service/feed"
+	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/mmcdole/gofeed"
 )
 
