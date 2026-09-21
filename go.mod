@@ -3,6 +3,7 @@ module github.com/dagulv/kharoborathus
 go 1.27.0
 
 require (
+	github.com/anthropics/anthropic-sdk-go v1.74.0
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/mmcdole/gofeed v1.4.2
@@ -10,9 +11,6 @@ require (
 )
 
 require (
-	github.com/JohannesKaufmann/dom v0.3.1 // indirect
-	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.74.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
