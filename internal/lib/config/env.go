@@ -18,6 +18,7 @@ type Environment struct {
 	PostgresConn     string `env:"POSTGRES_CONNECTION_STRING,expand" envDefault:"postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}/${POSTGRES_NAME}?sslmode=disable"`
 	HttpHost         string `env:"HTTP_HOST" envDefault:"0.0.0.0:3001"`
 	HttpCors         string `env:"HTTP_CORS" envDefault:"*"`
+	DeepseekAPIKey   string `env:"DEEPSEEK_API_KEY" envDefault:""`
 }
 
 func Load(useFile ...bool) (e *Environment, err error) {

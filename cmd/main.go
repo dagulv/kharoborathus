@@ -14,6 +14,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
+	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/source"
 	"golang.org/x/sync/errgroup"
 )
@@ -62,7 +63,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceStore, l.WithGroup("sourced"))
+		return source.Run(ctx, &sourceStore, adapter.OffPeak, l.WithGroup("sourced"))
 	})
 
 	g.Go(func() error {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/iterx"
+	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
 )
@@ -61,8 +62,8 @@ func addSink(sinks map[string]chan Source, name string) <-chan Source {
 	return c
 }
 
-func Run(ctx context.Context, s *Store, l *slog.Logger) error {
-	sources := continuousSources(ctx, s, l)
+func Run(ctx context.Context, s *Store, sched schedule.Schedule, l *slog.Logger) error {
+	sources := continuousSources(ctx, s, sched, l)
 
 	pipelines := initPipelines(ctx, sources, l)
 
@@ -81,21 +82,20 @@ func Run(ctx context.Context, s *Store, l *slog.Logger) error {
 	return ctx.Err()
 }
 
-func continuousSources(ctx context.Context, s *Store, l *slog.Logger) <-chan Source {
+func continuousSources(ctx context.Context, s *Store, sched schedule.Schedule, l *slog.Logger) <-chan Source {
 	out := make(chan Source)
 
 	go func() {
 		defer close(out)
 
-		ticker := time.NewTicker(tickInterval)
-		defer ticker.Stop()
+		tick := sched.Tick(ctx, tickInterval)
 
 		paused := make(map[string]time.Time)
 		lastInterval := time.Now()
 		sources := make([]Source, 0)
 		var err error
 
-		for {
+		for range tick {
 			if time.Since(lastInterval) > refreshInterval {
 				sources, err = iterx.Collect(s.ListSources(ctx, Filter{Active: sql.Null[bool]{V: true}}))
 				if err != nil {
@@ -117,12 +117,6 @@ func continuousSources(ctx context.Context, s *Store, l *slog.Logger) <-chan Sou
 				case <-ctx.Done():
 					return
 				}
-			}
-
-			select {
-			case <-ticker.C:
-			case <-ctx.Done():
-				return
 			}
 		}
 	}()
