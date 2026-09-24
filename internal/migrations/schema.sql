@@ -44,13 +44,20 @@ CREATE TABLE IF NOT EXISTS sources (
   metadata JSONB NOT NULL DEFAULT '{}',
   target_tags TEXT[] NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS sources_url_idx ON sources (url);
 
 CREATE INDEX IF NOT EXISTS sources_active_idx ON sources (active);
 
-CREATE TABLE IF NOT EXISTS feeds (
+CREATE TABLE IF NOT EXISTS source_discovered_by_post (
+  source_id UUID NOT NULL REFERENCES sources (id),
+  post_id UUID NOT NULL REFERENCES posts (id),
+  PRIMARY KEY (source_id, post_id)
+);
+
+CREATE TABLE IF NOT EXISTS posts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   source_id UUID NOT NULL REFERENCES sources (id) ON DELETE CASCADE,
   url TEXT UNIQUE NOT NULL,
@@ -63,7 +70,8 @@ CREATE TABLE IF NOT EXISTS feeds (
   posted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   authors TEXT[] NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  md5_hash TEXT NOT NULL,
+  content_hash BYTEA NOT NULL,
+  --simhash BIGINT NOT NULL,
   ts tsvector GENERATED ALWAYS AS (
     CASE lang
       WHEN 'sv' THEN setweight(to_tsvector('ts_swedish', title), 'A') || setweight(
@@ -82,18 +90,32 @@ CREATE TABLE IF NOT EXISTS feeds (
   ) STORED
 );
 
-CREATE INDEX IF NOT EXISTS feed_source_id_idx ON feeds (source_id);
+CREATE INDEX IF NOT EXISTS posts_source_id_idx ON posts (source_id);
 
-CREATE INDEX IF NOT EXISTS feed_lang_idx ON feeds (lang);
+CREATE INDEX IF NOT EXISTS posts_lang_idx ON posts (lang);
 
-CREATE INDEX IF NOT EXISTS feed_url_idx ON feeds (url);
+CREATE INDEX IF NOT EXISTS posts_url_idx ON posts (url);
 
-CREATE INDEX IF NOT EXISTS feed_domain_idx ON feeds (domain);
+CREATE INDEX IF NOT EXISTS posts_domain_idx ON posts (domain);
 
-CREATE INDEX IF NOT EXISTS feed_md5_hash_idx ON feeds (md5_hash);
+CREATE INDEX IF NOT EXISTS posts_content_hash_idx ON posts (md5_hash);
 
-CREATE INDEX IF NOT EXISTS feed_tags_idx ON feeds USING gin (tags);
+CREATE INDEX IF NOT EXISTS posts_tags_idx ON posts USING gin (tags);
 
-CREATE INDEX IF NOT EXISTS feed_posted_at_idx ON feeds (posted_at DESC);
+CREATE INDEX IF NOT EXISTS posts_posted_at_idx ON posts (posted_at DESC);
 
-CREATE INDEX IF NOT EXISTS feed_ts_idx ON feeds USING gin (ts);
+CREATE INDEX IF NOT EXISTS posts_ts_idx ON posts USING gin (ts);
+
+CREATE TABLE post_links (
+  from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
+  to_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
+  relation TEXT NOT NULL, -- ex: 'discovered', 'duplicate_of', 'same_event', 'follows_up', 'translation_of'
+  metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (from_post_id, to_post_id, relation),
+  CHECK (from_post_id <> to_post_id)
+);
+
+CREATE INDEX post_links_to_idx ON post_links (to_post_id, relation);
+
+CREATE INDEX post_links_relation_idx ON post_links (relation);
