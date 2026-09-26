@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ const (
 	workers         = 5
 	tickInterval    = time.Second
 	refreshInterval = time.Minute
+	sourcePage      = 200
 	excerptLen      = 280
 	articleTimeout  = 20 * time.Second
 	maxArticleSize  = 5 << 20
@@ -105,17 +107,16 @@ func continuousSources(ctx context.Context, s *Store, sched schedule.Schedule, l
 		paused := make(map[string]time.Time)
 		var lastInterval time.Time
 		sources := make([]Source, 0)
-		var err error
 
 		for range tick {
 			if time.Since(lastInterval) > refreshInterval {
-				sources, err = iterx.Collect(s.ListSources(ctx, Filter{Active: sql.Null[bool]{V: true}}))
-				if err != nil {
-					l.Error("unable to get sources", "err", err)
-					return
-				}
-
 				lastInterval = time.Now()
+
+				if active, err := activeSources(ctx, s); err != nil {
+					l.Error("unable to get sources", "err", err)
+				} else {
+					sources = active
+				}
 			}
 
 			for _, source := range sources {
@@ -134,6 +135,28 @@ func continuousSources(ctx context.Context, s *Store, sched schedule.Schedule, l
 	}()
 
 	return out
+}
+
+func activeSources(ctx context.Context, s *Store) ([]Source, error) {
+	var sources []Source
+
+	for offset := 0; ; offset += sourcePage {
+		page, err := iterx.Collect(s.ListSources(ctx, Filter{
+			Limit:   strconv.Itoa(sourcePage),
+			Offset:  strconv.Itoa(offset),
+			OrderBy: "id",
+			Active:  sql.Null[bool]{V: true, Valid: true},
+		}))
+		if err != nil {
+			return nil, err
+		}
+
+		sources = append(sources, page...)
+
+		if len(page) < sourcePage {
+			return sources, nil
+		}
+	}
 }
 
 type fetched[T any] struct {
