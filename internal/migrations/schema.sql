@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS domains (
 
 CREATE TABLE IF NOT EXISTS sources (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  domain_id UUID NOT NULL REFERENCES domains (id) ON DELETE SET NULL,
+  domain_id UUID NOT NULL REFERENCES domains (id),
   adapter TEXT NOT NULL,
   url TEXT NOT NULL,
   active BOOLEAN NOT NULL DEFAULT false,
@@ -69,10 +69,10 @@ CREATE TABLE IF NOT EXISTS source_discovered_by_post (
 
 CREATE TABLE IF NOT EXISTS posts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  source_id UUID NOT NULL REFERENCES sources (id) ON DELETE SET NULL,
+  source_id UUID NOT NULL REFERENCES sources (id),
   url TEXT UNIQUE NOT NULL,
   lang TEXT NOT NULL,
-  domain_id UUID NOT NULL REFERENCES domains (id) ON DELETE SET NULL,
+  domain_id UUID NOT NULL REFERENCES domains (id),
   title TEXT NOT NULL,
   short_content TEXT NOT NULL,
   content TEXT NOT NULL,
