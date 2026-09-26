@@ -10,8 +10,8 @@ type Feed struct {
 	Lang         string   `json:"lang"`
 	DomainID     string   `json:"domainId"` // Used for icon/brand and link, resolved from url
 	Title        string   `json:"title"`
-	ShortContent string   `json:"shortContent"` // Used for preview, derived from content, maybe stripped from html tags
-	Content      string   `json:"content"`      // Html content
+	ShortContent string   `json:"shortContent"` // Plain text short content, llm summary of content
+	Content      string   `json:"content"`      // Markdown content
 	Tags         []string `json:"tags"`
 	Authors      []string `json:"authors"`
 	// MD5Hash      string    `json:"md5Hash"` // Maybe needed, derived from external ids, URL, other.

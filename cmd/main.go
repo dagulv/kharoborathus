@@ -16,6 +16,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
+	"github.com/dagulv/kharoborathus/internal/service/robot"
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/source"
 	"golang.org/x/sync/errgroup"
@@ -54,6 +55,7 @@ func app(ctx context.Context) (err error) {
 	}
 
 	trim := source.NewTrim(&domainStore, llm, l.WithGroup("trim"))
+	summarizer := robot.NewSummarizer(llm)
 
 	mux := http.NewServeMux()
 	feed.Routes(mux, feedStore, l.WithGroup("feed"))
@@ -74,7 +76,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceStore, trim, schedule.Always, l.WithGroup("sourced"))
+		return source.Run(ctx, &sourceStore, trim, summarizer, schedule.Always, l.WithGroup("sourced"))
 	})
 
 	g.Go(func() error {
