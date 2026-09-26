@@ -6,10 +6,10 @@ import (
 	"database/sql"
 	"fmt"
 	"iter"
+	"strings"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/database"
-	"github.com/dagulv/kharoborathus/internal/lib/query"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -37,20 +37,46 @@ func NewStore(db *database.Database) Store {
 	}
 }
 
-func (s *Store) ListFeeds(ctx context.Context, filter query.Filter) iter.Seq2[Feed, error] {
+func (s *Store) ListPosts(ctx context.Context, filter Filter) iter.Seq2[Feed, error] {
 	return func(yield func(Feed, error) bool) {
 		args := []any{filter.GetLimit(), filter.GetOffset()}
-		var where string
+		var conds []string
 
 		col, dir := filter.GetSort()
 
+		if len(filter.Tags) > 0 {
+			args = append(args, filter.Tags)
+			conds = append(conds, fmt.Sprintf(`p.tags @> $%d::text[]`, len(args)))
+		}
+
 		if filter.Search != "" {
-			args = append(args, "%"+database.EscapeLike.Replace(filter.Search)+"%")
-			where = fmt.Sprintf(`WHERE title ILIKE $%d OR content ILIKE $%d`, len(args), len(args))
+			args = append(args, filter.Search)
+			conds = append(conds, fmt.Sprintf(`(
+				(p.lang = 'sv' AND p.ts @@ websearch_to_tsquery('ts_swedish', $%[1]d))
+				OR (p.lang = 'en' AND p.ts @@ websearch_to_tsquery('english', $%[1]d))
+				OR (p.lang NOT IN ('sv', 'en') AND p.ts @@ websearch_to_tsquery('simple', $%[1]d))
+				OR p.tags && ARRAY(
+					SELECT t.key
+					FROM tag_terms t
+					WHERE to_tsvector(
+						CASE t.lang
+							WHEN 'sv' THEN 'ts_swedish'::regconfig
+							WHEN 'en' THEN 'english'::regconfig
+							ELSE 'simple'::regconfig
+						END,
+						$%[1]d
+					) @@ t.matcher
+				)
+			)`, len(args)))
+		}
+
+		var where string
+		if len(conds) > 0 {
+			where = "WHERE " + strings.Join(conds, " AND ")
 		}
 
 		query := fmt.Sprintf(
-			`SELECT %s FROM posts %s ORDER BY %s %s LIMIT $1 OFFSET $2`,
+			`SELECT %s FROM posts p %s ORDER BY p.%s %s LIMIT $1 OFFSET $2`,
 			feedColumns, where, col, dir,
 		)
 

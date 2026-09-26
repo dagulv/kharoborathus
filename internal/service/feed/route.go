@@ -8,8 +8,6 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
-
-	"github.com/dagulv/kharoborathus/internal/lib/query"
 )
 
 func Routes(mux *http.ServeMux, s Store, l *slog.Logger) {
@@ -21,12 +19,13 @@ func listFeed(s Store, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 
-		filter := query.Filter{
+		filter := Filter{
 			Limit:   q.Get("limit"),
 			Offset:  q.Get("offset"),
 			Order:   q.Get("order"),
 			OrderBy: q.Get("orderBy"),
 			Search:  q.Get("search"),
+			Tags:    q["tag"],
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -38,7 +37,7 @@ func listFeed(s Store, l *slog.Logger) http.HandlerFunc {
 			return
 		}
 
-		for feed, err := range s.ListFeeds(r.Context(), filter) {
+		for feed, err := range s.ListPosts(r.Context(), filter) {
 			if err != nil {
 				log.Printf("feed: list feeds: %v", err)
 				return

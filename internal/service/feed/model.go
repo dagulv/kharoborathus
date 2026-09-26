@@ -1,6 +1,10 @@
 package feed
 
-import "time"
+import (
+	"time"
+
+	"github.com/dagulv/kharoborathus/internal/lib/query"
+)
 
 // Feed also stores Raw HTML Content on S3 at /feeds/<id>/content
 type Feed struct {
@@ -17,4 +21,10 @@ type Feed struct {
 	// MD5Hash      string    `json:"md5Hash"` // Maybe needed, derived from external ids, URL, other.
 	PostedAt  time.Time `json:"postedAt"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+type Filter struct {
+	query.Filter
+
+	Tags []string `query:"tag"`
 }
