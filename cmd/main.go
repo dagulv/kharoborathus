@@ -67,6 +67,7 @@ func app(ctx context.Context) (err error) {
 
 	summarizer := robot.NewSummarizer(llm)
 	tagger := robot.NewTagger(classifier)
+	tagGenerator := robot.NewTagGenerator(llm)
 	discoverer := robot.NewDiscoverer(llm)
 
 	mux := http.NewServeMux()
@@ -92,7 +93,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return tagging.Run(ctx, &taggingStore, tagger, l.WithGroup("tagging"))
+		return tagging.Run(ctx, &taggingStore, tagGenerator, tagger, l.WithGroup("tagging"))
 	})
 
 	g.Go(func() error {

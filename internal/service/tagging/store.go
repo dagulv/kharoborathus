@@ -42,7 +42,7 @@ func (s *Store) ListTags(ctx context.Context) ([]robot.Tag, error) {
 func (s *Store) ListUntaggedPosts(ctx context.Context, limit int) iter.Seq2[Post, error] {
 	return func(yield func(Post, error) bool) {
 		rows, err := s.db.Query(ctx, `
-			SELECT p.id, p.title, p.content
+			SELECT p.id, p.lang, p.title, p.content
 			FROM posts p
 			WHERE NOT EXISTS (SELECT 1 FROM tag_checked c WHERE c.post_id = p.id)
 			ORDER BY p.created_at
@@ -57,7 +57,7 @@ func (s *Store) ListUntaggedPosts(ctx context.Context, limit int) iter.Seq2[Post
 		for rows.Next() {
 			var post Post
 
-			if err := rows.Scan(&post.ID, &post.Title, &post.Content); err != nil {
+			if err := rows.Scan(&post.ID, &post.Lang, &post.Title, &post.Content); err != nil {
 				yield(Post{}, err)
 				return
 			}
@@ -71,6 +71,38 @@ func (s *Store) ListUntaggedPosts(ctx context.Context, limit int) iter.Seq2[Post
 			yield(Post{}, err)
 		}
 	}
+}
+
+func (s *Store) AddTags(ctx context.Context, terms []Term) error {
+	if len(terms) == 0 {
+		return nil
+	}
+
+	keys := make([]string, len(terms))
+	langs := make([]string, len(terms))
+	words := make([]string, len(terms))
+
+	for i, t := range terms {
+		keys[i], langs[i], words[i] = t.Key, t.Lang, t.Term
+	}
+
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO tags (key)
+			SELECT DISTINCT unnest($1::text[])
+			ON CONFLICT (key) DO NOTHING
+			`, keys); err != nil {
+			return err
+		}
+
+		_, err := tx.Exec(ctx, `
+			INSERT INTO tag_terms (key, lang, term)
+			SELECT * FROM unnest($1::text[], $2::text[], $3::text[])
+			ON CONFLICT (key, lang, term) DO NOTHING
+			`, keys, langs, words)
+
+		return err
+	})
 }
 
 func (s *Store) CompleteTagging(ctx context.Context, postID string, keys []string) error {
