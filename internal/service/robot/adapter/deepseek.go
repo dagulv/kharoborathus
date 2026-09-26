@@ -3,6 +3,7 @@ package adapter
 import (
 	"cmp"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,11 @@ const (
 )
 
 var _ LLM = deepSeek{}
+
+//go:embed prompts/output_tool.md
+var outputToolPrompt string
+
+var outputToolDescription = strings.TrimSpace(outputToolPrompt)
 
 type deepSeek struct {
 	client anthropic.Client
@@ -92,7 +98,7 @@ func (d deepSeek) Unmarshal(ctx context.Context, req Request, out any) (err erro
 	}
 
 	tool := anthropic.ToolUnionParamOfTool(schema, outputTool)
-	tool.OfTool.Description = anthropic.String("Record the answer. This is the only way to answer.")
+	tool.OfTool.Description = anthropic.String(outputToolDescription)
 
 	params.Tools = []anthropic.ToolUnionParam{tool}
 	params.ToolChoice = anthropic.ToolChoiceParamOfTool(outputTool)

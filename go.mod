@@ -3,11 +3,13 @@ module github.com/dagulv/kharoborathus
 go 1.27.0
 
 require (
+	github.com/andybalholm/cascadia v1.3.3
 	github.com/anthropics/anthropic-sdk-go v1.74.0
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/mmcdole/gofeed v1.4.2
+	golang.org/x/net v0.59.0
 	golang.org/x/sync v0.23.0
 )
 
@@ -25,6 +27,5 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
-	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
