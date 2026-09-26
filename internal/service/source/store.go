@@ -7,18 +7,21 @@ import (
 	"iter"
 
 	"github.com/dagulv/kharoborathus/internal/lib/database"
+	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 )
 
 type Store struct {
-	db        *database.Database
-	feedStore feed.Store
+	db          *database.Database
+	feedStore   feed.Store
+	domainStore domain.Store
 }
 
-func NewStore(db *database.Database, feedStore feed.Store) Store {
+func NewStore(db *database.Database, feedStore feed.Store, domainStore domain.Store) Store {
 	return Store{
-		db:        db,
-		feedStore: feedStore,
+		db:          db,
+		feedStore:   feedStore,
+		domainStore: domainStore,
 	}
 }
 

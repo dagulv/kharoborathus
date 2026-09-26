@@ -33,7 +33,7 @@ func (s *Store) ListFeeds(ctx context.Context, filter query.Filter) iter.Seq2[Fe
 		}
 
 		query := fmt.Sprintf(
-			`SELECT id, title, content FROM feed %s ORDER BY %s %s LIMIT $1 OFFSET $2`,
+			`SELECT id, domain_id, title, content FROM feed %s ORDER BY %s %s LIMIT $1 OFFSET $2`,
 			where, col, dir,
 		)
 
@@ -47,7 +47,7 @@ func (s *Store) ListFeeds(ctx context.Context, filter query.Filter) iter.Seq2[Fe
 		for rows.Next() {
 			var feed Feed
 
-			if err := rows.Scan(&feed.ID, &feed.Title, &feed.Content); err != nil {
+			if err := rows.Scan(&feed.ID, &feed.DomainID, &feed.Title, &feed.Content); err != nil {
 				yield(Feed{}, err)
 				return
 			}
@@ -67,11 +67,12 @@ func (s *Store) GetFeed(ctx context.Context, id string) (feed Feed, err error) {
 	if err = s.db.QueryRow(ctx, `
 		SELECT
 			id,
+			domain_id,
 			title,
 			content
 		FROM feed
 		WHERE id = $1
-		`, id).Scan(&feed.ID, &feed.Title, &feed.Content); err != nil {
+		`, id).Scan(&feed.ID, &feed.DomainID, &feed.Title, &feed.Content); err != nil {
 		return Feed{}, err
 	}
 
@@ -80,13 +81,14 @@ func (s *Store) GetFeed(ctx context.Context, id string) (feed Feed, err error) {
 
 func (s *Store) CreateFeed(ctx context.Context, feed Feed) (out Feed, err error) {
 	if err = s.db.QueryRow(ctx, `
-		INSERT INTO feed (title, content)
-		VALUES ($1, $2)
+		INSERT INTO feed (domain_id, title, content)
+		VALUES ($1, $2, $3)
 		RETURNING
 			id,
+			domain_id,
 			title,
 			content
-		`, feed.Title, feed.Content).Scan(&out.ID, &out.Title, &out.Content); err != nil {
+		`, feed.DomainID, feed.Title, feed.Content).Scan(&out.ID, &out.DomainID, &out.Title, &out.Content); err != nil {
 		return
 	}
 

@@ -35,8 +35,16 @@ CREATE TABLE IF NOT EXISTS tag_terms (
   ) STORED PRIMARY KEY (key, lang, term)
 );
 
+CREATE TABLE IF NOT EXISTS domains (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  base_url TEXT UNIQUE NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS sources (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  domain_id UUID NOT NULL REFERENCES domains (id) ON DELETE SET NULL,
   adapter TEXT NOT NULL,
   url TEXT NOT NULL,
   active BOOLEAN NOT NULL DEFAULT false,
@@ -46,6 +54,8 @@ CREATE TABLE IF NOT EXISTS sources (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ
 );
+
+CREATE INDEX IF NOT EXISTS posts_domain_id_idx ON posts (domain_id);
 
 CREATE INDEX IF NOT EXISTS sources_url_idx ON sources (url);
 
@@ -59,10 +69,10 @@ CREATE TABLE IF NOT EXISTS source_discovered_by_post (
 
 CREATE TABLE IF NOT EXISTS posts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  source_id UUID NOT NULL REFERENCES sources (id) ON DELETE CASCADE,
+  source_id UUID NOT NULL REFERENCES sources (id) ON DELETE SET NULL,
   url TEXT UNIQUE NOT NULL,
   lang TEXT NOT NULL,
-  domain TEXT NOT NULL,
+  domain_id UUID NOT NULL REFERENCES domains (id) ON DELETE SET NULL,
   title TEXT NOT NULL,
   short_content TEXT NOT NULL,
   content TEXT NOT NULL,
@@ -96,7 +106,7 @@ CREATE INDEX IF NOT EXISTS posts_lang_idx ON posts (lang);
 
 CREATE INDEX IF NOT EXISTS posts_url_idx ON posts (url);
 
-CREATE INDEX IF NOT EXISTS posts_domain_idx ON posts (domain);
+CREATE INDEX IF NOT EXISTS posts_domain_id_idx ON posts (domain_id);
 
 CREATE INDEX IF NOT EXISTS posts_content_hash_idx ON posts (md5_hash);
 

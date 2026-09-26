@@ -74,6 +74,14 @@ func Run(ctx context.Context, s *Store, sched schedule.Schedule, l *slog.Logger)
 	}
 
 	for f := range merge(ctx, feeds...) {
+		d, err := s.domainStore.GetOrCreateDomain(ctx, f.URL)
+		if err != nil {
+			l.Error("get domain", "source", f.SourceID, "url", f.URL, "err", err)
+			continue
+		}
+
+		f.DomainID = d.ID
+
 		if _, err := s.feedStore.CreateFeed(ctx, f); err != nil {
 			l.Error("create feed", "source", f.SourceID, "url", f.URL, "err", err)
 		}

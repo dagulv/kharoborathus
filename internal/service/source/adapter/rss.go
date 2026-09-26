@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/service/feed"
@@ -93,10 +92,6 @@ func (r rss) ProcessFeed(ctx context.Context, data Document) (out feed.Feed, err
 		Tags:     data.Tags,
 		Authors:  data.Authors,
 		PostedAt: data.PostedAt,
-	}
-
-	if u, err := url.Parse(data.URL); err == nil {
-		out.Domain = u.Hostname()
 	}
 
 	return out, nil

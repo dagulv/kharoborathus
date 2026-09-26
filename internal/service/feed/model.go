@@ -8,7 +8,7 @@ type Feed struct {
 	SourceID     string   `json:"sourceId"`
 	URL          string   `json:"url"`
 	Lang         string   `json:"lang"`
-	Domain       string   `json:"domain"` // Used for icon/brand and link, derived from url
+	DomainID     string   `json:"domainId"` // Used for icon/brand and link, resolved from url
 	Title        string   `json:"title"`
 	ShortContent string   `json:"shortContent"` // Used for preview, derived from content, maybe stripped from html tags
 	Content      string   `json:"content"`      // Html content

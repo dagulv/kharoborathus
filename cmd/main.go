@@ -13,6 +13,7 @@ import (
 
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
+	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/source"
@@ -40,7 +41,8 @@ func app(ctx context.Context) (err error) {
 	}
 
 	feedStore := feed.NewStore(db)
-	sourceStore := source.NewStore(db, feedStore)
+	domainStore := domain.NewStore(db)
+	sourceStore := source.NewStore(db, feedStore, domainStore)
 
 	l := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
