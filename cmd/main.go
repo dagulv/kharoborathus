@@ -13,6 +13,7 @@ import (
 
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
+	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
@@ -73,7 +74,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceStore, trim, adapter.OffPeak, l.WithGroup("sourced"))
+		return source.Run(ctx, &sourceStore, trim, schedule.Always, l.WithGroup("sourced"))
 	})
 
 	g.Go(func() error {
