@@ -61,8 +61,8 @@ func app(ctx context.Context) (err error) {
 	trim := source.NewTrim(&domainStore, llm, l.WithGroup("trim"))
 	classifier, err := adapter.NewJev(env, l.WithGroup("jev"))
 	if err != nil {
-		l.Error("classifier disabled", "err", err)
-		return
+		l.Warn("classifier mocked", "err", err)
+		classifier = adapter.NewJevMock(l.WithGroup("jev"))
 	}
 
 	summarizer := robot.NewSummarizer(llm)
