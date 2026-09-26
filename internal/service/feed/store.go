@@ -2,13 +2,30 @@ package feed
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"iter"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/query"
+	"github.com/jackc/pgx/v5"
 )
+
+const feedColumns = `
+	id,
+	source_id,
+	domain_id,
+	url,
+	lang,
+	title,
+	short_content,
+	content,
+	tags,
+	authors,
+	posted_at,
+	created_at`
 
 type Store struct {
 	db *database.Database
@@ -33,8 +50,8 @@ func (s *Store) ListFeeds(ctx context.Context, filter query.Filter) iter.Seq2[Fe
 		}
 
 		query := fmt.Sprintf(
-			`SELECT id, domain_id, title, content FROM feed %s ORDER BY %s %s LIMIT $1 OFFSET $2`,
-			where, col, dir,
+			`SELECT %s FROM posts %s ORDER BY %s %s LIMIT $1 OFFSET $2`,
+			feedColumns, where, col, dir,
 		)
 
 		rows, err := s.db.Query(ctx, query, args...)
@@ -45,9 +62,8 @@ func (s *Store) ListFeeds(ctx context.Context, filter query.Filter) iter.Seq2[Fe
 		defer rows.Close()
 
 		for rows.Next() {
-			var feed Feed
-
-			if err := rows.Scan(&feed.ID, &feed.DomainID, &feed.Title, &feed.Content); err != nil {
+			feed, err := scanFeed(rows)
+			if err != nil {
 				yield(Feed{}, err)
 				return
 			}
@@ -63,58 +79,50 @@ func (s *Store) ListFeeds(ctx context.Context, filter query.Filter) iter.Seq2[Fe
 	}
 }
 
-func (s *Store) GetFeed(ctx context.Context, id string) (feed Feed, err error) {
-	if err = s.db.QueryRow(ctx, `
-		SELECT
-			id,
-			domain_id,
-			title,
-			content
-		FROM feed
-		WHERE id = $1
-		`, id).Scan(&feed.ID, &feed.DomainID, &feed.Title, &feed.Content); err != nil {
-		return Feed{}, err
-	}
-
-	return feed, nil
+func (s *Store) GetFeed(ctx context.Context, id string) (Feed, error) {
+	return scanFeed(s.db.QueryRow(ctx, `SELECT `+feedColumns+` FROM posts WHERE id = $1`, id))
 }
 
-func (s *Store) CreateFeed(ctx context.Context, feed Feed) (out Feed, err error) {
-	if err = s.db.QueryRow(ctx, `
-		INSERT INTO feed (domain_id, title, content)
-		VALUES ($1, $2, $3)
-		RETURNING
-			id,
-			domain_id,
-			title,
-			content
-		`, feed.DomainID, feed.Title, feed.Content).Scan(&out.ID, &out.DomainID, &out.Title, &out.Content); err != nil {
-		return
-	}
+func (s *Store) FeedExists(ctx context.Context, url string) (exists bool, err error) {
+	err = s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM posts WHERE url = $1)`, url).Scan(&exists)
 
 	return
 }
 
-func (s *Store) UpdateFeed(ctx context.Context, feed Feed) (out Feed, err error) {
-	err = s.db.QueryRow(ctx, `
-		UPDATE feed
+func (s *Store) CreateFeed(ctx context.Context, feed Feed) (Feed, error) {
+	if feed.PostedAt.IsZero() {
+		feed.PostedAt = time.Now()
+	}
+
+	hash := sha256.Sum256([]byte(feed.Content))
+
+	return scanFeed(s.db.QueryRow(ctx, `
+		INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, content, tags, authors, posted_at, content_hash)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), COALESCE($9::text[], '{}'), $10, $11)
+		ON CONFLICT (url) DO NOTHING
+		RETURNING `+feedColumns,
+		feed.SourceID, feed.DomainID, feed.URL, feed.Lang, feed.Title, feed.ShortContent, feed.Content, feed.Tags, feed.Authors, feed.PostedAt, hash[:],
+	))
+}
+
+func (s *Store) UpdateFeed(ctx context.Context, feed Feed) (Feed, error) {
+	hash := sha256.Sum256([]byte(feed.Content))
+
+	return scanFeed(s.db.QueryRow(ctx, `
+		UPDATE posts
 		SET
 			title = $2,
-			content = $3
-			updated_at = now()
+			short_content = $3,
+			content = $4,
+			content_hash = $5
 		WHERE id = $1
-		RETURNING
-			id,
-			title,
-			content
-		`, feed.ID, feed.Title, feed.Content).
-		Scan(&out.ID, &out.Title, &out.Content)
-
-	return
+		RETURNING `+feedColumns,
+		feed.ID, feed.Title, feed.ShortContent, feed.Content, hash[:],
+	))
 }
 
 func (s *Store) DeleteFeed(ctx context.Context, id string) error {
-	tag, err := s.db.Exec(ctx, `DELETE FROM feed WHERE id = $1`, id)
+	tag, err := s.db.Exec(ctx, `DELETE FROM posts WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -124,4 +132,23 @@ func (s *Store) DeleteFeed(ctx context.Context, id string) error {
 	}
 
 	return nil
+}
+
+func scanFeed(row pgx.Row) (feed Feed, err error) {
+	err = row.Scan(
+		&feed.ID,
+		&feed.SourceID,
+		&feed.DomainID,
+		&feed.URL,
+		&feed.Lang,
+		&feed.Title,
+		&feed.ShortContent,
+		&feed.Content,
+		&feed.Tags,
+		&feed.Authors,
+		&feed.PostedAt,
+		&feed.CreatedAt,
+	)
+
+	return
 }

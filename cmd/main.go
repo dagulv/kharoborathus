@@ -40,11 +40,19 @@ func app(ctx context.Context) (err error) {
 		return
 	}
 
+	l := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
 	feedStore := feed.NewStore(db)
 	domainStore := domain.NewStore(db)
 	sourceStore := source.NewStore(db, feedStore, domainStore)
 
-	l := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	llm, err := adapter.NewDeepSeek(env, l.WithGroup("deepseek"))
+	if err != nil {
+		l.Error("llm disabled", "err", err)
+		return
+	}
+
+	trim := source.NewTrim(&domainStore, llm, l.WithGroup("trim"))
 
 	mux := http.NewServeMux()
 	feed.Routes(mux, feedStore, l.WithGroup("feed"))
@@ -65,7 +73,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceStore, adapter.OffPeak, l.WithGroup("sourced"))
+		return source.Run(ctx, &sourceStore, trim, adapter.OffPeak, l.WithGroup("sourced"))
 	})
 
 	g.Go(func() error {

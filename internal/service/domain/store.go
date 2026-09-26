@@ -22,11 +22,10 @@ func (s *Store) GetDomain(ctx context.Context, id string) (domain Domain, err er
 			id,
 			base_url,
 			metadata,
-			created_at,
-			updated_at
+			created_at
 		FROM domains
 		WHERE id = $1
-		`, id).Scan(&domain.ID, &domain.BaseURL, &domain.Metadata, &domain.CreatedAt, &domain.UpdatedAt); err != nil {
+		`, id).Scan(&domain.ID, &domain.BaseURL, &domain.Metadata, &domain.CreatedAt); err != nil {
 		return Domain{}, err
 	}
 
@@ -47,9 +46,8 @@ func (s *Store) GetOrCreateDomain(ctx context.Context, rawURL string) (domain Do
 			id,
 			base_url,
 			metadata,
-			created_at,
-			updated_at
-		`, baseURL).Scan(&domain.ID, &domain.BaseURL, &domain.Metadata, &domain.CreatedAt, &domain.UpdatedAt)
+			created_at
+		`, baseURL).Scan(&domain.ID, &domain.BaseURL, &domain.Metadata, &domain.CreatedAt)
 
 	return
 }
@@ -58,16 +56,14 @@ func (s *Store) UpdateMetadata(ctx context.Context, id string, metadata Metadata
 	err = s.db.QueryRow(ctx, `
 		UPDATE domains
 		SET
-			metadata = $2,
-			updated_at = now()
+			metadata = $2
 		WHERE id = $1
 		RETURNING
 			id,
 			base_url,
 			metadata,
-			created_at,
-			updated_at
-		`, id, metadata).Scan(&domain.ID, &domain.BaseURL, &domain.Metadata, &domain.CreatedAt, &domain.UpdatedAt)
+			created_at
+		`, id, metadata).Scan(&domain.ID, &domain.BaseURL, &domain.Metadata, &domain.CreatedAt)
 
 	return
 }

@@ -9,7 +9,19 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
+	"github.com/jackc/pgx/v5"
 )
+
+const sourceColumns = `
+	id,
+	domain_id,
+	adapter,
+	url,
+	active,
+	rate,
+	metadata,
+	target_tags,
+	created_at`
 
 type Store struct {
 	db          *database.Database
@@ -28,13 +40,18 @@ func NewStore(db *database.Database, feedStore feed.Store, domainStore domain.St
 func (s *Store) ListSources(ctx context.Context, filter Filter) iter.Seq2[Source, error] {
 	return func(yield func(Source, error) bool) {
 		args := []any{filter.GetLimit(), filter.GetOffset()}
-		var where string
+		where := `WHERE deleted_at IS NULL`
+
+		if filter.Active.Valid {
+			args = append(args, filter.Active.V)
+			where += fmt.Sprintf(` AND active = $%d`, len(args))
+		}
 
 		col, dir := filter.GetSort()
 
 		query := fmt.Sprintf(
-			`SELECT id, adapter, url, active, rate FROM source %s ORDER BY %s %s LIMIT $1 OFFSET $2`,
-			where, col, dir,
+			`SELECT %s FROM sources %s ORDER BY %s %s LIMIT $1 OFFSET $2`,
+			sourceColumns, where, col, dir,
 		)
 
 		rows, err := s.db.Query(ctx, query, args...)
@@ -45,9 +62,8 @@ func (s *Store) ListSources(ctx context.Context, filter Filter) iter.Seq2[Source
 		defer rows.Close()
 
 		for rows.Next() {
-			var source Source
-
-			if err := rows.Scan(&source.ID, &source.Adapter, &source.URL, &source.Active, &source.Rate); err != nil {
+			source, err := scanSource(rows)
+			if err != nil {
 				yield(Source{}, err)
 				return
 			}
@@ -63,67 +79,46 @@ func (s *Store) ListSources(ctx context.Context, filter Filter) iter.Seq2[Source
 	}
 }
 
-func (s *Store) GetSource(ctx context.Context, id string) (source Source, err error) {
-	if err = s.db.QueryRow(ctx, `
-		SELECT
-			id,
-			adapter,
-			url,
-			active,
-			rate,
-			created_at
-		FROM source
-		WHERE id = $1
-		`, id).Scan(&source.ID, &source.URL); err != nil {
-		return Source{}, err
-	}
-
-	return source, nil
+func (s *Store) GetSource(ctx context.Context, id string) (Source, error) {
+	return scanSource(s.db.QueryRow(ctx, `SELECT `+sourceColumns+` FROM sources WHERE id = $1`, id))
 }
 
 func (s *Store) CreateSource(ctx context.Context, source Source) (out Source, err error) {
-	if err = s.db.QueryRow(ctx, `
-		INSERT INTO source (adapter, url, active, rate)
-		VALUES ($1, $2, $3, $4)
-		RETURNING
-			id,
-			adapter,
-			url,
-			active,
-			rate,
-			created_at
-		`, source.Adapter, source.URL, source.Active, source.Rate).Scan(&out.ID, &out.Adapter, &out.URL, &out.Active, &out.Rate, &out.CreatedAt); err != nil {
-		return
+	if source.DomainID == "" {
+		d, err := s.domainStore.GetOrCreateDomain(ctx, source.URL)
+		if err != nil {
+			return out, err
+		}
+
+		source.DomainID = d.ID
 	}
 
-	return
+	return scanSource(s.db.QueryRow(ctx, `
+		INSERT INTO sources (domain_id, adapter, url, active, rate, metadata, target_tags)
+		VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '{}'), COALESCE($7::text[], '{}'))
+		RETURNING `+sourceColumns,
+		source.DomainID, source.Adapter, source.URL, source.Active, source.Rate, source.Metadata, source.TargetTags,
+	))
 }
 
-func (s *Store) UpdateSource(ctx context.Context, source Source) (out Source, err error) {
-	err = s.db.QueryRow(ctx, `
-		UPDATE source
+func (s *Store) UpdateSource(ctx context.Context, source Source) (Source, error) {
+	return scanSource(s.db.QueryRow(ctx, `
+		UPDATE sources
 		SET
 			adapter = $2,
-			url = $3
-			active = $4
-			rate = $5
-			updated_at = now()
+			url = $3,
+			active = $4,
+			rate = $5,
+			metadata = COALESCE($6::jsonb, '{}'),
+			target_tags = COALESCE($7::text[], '{}')
 		WHERE id = $1
-		RETURNING
-		id,
-			adapter,
-			url,
-			active,
-			rate,
-			created_at
-		`, source.ID, source.Adapter, source.URL, source.Active, source.Rate).
-		Scan(&out.ID, &out.Adapter, &out.URL, &out.Active, &out.Rate, &out.CreatedAt)
-
-	return
+		RETURNING `+sourceColumns,
+		source.ID, source.Adapter, source.URL, source.Active, source.Rate, source.Metadata, source.TargetTags,
+	))
 }
 
 func (s *Store) DeleteSource(ctx context.Context, id string) error {
-	tag, err := s.db.Exec(ctx, `DELETE FROM source WHERE id = $1`, id)
+	tag, err := s.db.Exec(ctx, `DELETE FROM sources WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -133,4 +128,20 @@ func (s *Store) DeleteSource(ctx context.Context, id string) error {
 	}
 
 	return nil
+}
+
+func scanSource(row pgx.Row) (source Source, err error) {
+	err = row.Scan(
+		&source.ID,
+		&source.DomainID,
+		&source.Adapter,
+		&source.URL,
+		&source.Active,
+		&source.Rate,
+		&source.Metadata,
+		&source.TargetTags,
+		&source.CreatedAt,
+	)
+
+	return
 }

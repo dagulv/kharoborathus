@@ -10,14 +10,13 @@ import (
 
 type Domain struct {
 	ID        string    `json:"id"`
-	BaseURL   string    `json:"baseUrl"` // scheme and host without www, ex https://dn.se
+	BaseURL   string    `json:"baseUrl"`
 	Metadata  Metadata  `json:"metadata"`
 	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type Metadata struct {
-	Trim map[string]json.RawMessage `json:"trim,omitempty"` // trim ruleset by data format, ex html
+	Trim map[string]json.RawMessage `json:"trim,omitempty"`
 }
 
 func BaseURL(rawURL string) (string, error) {

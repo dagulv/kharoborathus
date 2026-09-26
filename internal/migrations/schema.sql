@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS tag_terms (
       WHEN 'en' THEN phraseto_tsquery('english', term)
       ELSE phraseto_tsquery('simple', term)
     END
-  ) STORED PRIMARY KEY (key, lang, term)
+  ) STORED,
+  PRIMARY KEY (key, lang, term)
 );
 
 CREATE TABLE IF NOT EXISTS domains (
@@ -55,17 +56,9 @@ CREATE TABLE IF NOT EXISTS sources (
   deleted_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS posts_domain_id_idx ON posts (domain_id);
-
 CREATE INDEX IF NOT EXISTS sources_url_idx ON sources (url);
 
 CREATE INDEX IF NOT EXISTS sources_active_idx ON sources (active);
-
-CREATE TABLE IF NOT EXISTS source_discovered_by_post (
-  source_id UUID NOT NULL REFERENCES sources (id),
-  post_id UUID NOT NULL REFERENCES posts (id),
-  PRIMARY KEY (source_id, post_id)
-);
 
 CREATE TABLE IF NOT EXISTS posts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -108,13 +101,19 @@ CREATE INDEX IF NOT EXISTS posts_url_idx ON posts (url);
 
 CREATE INDEX IF NOT EXISTS posts_domain_id_idx ON posts (domain_id);
 
-CREATE INDEX IF NOT EXISTS posts_content_hash_idx ON posts (md5_hash);
+CREATE INDEX IF NOT EXISTS posts_content_hash_idx ON posts (content_hash);
 
 CREATE INDEX IF NOT EXISTS posts_tags_idx ON posts USING gin (tags);
 
 CREATE INDEX IF NOT EXISTS posts_posted_at_idx ON posts (posted_at DESC);
 
 CREATE INDEX IF NOT EXISTS posts_ts_idx ON posts USING gin (ts);
+
+CREATE TABLE IF NOT EXISTS source_discovered_by_post (
+  source_id UUID NOT NULL REFERENCES sources (id),
+  post_id UUID NOT NULL REFERENCES posts (id),
+  PRIMARY KEY (source_id, post_id)
+);
 
 CREATE TABLE post_links (
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,

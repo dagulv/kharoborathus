@@ -9,6 +9,7 @@ import (
 
 type Source struct {
 	ID         string            `json:"id"`
+	DomainID   string            `json:"domainId"`
 	Adapter    string            `json:"adapter"` // type of source (rss, etc)
 	URL        string            `json:"url"`
 	Active     bool              `json:"active"`
