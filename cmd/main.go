@@ -20,6 +20,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/service/robot"
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/source"
+	"github.com/dagulv/kharoborathus/internal/service/tagging"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -49,6 +50,7 @@ func app(ctx context.Context) (err error) {
 	domainStore := domain.NewStore(db)
 	sourceStore := source.NewStore(db, feedStore, domainStore)
 	discoveryStore := discovery.NewStore(db)
+	taggingStore := tagging.NewStore(db)
 
 	llm, err := adapter.NewDeepSeek(env, l.WithGroup("deepseek"))
 	if err != nil {
@@ -57,7 +59,14 @@ func app(ctx context.Context) (err error) {
 	}
 
 	trim := source.NewTrim(&domainStore, llm, l.WithGroup("trim"))
+	classifier, err := adapter.NewJev(env, l.WithGroup("jev"))
+	if err != nil {
+		l.Error("classifier disabled", "err", err)
+		return
+	}
+
 	summarizer := robot.NewSummarizer(llm)
+	tagger := robot.NewTagger(classifier)
 	discoverer := robot.NewDiscoverer(llm)
 
 	mux := http.NewServeMux()
@@ -80,6 +89,10 @@ func app(ctx context.Context) (err error) {
 
 	g.Go(func() error {
 		return source.Run(ctx, &sourceStore, trim, summarizer, schedule.Always, l.WithGroup("sourced"))
+	})
+
+	g.Go(func() error {
+		return tagging.Run(ctx, &taggingStore, tagger, l.WithGroup("tagging"))
 	})
 
 	g.Go(func() error {

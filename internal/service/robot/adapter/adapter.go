@@ -19,6 +19,17 @@ type LLM interface {
 }
 
 type Classifier interface {
+	Noul(ctx context.Context, state any, questions map[string]NoulQuestion) (map[string]float64, error)
+}
+
+type NoulQuestion struct {
+	Instructions string        `json:"instructions"`
+	Criteria     *NoulCriteria `json:"criteria,omitempty"`
+}
+
+type NoulCriteria struct {
+	True  string `json:"true"`
+	False string `json:"false"`
 }
 
 type Request struct {

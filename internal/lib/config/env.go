@@ -19,6 +19,7 @@ type Environment struct {
 	HttpHost         string `env:"HTTP_HOST" envDefault:"0.0.0.0:3001"`
 	HttpCors         string `env:"HTTP_CORS" envDefault:"*"`
 	DeepseekAPIKey   string `env:"DEEPSEEK_API_KEY" envDefault:""`
+	TypesafeAPIKey   string `env:"TYPESAFE_API_KEY" envDefault:""`
 }
 
 func Load(useFile ...bool) (e *Environment, err error) {

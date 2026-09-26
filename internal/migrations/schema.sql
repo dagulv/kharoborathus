@@ -137,6 +137,11 @@ CREATE TABLE IF NOT EXISTS discover_checked (
 
 CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts (created_at);
 
+CREATE TABLE IF NOT EXISTS tag_checked (
+  post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,
+  checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE post_links (
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
   to_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
