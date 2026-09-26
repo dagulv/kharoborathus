@@ -14,6 +14,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
+	"github.com/dagulv/kharoborathus/internal/service/discovery"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/dagulv/kharoborathus/internal/service/robot"
@@ -47,6 +48,7 @@ func app(ctx context.Context) (err error) {
 	feedStore := feed.NewStore(db)
 	domainStore := domain.NewStore(db)
 	sourceStore := source.NewStore(db, feedStore, domainStore)
+	discoveryStore := discovery.NewStore(db)
 
 	llm, err := adapter.NewDeepSeek(env, l.WithGroup("deepseek"))
 	if err != nil {
@@ -56,6 +58,7 @@ func app(ctx context.Context) (err error) {
 
 	trim := source.NewTrim(&domainStore, llm, l.WithGroup("trim"))
 	summarizer := robot.NewSummarizer(llm)
+	discoverer := robot.NewDiscoverer(llm)
 
 	mux := http.NewServeMux()
 	feed.Routes(mux, feedStore, l.WithGroup("feed"))
@@ -77,6 +80,10 @@ func app(ctx context.Context) (err error) {
 
 	g.Go(func() error {
 		return source.Run(ctx, &sourceStore, trim, summarizer, schedule.Always, l.WithGroup("sourced"))
+	})
+
+	g.Go(func() error {
+		return discovery.Run(ctx, &discoveryStore, discoverer, llm.Schedule(), l.WithGroup("discovery"))
 	})
 
 	g.Go(func() error {

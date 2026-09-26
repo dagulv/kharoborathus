@@ -115,6 +115,28 @@ CREATE TABLE IF NOT EXISTS source_discovered_by_post (
   PRIMARY KEY (source_id, post_id)
 );
 
+CREATE TABLE IF NOT EXISTS discover_queue (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
+  entity TEXT NOT NULL,
+  action TEXT NOT NULL,
+  query TEXT NOT NULL,
+  searched_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (post_id, query)
+);
+
+CREATE INDEX IF NOT EXISTS discover_queue_pending_idx ON discover_queue (created_at)
+WHERE
+  searched_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS discover_checked (
+  post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,
+  checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts (created_at);
+
 CREATE TABLE post_links (
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
   to_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
