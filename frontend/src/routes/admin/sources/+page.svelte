@@ -1,11 +1,25 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { listSources } from '../admin.remote';
+	import { SvelteMap } from 'svelte/reactivity';
+	import { listSources, syncSource } from '../admin.remote';
 
 	const includeDeleted = $derived(page.url.searchParams.has('deleted'));
 	const sources = $derived(await listSources({ includeDeleted }));
 
 	const fmt = new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeStyle: 'short' });
+
+	const syncState = new SvelteMap<string, 'pending' | 'requested' | 'failed'>();
+
+	async function sync(id: string) {
+		syncState.set(id, 'pending');
+		try {
+			await syncSource(id);
+			syncState.set(id, 'requested');
+		} catch {
+			syncState.set(id, 'failed');
+		}
+		setTimeout(() => syncState.delete(id), 3000);
+	}
 </script>
 
 <svelte:head><title>Sources · Admin</title></svelte:head>
@@ -36,6 +50,7 @@
 				<th class="px-3 py-2 text-right font-medium">Posts</th>
 				<th class="px-3 py-2 font-medium">Last post</th>
 				<th class="px-3 py-2 font-medium">Created</th>
+				<th class="px-3 py-2"></th>
 			</tr>
 		</thead>
 		<tbody>
@@ -80,9 +95,36 @@
 						{source.lastPostedAt ? fmt.format(source.lastPostedAt) : '—'}
 					</td>
 					<td class="px-3 py-2 whitespace-nowrap text-zinc-500">{fmt.format(source.createdAt)}</td>
+					<td class="px-3 py-2 text-right whitespace-nowrap">
+						{#if !source.deletedAt}
+							{@const status = syncState.get(source.id)}
+							<button
+								type="button"
+								onclick={() => sync(source.id)}
+								disabled={status === 'pending'}
+								title="Run the pipeline now and restart the {source.rate}m wait"
+								class={[
+									'rounded border px-2 py-0.5 text-xs disabled:opacity-50',
+									status === 'failed'
+										? 'border-red-300 text-red-700'
+										: status === 'requested'
+											? 'border-green-300 text-green-700'
+											: 'border-zinc-300 hover:bg-zinc-100'
+								]}
+							>
+								{status === 'pending'
+									? 'Syncing…'
+									: status === 'requested'
+										? 'Requested'
+										: status === 'failed'
+											? 'Failed'
+											: 'Sync'}
+							</button>
+						{/if}
+					</td>
 				</tr>
 			{:else}
-				<tr><td colspan="8" class="px-3 py-6 text-center text-zinc-500">No sources</td></tr>
+				<tr><td colspan="9" class="px-3 py-6 text-center text-zinc-500">No sources</td></tr>
 			{/each}
 		</tbody>
 	</table>

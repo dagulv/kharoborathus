@@ -34,7 +34,7 @@ func main() {
 }
 
 func app(ctx context.Context) (err error) {
-	env, err := config.Load()
+	env, err := config.Load(true)
 	if err != nil {
 		return
 	}
@@ -70,8 +70,11 @@ func app(ctx context.Context) (err error) {
 	tagGenerator := robot.NewTagGenerator(llm)
 	discoverer := robot.NewDiscoverer(llm)
 
+	syncs := make(chan source.Source, source.SyncQueue)
+
 	mux := http.NewServeMux()
 	feed.Routes(mux, feedStore, l.WithGroup("feed"))
+	source.Routes(mux, &sourceStore, syncs, l.WithGroup("source"))
 
 	server := &http.Server{
 		Addr:    env.HttpHost,
@@ -89,7 +92,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceStore, trim, summarizer, schedule.Always, l.WithGroup("sourced"))
+		return source.Run(ctx, &sourceStore, syncs, trim, summarizer, schedule.Always, l.WithGroup("sourced"))
 	})
 
 	g.Go(func() error {

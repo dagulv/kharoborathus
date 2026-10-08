@@ -80,7 +80,7 @@ func (s *Store) ListSources(ctx context.Context, filter Filter) iter.Seq2[Source
 }
 
 func (s *Store) GetSource(ctx context.Context, id string) (Source, error) {
-	return scanSource(s.db.QueryRow(ctx, `SELECT `+sourceColumns+` FROM sources WHERE id = $1`, id))
+	return scanSource(s.db.QueryRow(ctx, `SELECT `+sourceColumns+` FROM sources WHERE id = $1 AND deleted_at IS NULL`, id))
 }
 
 func (s *Store) CreateSource(ctx context.Context, source Source) (out Source, err error) {

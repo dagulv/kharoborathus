@@ -1,6 +1,7 @@
 import * as v from 'valibot';
 import { error, invalid, redirect } from '@sveltejs/kit';
-import { form, query } from '$app/server';
+import { command, form, query } from '$app/server';
+import { API_URL } from '$app/env/private';
 import { db } from '#lib/server/db.js';
 import type { Post, PostSummary, Source } from '#lib/types.js';
 
@@ -183,3 +184,12 @@ export const createSource = form(
 		redirect(303, '/admin/sources');
 	}
 );
+
+export const syncSource = command(uuid, async (id) => {
+	const res = await fetch(`${API_URL}/sources/${id}/sync`, { method: 'POST' }).catch(() => {
+		error(502, 'Go app unreachable');
+	});
+
+	if (res.status === 404) error(404, 'Source not found');
+	if (!res.ok) error(502, `Go app responded ${res.status}`);
+});

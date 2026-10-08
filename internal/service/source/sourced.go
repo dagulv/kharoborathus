@@ -80,8 +80,8 @@ func addSink(sinks map[string]chan Source, name string) <-chan Source {
 	return c
 }
 
-func Run(ctx context.Context, s *Store, trim *Trim, summarizer *robot.Summarizer, sched schedule.Schedule, l *slog.Logger) error {
-	sources := continuousSources(ctx, s, sched, l)
+func Run(ctx context.Context, s *Store, syncs <-chan Source, trim *Trim, summarizer *robot.Summarizer, sched schedule.Schedule, l *slog.Logger) error {
+	sources := continuousSources(ctx, s, syncs, sched, l)
 
 	pipelines := initPipelines(ctx, sources, s, trim, summarizer, l)
 
@@ -100,7 +100,7 @@ func Run(ctx context.Context, s *Store, trim *Trim, summarizer *robot.Summarizer
 	return ctx.Err()
 }
 
-func continuousSources(ctx context.Context, s *Store, sched schedule.Schedule, l *slog.Logger) <-chan Source {
+func continuousSources(ctx context.Context, s *Store, syncs <-chan Source, sched schedule.Schedule, l *slog.Logger) <-chan Source {
 	out := make(chan Source)
 
 	go func() {
@@ -112,27 +112,55 @@ func continuousSources(ctx context.Context, s *Store, sched schedule.Schedule, l
 		var lastInterval time.Time
 		sources := make([]Source, 0)
 
-		for range tick {
-			if time.Since(lastInterval) > refreshInterval {
-				lastInterval = time.Now()
-
-				if active, err := activeSources(ctx, s); err != nil {
-					l.Error("unable to get sources", "err", err)
-				} else {
-					sources = active
-				}
+		dispatch := func(source Source) bool {
+			select {
+			case out <- source:
+				paused[source.ID] = time.Now().Add(time.Duration(source.Rate) * time.Minute)
+				return true
+			case <-ctx.Done():
+				return false
 			}
+		}
 
-			for _, source := range sources {
-				if pause, ok := paused[source.ID]; ok && time.Now().Before(pause) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+
+			// Manual sync skips the rate and restarts the source's wait from now
+			case source, ok := <-syncs:
+				if !ok {
+					syncs = nil
 					continue
 				}
 
-				select {
-				case out <- source:
-					paused[source.ID] = time.Now().Add(time.Duration(source.Rate) * time.Minute)
-				case <-ctx.Done():
+				if !dispatch(source) {
 					return
+				}
+
+			case _, ok := <-tick:
+				if !ok {
+					return
+				}
+
+				if time.Since(lastInterval) > refreshInterval {
+					lastInterval = time.Now()
+
+					if active, err := activeSources(ctx, s); err != nil {
+						l.Error("unable to get sources", "err", err)
+					} else {
+						sources = active
+					}
+				}
+
+				for _, source := range sources {
+					if pause, ok := paused[source.ID]; ok && time.Now().Before(pause) {
+						continue
+					}
+
+					if !dispatch(source) {
+						return
+					}
 				}
 			}
 		}
