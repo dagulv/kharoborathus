@@ -21,6 +21,7 @@ type Feed struct {
 	// MD5Hash      string    `json:"md5Hash"` // Maybe needed, derived from external ids, URL, other.
 	PostedAt  time.Time `json:"postedAt"`
 	CreatedAt time.Time `json:"createdAt"`
+	Page      []byte    `json:"-"` // Article html already fetched by the adapter, trim skips refetching it
 }
 
 type Filter struct {

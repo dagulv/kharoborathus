@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -10,9 +11,9 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-var _ Adapter[Document] = rss{}
+var _ Adapter[rssDocument] = rss{}
 
-type Document struct {
+type rssDocument struct {
 	URL      string
 	Title    string
 	Content  string
@@ -20,15 +21,17 @@ type Document struct {
 	Authors  []string
 	Tags     []string
 	PostedAt time.Time
+	Page     []byte
 }
 
 type rss struct {
-	client *http.Client
-	fp     *gofeed.Parser
-	l      *slog.Logger
+	client    *http.Client
+	fp        *gofeed.Parser
+	feedStore *feed.Store
+	l         *slog.Logger
 }
 
-func NewRSS(l *slog.Logger) Adapter[Document] {
+func NewRSS(feedStore *feed.Store, l *slog.Logger) Adapter[rssDocument] {
 	client := &http.Client{
 		Timeout: time.Second * 20,
 	}
@@ -37,53 +40,84 @@ func NewRSS(l *slog.Logger) Adapter[Document] {
 	fp.Client = client
 
 	return rss{
-		client: client,
-		fp:     fp,
-		l:      l,
+		client:    client,
+		fp:        fp,
+		feedStore: feedStore,
+		l:         l,
 	}
 }
 
-func (r rss) FetchFromSource(ctx context.Context, url string) (data []Document, err error) {
+func (r rss) FetchFromSource(ctx context.Context, url string) (<-chan rssDocument, error) {
 	f, err := r.fp.ParseURLWithContext(url, ctx)
 	if err != nil {
-		return
+		return nil, fmt.Errorf("err parse rss: %w", err)
 	}
 
-	data = make([]Document, 0, len(f.Items))
+	out := make(chan rssDocument)
 
-	for _, item := range f.Items {
-		doc := Document{
-			URL:     item.Link,
-			Title:   item.Title,
-			Content: item.Content,
-			Lang:    f.Language,
-			Tags:    item.Categories,
-			Authors: make([]string, 0, len(item.Authors)),
-		}
+	go func() {
+		defer close(out)
 
-		if doc.Content == "" {
-			doc.Content = item.Description
-		}
-
-		if item.PublishedParsed != nil {
-			doc.PostedAt = *item.PublishedParsed
-		}
-
-		for _, author := range item.Authors {
-			if author == nil || author.Name == "" {
-				continue
+		for _, item := range f.Items {
+			doc := rssDocument{
+				URL:     item.Link,
+				Title:   item.Title,
+				Content: item.Content,
+				Lang:    f.Language,
+				Tags:    item.Categories,
+				Authors: make([]string, 0, len(item.Authors)),
 			}
 
-			doc.Authors = append(doc.Authors, author.Name)
-		}
+			if doc.Content == "" {
+				doc.Content = item.Description
+			}
 
-		data = append(data, doc)
+			if item.PublishedParsed != nil {
+				doc.PostedAt = *item.PublishedParsed
+			}
+
+			for _, author := range item.Authors {
+				if author == nil || author.Name == "" {
+					continue
+				}
+
+				doc.Authors = append(doc.Authors, author.Name)
+			}
+
+			select {
+			case out <- doc:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return out, nil
+}
+
+func (r rss) Filter(ctx context.Context, data rssDocument) (bool, error) {
+	exists, err := r.feedStore.FeedExists(ctx, data.URL)
+	if err != nil {
+		return false, fmt.Errorf("err feed exists: %w", err)
 	}
+
+	return !exists, nil
+}
+
+// A failed page fetch keeps the item, it is stored with the rss content untrimmed.
+func (r rss) FetchContent(ctx context.Context, data rssDocument) (rssDocument, error) {
+	page, err := FetchHTML(ctx, r.client, data.URL)
+	if err != nil {
+		r.l.Debug("fetch article", "url", data.URL, "err", err)
+		return data, nil
+	}
+
+	data.Page = page
 
 	return data, nil
 }
 
-func (r rss) ProcessFeed(ctx context.Context, data Document) (out feed.Feed, err error) {
+func (r rss) ProcessFeed(ctx context.Context, data rssDocument) (out feed.Feed, err error) {
 	out = feed.Feed{
 		URL:      data.URL,
 		Lang:     data.Lang,
@@ -92,6 +126,7 @@ func (r rss) ProcessFeed(ctx context.Context, data Document) (out feed.Feed, err
 		Tags:     data.Tags,
 		Authors:  data.Authors,
 		PostedAt: data.PostedAt,
+		Page:     data.Page,
 	}
 
 	return out, nil

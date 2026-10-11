@@ -4,11 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
-	"io"
 	"log/slog"
-	"mime"
-	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,8 +29,6 @@ const (
 	refreshInterval = time.Minute
 	sourcePage      = 200
 	excerptLen      = 280
-	articleTimeout  = 20 * time.Second
-	maxArticleSize  = 5 << 20
 )
 
 type Pipeline interface {
@@ -45,7 +39,8 @@ func initPipelines(ctx context.Context, in <-chan Source, s *Store, trim *Trim, 
 	sinks := make(map[string]chan Source)
 
 	pipelines := []Pipeline{
-		newPipeline(adapter.NewRSS(l), addSink(sinks, "rss"), s, trim, summarizer),
+		newPipeline(adapter.NewRSS(&s.feedStore, l), addSink(sinks, "rss"), s, trim, summarizer),
+		newPipeline(adapter.NewPage(&s.feedStore, l), addSink(sinks, "page"), s, trim, summarizer),
 	}
 
 	go func() {
@@ -208,16 +203,17 @@ type pipeline[T any] struct {
 	store      *Store
 	trim       *Trim
 	summarizer *robot.Summarizer
-	client     *http.Client
 }
 
 func newPipeline[T any](a adapter.Adapter[T], in <-chan Source, store *Store, trim *Trim, summarizer *robot.Summarizer) Pipeline {
-	return pipeline[T]{Adapter: a, in: in, store: store, trim: trim, summarizer: summarizer, client: &http.Client{Timeout: articleTimeout}}
+	return pipeline[T]{Adapter: a, in: in, store: store, trim: trim, summarizer: summarizer}
 }
 
 func (p pipeline[T]) Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed {
 	data := fanOut(ctx, workers, p.in, l, p.fetchFromSource)
-	feeds := fanOut(ctx, workers, data, l, p.processFeed)
+	filtered := fanOut(ctx, workers, data, l, p.filter)
+	content := fanOut(ctx, workers, filtered, l, p.fetchContent)
+	feeds := fanOut(ctx, workers, content, l, p.processFeed)
 	fresh := fanOut(ctx, workers, feeds, l, p.resolveFeed)
 	trimmed := fanOut(ctx, workers, fresh, l, p.trimFeed)
 	converted := fanOut(ctx, workers, trimmed, l, p.markdownFeed)
@@ -238,12 +234,64 @@ func (p pipeline[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-c
 				continue
 			}
 
-			for _, data := range dataset {
+			for data := range dataset {
 				select {
 				case out <- fetched[T]{source: source, data: data}:
 				case <-ctx.Done():
 					return
 				}
+			}
+		}
+	}()
+
+	return out
+}
+
+func (p pipeline[T]) filter(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan fetched[T] {
+	out := make(chan fetched[T])
+
+	go func() {
+		defer close(out)
+
+		for f := range in {
+			keep, err := p.Filter(ctx, f.data)
+			if err != nil {
+				l.Error("filter", "source", f.source.ID, "url", f.source.URL, "err", err)
+				continue
+			}
+
+			if !keep {
+				continue
+			}
+
+			select {
+			case out <- f:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return out
+}
+
+func (p pipeline[T]) fetchContent(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan fetched[T] {
+	out := make(chan fetched[T])
+
+	go func() {
+		defer close(out)
+
+		for f := range in {
+			data, err := p.FetchContent(ctx, f.data)
+			if err != nil {
+				l.Debug("fetchContent", "source", f.source.ID, "url", f.source.URL, "err", err)
+				continue
+			}
+
+			select {
+			case out <- fetched[T]{source: f.source, data: data}:
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
@@ -284,13 +332,6 @@ func (p pipeline[T]) resolveFeed(ctx context.Context, l *slog.Logger, in <-chan 
 		defer close(out)
 
 		for f := range in {
-			if exists, err := p.store.feedStore.FeedExists(ctx, f.URL); err != nil {
-				l.Error("feed exists", "source", f.SourceID, "url", f.URL, "err", err)
-				continue
-			} else if exists {
-				continue
-			}
-
 			d, err := p.store.domainStore.GetOrCreateDomain(ctx, f.URL)
 			if err != nil {
 				l.Error("get domain", "source", f.SourceID, "url", f.URL, "err", err)
@@ -319,10 +360,8 @@ func (p pipeline[T]) trimFeed(ctx context.Context, l *slog.Logger, in <-chan res
 		for r := range in {
 			f := r.feed
 
-			if page, err := p.fetchArticle(ctx, f.URL); err != nil {
-				l.Debug("fetch article", "source", f.SourceID, "url", f.URL, "err", err)
-			} else {
-				f = p.trim.Apply(ctx, r.domain, f, page)
+			if f.Page != nil {
+				f = p.trim.Apply(ctx, r.domain, f, f.Page)
 			}
 
 			select {
@@ -334,32 +373,6 @@ func (p pipeline[T]) trimFeed(ctx context.Context, l *slog.Logger, in <-chan res
 	}()
 
 	return out
-}
-
-func (p pipeline[T]) fetchArticle(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("User-Agent", "kharoborathus/1.0")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml")
-
-	res, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %s", res.Status)
-	}
-
-	if mt, _, err := mime.ParseMediaType(res.Header.Get("Content-Type")); err == nil && mt != "text/html" && mt != "application/xhtml+xml" {
-		return nil, fmt.Errorf("content type %s", mt)
-	}
-
-	return io.ReadAll(io.LimitReader(res.Body, maxArticleSize))
 }
 
 func (p pipeline[T]) markdownFeed(ctx context.Context, l *slog.Logger, in <-chan feed.Feed) <-chan feed.Feed {
