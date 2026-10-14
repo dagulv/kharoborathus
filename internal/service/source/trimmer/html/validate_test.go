@@ -56,7 +56,7 @@ func TestGenerateRuleset(t *testing.T) {
 	weaker := goodRule()
 	weaker.Exclude = []string{".promo", ".updated"}
 
-	llm := &fakeLLM{answers: []Rule{weaker, invented, goodRule()}}
+	llm := &fakeLLM{answers: []any{weaker, invented, goodRule()}}
 	tr := New(llm, "")
 
 	rule, err := tr.GenerateRuleset(context.Background(), pages(s, 0, 8))
@@ -72,7 +72,7 @@ func TestGenerateRuleset(t *testing.T) {
 		t.Errorf("prompt should hold three skeletons and no article text:\n%s", p)
 	}
 
-	llm = &fakeLLM{answers: []Rule{invented, {Include: nil, Reasoning: "no clear container"}}}
+	llm = &fakeLLM{answers: []any{invented, Rule{Include: nil, Reasoning: "no clear container"}}}
 
 	if _, err := New(llm, "").GenerateRuleset(context.Background(), pages(s, 0, 8)); !errors.Is(err, trimmer.ErrNoRule) ||
 		!errors.Is(err, ErrSelectorUngrounded) || !errors.Is(err, ErrAbstained) {

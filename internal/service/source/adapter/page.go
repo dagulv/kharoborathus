@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -15,6 +13,10 @@ import (
 )
 
 var _ Adapter[pageDocument] = page{}
+
+type Linker interface {
+	Links(ctx context.Context, url string, listing []byte) ([]string, error)
+}
 
 type pageDocument struct {
 	URL  string
@@ -25,25 +27,22 @@ type pageDocument struct {
 type page struct {
 	client    *http.Client
 	feedStore *feed.Store
+	linker    Linker
 	l         *slog.Logger
 }
 
-func NewPage(feedStore *feed.Store, l *slog.Logger) Adapter[pageDocument] {
+func NewPage(feedStore *feed.Store, linker Linker, l *slog.Logger) Adapter[pageDocument] {
 	return page{
 		client: &http.Client{
 			Timeout: time.Second * 20,
 		},
 		feedStore: feedStore,
+		linker:    linker,
 		l:         l,
 	}
 }
 
 func (r page) FetchFromSource(ctx context.Context, rawURL string) (<-chan pageDocument, error) {
-	base, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, fmt.Errorf("err parse page url: %w", err)
-	}
-
 	listing, err := FetchHTML(ctx, r.client, rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("err fetch listing: %w", err)
@@ -55,30 +54,18 @@ func (r page) FetchFromSource(ctx context.Context, rawURL string) (<-chan pageDo
 	}
 
 	lang, _ := doc.Find("html").Attr("lang")
+
+	links, err := r.linker.Links(ctx, rawURL, listing)
+	if err != nil {
+		return nil, fmt.Errorf("err links: %w", err)
+	}
+
 	out := make(chan pageDocument)
 
 	go func() {
 		defer close(out)
 
-		seen := map[string]bool{base.String(): true}
-
-		for _, s := range doc.Find("a[href]").EachIter() {
-			href, _ := s.Attr("href")
-
-			u, err := base.Parse(strings.TrimSpace(href))
-			if err != nil || u.Host != base.Host || (u.Scheme != "http" && u.Scheme != "https") {
-				continue
-			}
-
-			u.Fragment = ""
-			link := u.String()
-
-			if seen[link] {
-				continue
-			}
-
-			seen[link] = true
-
+		for _, link := range links {
 			select {
 			case out <- pageDocument{URL: link, Lang: lang}:
 			case <-ctx.Done():

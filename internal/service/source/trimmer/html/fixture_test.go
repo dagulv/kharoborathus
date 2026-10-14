@@ -76,7 +76,7 @@ func goodRule() Rule {
 
 type fakeLLM struct {
 	mu      sync.Mutex
-	answers []Rule
+	answers []any
 	calls   int
 	prompts []string
 }

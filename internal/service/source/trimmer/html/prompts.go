@@ -13,9 +13,11 @@ var promptFiles embed.FS
 var prompts = loadPrompts()
 
 type promptSet struct {
-	system string
-	page   *template.Template
-	fields map[string]string
+	system      string
+	page        *template.Template
+	fields      map[string]string
+	linksSystem string
+	linkFields  map[string]string
 }
 
 func loadPrompts() promptSet {
@@ -24,7 +26,9 @@ func loadPrompts() promptSet {
 		page: template.Must(template.New("user.md").
 			Funcs(template.FuncMap{"add": func(a, b int) int { return a + b }}).
 			Parse(readPrompt("user.md"))),
-		fields: sections(readPrompt("rule.md")),
+		fields:      sections(readPrompt("rule.md")),
+		linksSystem: strings.TrimSpace(readPrompt("links_system.md")),
+		linkFields:  sections(readPrompt("link_rule.md")),
 	}
 }
 

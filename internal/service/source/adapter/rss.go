@@ -21,7 +21,6 @@ type rssDocument struct {
 	Authors  []string
 	Tags     []string
 	PostedAt time.Time
-	Page     []byte
 }
 
 type rss struct {
@@ -104,16 +103,7 @@ func (r rss) Filter(ctx context.Context, data rssDocument) (bool, error) {
 	return !exists, nil
 }
 
-// A failed page fetch keeps the item, it is stored with the rss content untrimmed.
 func (r rss) FetchContent(ctx context.Context, data rssDocument) (rssDocument, error) {
-	page, err := FetchHTML(ctx, r.client, data.URL)
-	if err != nil {
-		r.l.Debug("fetch article", "url", data.URL, "err", err)
-		return data, nil
-	}
-
-	data.Page = page
-
 	return data, nil
 }
 
@@ -126,7 +116,6 @@ func (r rss) ProcessFeed(ctx context.Context, data rssDocument) (out feed.Feed, 
 		Tags:     data.Tags,
 		Authors:  data.Authors,
 		PostedAt: data.PostedAt,
-		Page:     data.Page,
 	}
 
 	return out, nil

@@ -14,6 +14,13 @@ type Trimmer[R any] interface {
 	Trim(rule R, data []byte) (Extraction, error)
 }
 
+type Linker[R any] interface {
+	GenerateRuleset(ctx context.Context, samples []Sample, fetch Fetch) (R, error)
+	Links(rule R, listing Sample) ([]string, error)
+}
+
+type Fetch func(ctx context.Context, url string) ([]byte, error)
+
 type Sample struct {
 	URL  string
 	Data []byte

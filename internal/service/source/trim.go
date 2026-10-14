@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -17,37 +18,51 @@ import (
 
 const (
 	trimFormat      = "html"
+	linksFormat     = "links"
 	ruleSamples     = 8
+	listingSamples  = 3
+	listingGap      = 30 * time.Minute
 	retryGeneration = 24 * time.Hour
+	fetchTimeout    = 20 * time.Second
 )
 
 type Trim struct {
 	domainStore *domain.Store
 	html        trimmer.Trimmer[html.Rule]
+	linker      trimmer.Linker[html.LinkRule]
 	llm         adapter.LLM
+	client      *http.Client
 	l           *slog.Logger
 
 	generating chan struct{}
 
-	mu       sync.Mutex
-	samples  map[string][]trimmer.Sample
-	failedAt map[string]time.Time
+	mu            sync.Mutex
+	samples       map[string][]trimmer.Sample
+	failedAt      map[string]time.Time
+	listings      map[string][]trimmer.Sample
+	listedAt      map[string]time.Time
+	linksFailedAt map[string]time.Time
 }
 
 func NewTrim(domains *domain.Store, llm adapter.LLM, l *slog.Logger) *Trim {
 	return &Trim{
-		domainStore: domains,
-		html:        html.New(llm, ""),
-		llm:         llm,
-		l:           l,
-		generating:  make(chan struct{}, 1),
-		samples:     make(map[string][]trimmer.Sample),
-		failedAt:    make(map[string]time.Time),
+		domainStore:   domains,
+		html:          html.New(llm, ""),
+		linker:        html.NewLinker(llm, ""),
+		llm:           llm,
+		client:        &http.Client{Timeout: fetchTimeout},
+		l:             l,
+		generating:    make(chan struct{}, 1),
+		samples:       make(map[string][]trimmer.Sample),
+		failedAt:      make(map[string]time.Time),
+		listings:      make(map[string][]trimmer.Sample),
+		listedAt:      make(map[string]time.Time),
+		linksFailedAt: make(map[string]time.Time),
 	}
 }
 
 func (t *Trim) Apply(ctx context.Context, d domain.Domain, f feed.Feed, page []byte) feed.Feed {
-	rule, ok := ruleOf(d)
+	rule, ok := ruleOf[html.Rule](d, trimFormat)
 
 	if e, err := t.html.Trim(rule, page); err != nil {
 		t.l.Error("trim", "domain", d.BaseURL, "url", f.URL, "err", err)
@@ -124,7 +139,7 @@ func (t *Trim) generate(ctx context.Context, d domain.Domain, samples []trimmer.
 		return
 	}
 
-	if err := t.saveRule(ctx, d.ID, rule); err != nil {
+	if err := t.saveRule(ctx, d.ID, trimFormat, rule); err != nil {
 		t.l.Error("save trim rule", "domain", d.BaseURL, "err", err)
 		return
 	}
@@ -132,7 +147,7 @@ func (t *Trim) generate(ctx context.Context, d domain.Domain, samples []trimmer.
 	t.l.Info("trim rule generated", "domain", d.BaseURL, "reasoning", rule.Reasoning)
 }
 
-func (t *Trim) saveRule(ctx context.Context, domainID string, rule html.Rule) error {
+func (t *Trim) saveRule(ctx context.Context, domainID, format string, rule any) error {
 	raw, err := json.Marshal(rule)
 	if err != nil {
 		return err
@@ -147,21 +162,22 @@ func (t *Trim) saveRule(ctx context.Context, domainID string, rule html.Rule) er
 		d.Metadata.Trim = make(map[string]json.RawMessage)
 	}
 
-	d.Metadata.Trim[trimFormat] = raw
+	d.Metadata.Trim[format] = raw
 
 	_, err = t.domainStore.UpdateMetadata(ctx, d.ID, d.Metadata)
 
 	return err
 }
 
-func ruleOf(d domain.Domain) (rule html.Rule, ok bool) {
-	raw, ok := d.Metadata.Trim[trimFormat]
+func ruleOf[R any](d domain.Domain, format string) (rule R, ok bool) {
+	raw, ok := d.Metadata.Trim[format]
 	if !ok {
 		return rule, false
 	}
 
 	if err := json.Unmarshal(raw, &rule); err != nil {
-		return html.Rule{}, false
+		var zero R
+		return zero, false
 	}
 
 	return rule, true

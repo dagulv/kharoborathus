@@ -40,7 +40,7 @@ func initPipelines(ctx context.Context, in <-chan Source, s *Store, trim *Trim, 
 
 	pipelines := []Pipeline{
 		newPipeline(adapter.NewRSS(&s.feedStore, l), addSink(sinks, "rss"), s, trim, summarizer),
-		newPipeline(adapter.NewPage(&s.feedStore, l), addSink(sinks, "page"), s, trim, summarizer),
+		newPipeline(adapter.NewPage(&s.feedStore, trim, l), addSink(sinks, "page"), s, trim, summarizer),
 	}
 
 	go func() {
@@ -362,6 +362,11 @@ func (p pipeline[T]) trimFeed(ctx context.Context, l *slog.Logger, in <-chan res
 
 			if f.Page != nil {
 				f = p.trim.Apply(ctx, r.domain, f, f.Page)
+			}
+
+			if f.Content == "" {
+				l.Debug("no content", "source", f.SourceID, "url", f.URL)
+				continue
 			}
 
 			select {
