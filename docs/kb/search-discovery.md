@@ -15,8 +15,8 @@ Searches Brave News for other coverage of events found in trusted posts. An LLM 
 
 ## Design
 
-1. Limit `ListUndiscoveredPosts` to trusted posts.
-2. A search worker reads `ListQueue`.
+1. Event extraction keeps running on every post, since [event linking](event-linking.md) needs events from all posts.
+2. A search worker reads `ListQueue`, limited to items from trusted posts.
 3. Dedupe: skip the query and `MarkSearched` when the same lowercased `entity` and `action` were searched inside the dedupe window. `discover_queue` is only unique per post, so many posts about one event would each search it.
 4. Call Brave News through a `Searcher` interface.
 5. An LLM sees each result's `title`, `description`, `extra_snippets` and `page_age` plus the event's `entity` and `action`. It keeps only results about that event.
