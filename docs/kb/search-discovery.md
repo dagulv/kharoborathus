@@ -20,7 +20,7 @@ Searches Brave News for other coverage of events found in trusted posts. An LLM 
 3. Dedupe: skip the query and `MarkSearched` when the same lowercased `entity` and `action` were searched inside the dedupe window. `discover_queue` is only unique per post, so many posts about one event would each search it.
 4. Call Brave News through a `Searcher` interface.
 5. An LLM sees each result's `title`, `description`, `extra_snippets` and `page_age` plus the event's `entity` and `action`. It keeps only results about that event.
-6. Insert kept URLs into `link_queue` with `via = 'search'` and `discover_item_id`.
+6. Insert kept URLs into `link_queue` with `via = 'search'` and `discover_item_id`. Brave snippets are dropped after filtering, so only URLs are stored.
 7. `MarkSearched`.
 
 Search engine URLs never enter `link_queue`. Only result URLs do.
@@ -61,5 +61,4 @@ CREATE INDEX IF NOT EXISTS discover_queue_event_idx ON discover_queue (lower(ent
 
 ## Open questions
 
-- Does the Search plan allow storing result URLs in `link_queue`, or is a storage-rights plan needed?
-- Should `country` follow the source's country once non-Swedish sources are added?
+- None. `country` stays `SE` until non-Swedish sources exist.

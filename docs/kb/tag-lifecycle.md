@@ -21,13 +21,14 @@ States: `proposed`, `active`, `dormant`. A merged synonym becomes an `alias`.
 
 1. **Propose.**
    - `TagGenerator` runs only on trusted posts.
+   - Its prompt asks for topic tags only, no sentiment tags like `bullish`. Those can never gate and only add Jev cost.
    - Output is remapped through `tag_aliases`, then written to `tag_proposals`.
    - Proposals stay out of `tags`, because search reads `tag_terms` and would surface them.
 2. **Promote.** A periodic job promotes a key when all checks pass:
    - Support: enough posts from enough distinct domains inside the window. Distinct domains stop one site's house jargon.
    - Not a duplicate: the term is tested with `to_tsvector(cfg, term) @@ matcher` against active terms in the same language. Only a hit goes to an LLM merge check. A confirmed duplicate becomes an alias.
    - Consistent: Jev scores the candidate on its supporting posts. Most must reach the tag threshold.
-   - Broadness: Jev scores the candidate on a random sample of recent posts. The match rate sets `gate`.
+   - Broadness: Jev scores the candidate on a random sample of recent posts. The match rate sets `gate`. A weekly job recomputes `match_rate` and `gate` for active tags.
 3. **Insert.** Promotion reuses `AddTags` to write `tags` and `tag_terms`.
 4. **Alias.**
    - The alias term is added as another `tag_terms` row under the canonical key. Search, `matcher` and the Tagger question pick it up for free.
@@ -80,5 +81,4 @@ All values are untested starting points.
 
 ## Open questions
 
-- Should the generator prompt stop suggesting sentiment tags like `bullish`, since they will never gate?
-- Should `match_rate` be recomputed periodically so a tag can lose or gain `gate`?
+- What happens to existing sentiment tags already on posts?

@@ -19,7 +19,7 @@ Nothing yet. Post content is markdown with absolute links, because the markdown 
 4. Skip a link when:
    - Its URL is already in `posts` or `link_queue`.
    - It points to the post's own domain, which is mostly navigation.
-   - Its domain is on the blocklist of social, video and file hosts.
+   - Its domain is on the blocklist of social, video and file hosts. The blocklist lives in code until admin needs to edit it.
    - It is not http or https.
 5. Insert the rest into `link_queue` with `via = 'link'` and `from_post_id`.
 6. Mark the post scanned.
@@ -43,4 +43,4 @@ CREATE TABLE IF NOT EXISTS link_checked (
 
 ## Open questions
 
-- Should the blocklist live in code or in the database?
+- None.
