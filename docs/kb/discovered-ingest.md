@@ -25,9 +25,9 @@ Chosen over a `queue` adapter in the source pipeline. That adapter would summari
 3. Fetch, resolve domain, trim, convert to markdown.
 4. Reject on failed trimmer checks, short content or a missing title.
 5. Run the [gate](classifier-gate.md). Store scores in `gate_scores`.
-6. On reject, set `status = 'rejected'`. Content is not stored.
+6. On reject, set `status = 'rejected'`. Only scores are kept. Raw content waits for the S3 TODO in the README.
 7. On accept:
-   - Get or create the domain's source with `origin = 'discovered'` and `active = false`.
+   - Get or create the domain's source. A new one is quarantined, see [source-promotion](source-promotion.md).
    - Record `source_discovered_by_post` for the first post that led there.
    - Summarize and insert the post.
    - Insert `post_links` from the origin post with relation `discovered` and metadata `via` and `query`.
@@ -65,4 +65,4 @@ WHERE
 
 ## Open questions
 
-- Should rejected content be stored for threshold tuning, or are scores enough?
+- None.

@@ -16,16 +16,18 @@ The Jev tagging call doubles as a relevance gate. Discovered content must pass i
 **Hard gate for discovered content**
 
 1. Run `Tagger` on the trimmed markdown.
-2. Add one question to the same Jev batch: is this a news article?
+2. Add one question to the same Jev batch: is this a news article or press release?
 3. Accept if the article question passes and any tag with `gate = true` scores at least the threshold.
+4. Discovered content uses the same threshold as tagging. Tune it later from `link_queue.gate_scores`.
 
 **Shadow gate for trusted content**
 
 1. The tagging worker runs as today.
 2. A trusted post passes if it gets any of its source's `target_tags`. If `target_tags` is empty, any gate tag counts.
 3. Store the result. Never reject the post.
-4. A source whose pass rate drops below the floor is flagged in admin.
-5. You review flagged sources only, and keep, retarget or deactivate them.
+4. A source whose pass rate drops below the floor gets `flagged_at`.
+5. A flagged promoted source is also demoted, see [source-promotion](source-promotion.md). A flagged manual source keeps running.
+6. You review flagged sources only, and keep, retarget or deactivate them.
 
 ## Schema changes
 
@@ -44,5 +46,4 @@ ALTER TABLE sources ADD COLUMN IF NOT EXISTS flagged_at TIMESTAMPTZ;
 
 ## Open questions
 
-- Should discovered content need a stricter threshold than 0.8?
-- Should press releases count as articles?
+- None.
