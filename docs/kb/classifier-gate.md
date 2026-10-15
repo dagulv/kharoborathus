@@ -27,7 +27,7 @@ The Jev tagging call doubles as a relevance gate. Discovered content must pass i
 3. Store the result. Never reject the post.
 4. A source whose pass rate drops below the floor gets `flagged_at`.
 5. A flagged discovered source is demoted to `proposed`, see [source lifecycle](source-lifecycle.md). A flagged manual source keeps running.
-6. You review flagged sources only, and keep, retarget or deactivate them.
+6. You review flagged sources only, and keep, retarget or disable them.
 
 ## Schema changes
 

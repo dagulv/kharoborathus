@@ -31,7 +31,7 @@ States:
 The existing `active` boolean is renamed to `enabled` and stays your manual switch. A source is scraped when `enabled = true` and `status = 'active'`. The lifecycle never changes `enabled`.
 
 1. **Propose.** On the first accepted post from a new domain, [discovered ingest](discovered-ingest.md) creates a source with `origin = 'discovered'`, `status = 'proposed'`, `enabled = true` and `url` set to the domain's base URL. `enabled` must be set explicitly, since the column defaults to false.
-2. **Promote.** A daily job checks each proposed source against its rows in `link_queue`:
+2. **Promote.** A daily job checks each proposed source against the `link_queue` rows for its `domain_id`:
    - Enough accepted posts.
    - Spread over enough distinct days, so one news burst cannot promote.
    - A high enough acceptance rate.
@@ -52,6 +52,8 @@ ALTER TABLE sources ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'activ
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS fetch_failures INT NOT NULL DEFAULT 0;
 ```
+
+`schema.sql` is rerunnable, so the rename must be guarded: wrap it in a `DO` block that checks `information_schema.columns` for `active` first, and change the `CREATE TABLE` to say `enabled`.
 
 `fetch_failures` resets on a successful fetch. `origin` is defined in [trust-model](trust-model.md). `flagged_at` is defined in [classifier-gate](classifier-gate.md).
 

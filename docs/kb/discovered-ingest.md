@@ -22,13 +22,13 @@ Chosen over a `queue` adapter in the source pipeline. That adapter would summari
 
 1. Read `pending` rows from `link_queue`, respecting the daily cap and per-domain rate.
 2. Check `robots.txt` for the domain.
-3. Fetch, resolve domain, trim, convert to markdown.
+3. Fetch, resolve domain and store it in `domain_id`, trim, convert to markdown.
 4. Reject on failed trimmer checks, short content or a missing title.
 5. Reject with `status = 'duplicate'` when the simhash matches a recent post, see [event linking](event-linking.md).
 6. Run the [gate](classifier-gate.md). Store scores in `gate_scores`.
 7. On reject, set `status = 'rejected'`. Only scores are kept. Raw content waits for the S3 TODO in the README.
 8. On accept:
-   - Get or create the domain's source. A new one is `proposed`, see [source lifecycle](source-lifecycle.md).
+   - Use the domain's oldest existing source, whatever its status. Otherwise create a `proposed` one, see [source lifecycle](source-lifecycle.md). The post still had to pass the gate either way.
    - Record `source_discovered_by_post` for the first post that led there.
    - Summarize and insert the post.
    - Insert `post_links` from the origin post with relation `discovered` and metadata `via` and `query`.
@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS link_queue (
   via TEXT NOT NULL, -- link | search
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
   discover_item_id UUID REFERENCES discover_queue (id) ON DELETE SET NULL,
+  domain_id UUID REFERENCES domains (id), -- set on fetch, drives source promotion
   status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
   gate_scores JSONB NOT NULL DEFAULT '{}',
   error TEXT,
@@ -54,6 +55,8 @@ CREATE TABLE IF NOT EXISTS link_queue (
 CREATE INDEX IF NOT EXISTS link_queue_pending_idx ON link_queue (created_at)
 WHERE
   status = 'pending';
+
+CREATE INDEX IF NOT EXISTS link_queue_domain_idx ON link_queue (domain_id, status);
 ```
 
 ## Defaults

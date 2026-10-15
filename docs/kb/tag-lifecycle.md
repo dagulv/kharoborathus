@@ -84,4 +84,4 @@ All values are untested starting points.
 
 ## Open questions
 
-- What happens to existing sentiment tags already on posts?
+- None. Existing sentiment tags stay and get `gate = false` from the first broadness run, see [rollout](rollout.md).

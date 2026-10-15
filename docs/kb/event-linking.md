@@ -54,4 +54,3 @@ ALTER TABLE posts ADD COLUMN IF NOT EXISTS simhash BIGINT;
 ## Open questions
 
 - Entity spelling varies, like `Volvo Cars` and `Volvo Personvagnar`. Exact matching misses those. Normalize entities later, similar to tag aliases?
-- Backfill simhash and event links for existing posts?
