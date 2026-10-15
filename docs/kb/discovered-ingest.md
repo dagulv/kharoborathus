@@ -1,7 +1,7 @@
 # Discovered ingest
 
 **Status:** designed
-**Related:** [link-extraction](link-extraction.md), [search-discovery](search-discovery.md), [classifier-gate](classifier-gate.md), [source-promotion](source-promotion.md)
+**Related:** [link-extraction](link-extraction.md), [search-discovery](search-discovery.md), [classifier-gate](classifier-gate.md), [source-lifecycle](source-lifecycle.md), [event-linking](event-linking.md)
 
 ## Summary
 
@@ -24,10 +24,11 @@ Chosen over a `queue` adapter in the source pipeline. That adapter would summari
 2. Check `robots.txt` for the domain.
 3. Fetch, resolve domain, trim, convert to markdown.
 4. Reject on failed trimmer checks, short content or a missing title.
-5. Run the [gate](classifier-gate.md). Store scores in `gate_scores`.
-6. On reject, set `status = 'rejected'`. Only scores are kept. Raw content waits for the S3 TODO in the README.
-7. On accept:
-   - Get or create the domain's source. A new one is quarantined, see [source-promotion](source-promotion.md).
+5. Reject with `status = 'duplicate'` when the simhash matches a recent post, see [event linking](event-linking.md).
+6. Run the [gate](classifier-gate.md). Store scores in `gate_scores`.
+7. On reject, set `status = 'rejected'`. Only scores are kept. Raw content waits for the S3 TODO in the README.
+8. On accept:
+   - Get or create the domain's source. A new one is `proposed`, see [source lifecycle](source-lifecycle.md).
    - Record `source_discovered_by_post` for the first post that led there.
    - Summarize and insert the post.
    - Insert `post_links` from the origin post with relation `discovered` and metadata `via` and `query`.
@@ -42,7 +43,7 @@ CREATE TABLE IF NOT EXISTS link_queue (
   via TEXT NOT NULL, -- link | search
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
   discover_item_id UUID REFERENCES discover_queue (id) ON DELETE SET NULL,
-  status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | failed
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
   gate_scores JSONB NOT NULL DEFAULT '{}',
   error TEXT,
   attempts INT NOT NULL DEFAULT 0,

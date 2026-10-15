@@ -26,7 +26,7 @@ The Jev tagging call doubles as a relevance gate. Discovered content must pass i
 2. A trusted post passes if it gets any of its source's `target_tags`. If `target_tags` is empty, any gate tag counts.
 3. Store the result. Never reject the post.
 4. A source whose pass rate drops below the floor gets `flagged_at`.
-5. A flagged promoted source is also demoted, see [source-promotion](source-promotion.md). A flagged manual source keeps running.
+5. A flagged discovered source is demoted to `proposed`, see [source lifecycle](source-lifecycle.md). A flagged manual source keeps running.
 6. You review flagged sources only, and keep, retarget or deactivate them.
 
 ## Schema changes
