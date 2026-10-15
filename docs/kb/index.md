@@ -19,6 +19,7 @@ Grow beyond hand-picked sources without losing quality. Scale slowly and prefer 
 | [Discovered ingest](discovered-ingest.md) | designed | `ingest` service turning queued URLs into gated posts. |
 | [Source lifecycle](source-lifecycle.md) | designed | Sources move through proposed, active and dormant, with automatic promotion. |
 | [Event linking](event-linking.md) | designed | Simhash duplicates and same-event links between posts. |
+| [Rollout](rollout.md) | designed | Six phases, migration steps and monitoring. |
 
 ## Flow
 
