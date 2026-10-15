@@ -11,6 +11,13 @@ Sources move through `proposed`, `active` and `dormant`, like tags. Discovered d
 
 Nothing yet. Sources are only added in admin, and the `active` boolean is a manual on and off switch.
 
+Code reading `active` today, to switch to `enabled`:
+
+- [model.go](../../internal/service/source/model.go): `Source.Active`, `Filter.Active`.
+- [store.go](../../internal/service/source/store.go): select, filter, insert and update.
+- [sourced.go](../../internal/service/source/sourced.go): `activeSources`.
+- Admin: `admin.remote.ts`, `types.ts`, `sources/+page.svelte`, `sources/new/+page.svelte`, `+page.svelte` stats.
+
 ## Design
 
 States:
@@ -21,9 +28,9 @@ States:
 | `active` | Yes | Yes | Added in admin, promotion, or a dormant probe finding new posts |
 | `dormant` | Probe only | Yes | No new posts or repeated fetch failures |
 
-The existing `active` boolean stays as your manual switch. A source is scraped when `active = true` and `status = 'active'`.
+The existing `active` boolean is renamed to `enabled` and stays your manual switch. A source is scraped when `enabled = true` and `status = 'active'`. The lifecycle never changes `enabled`.
 
-1. **Propose.** On the first accepted post from a new domain, [discovered ingest](discovered-ingest.md) creates a source with `origin = 'discovered'`, `status = 'proposed'` and `url` set to the domain's base URL.
+1. **Propose.** On the first accepted post from a new domain, [discovered ingest](discovered-ingest.md) creates a source with `origin = 'discovered'`, `status = 'proposed'`, `enabled = true` and `url` set to the domain's base URL. `enabled` must be set explicitly, since the column defaults to false.
 2. **Promote.** A daily job checks each proposed source against its rows in `link_queue`:
    - Enough accepted posts.
    - Spread over enough distinct days, so one news burst cannot promote.
@@ -39,6 +46,8 @@ The existing `active` boolean stays as your manual switch. A source is scraped w
 ## Schema changes
 
 ```sql
+ALTER TABLE sources RENAME COLUMN active TO enabled;
+ALTER INDEX sources_active_idx RENAME TO sources_enabled_idx;
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'; -- proposed | active | dormant
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS fetch_failures INT NOT NULL DEFAULT 0;
@@ -60,4 +69,4 @@ ALTER TABLE sources ADD COLUMN IF NOT EXISTS fetch_failures INT NOT NULL DEFAULT
 
 ## Open questions
 
-- Rename the `active` boolean to `enabled` to avoid confusion with `status = 'active'`?
+- None.

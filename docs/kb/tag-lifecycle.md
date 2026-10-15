@@ -19,6 +19,8 @@ New tags are proposed by the LLM, but only go live after enough independent trus
 
 States: `proposed`, `active`, `dormant`. A merged synonym becomes an `alias`.
 
+`enabled` is your manual switch, same as on sources. The classifier only uses tags with `enabled = true` and `status = 'active'`. Generator output for a disabled key is dropped, so a disabled tag is never re-proposed or reactivated. The lifecycle never changes `enabled`.
+
 1. **Propose.**
    - `TagGenerator` runs only on trusted posts.
    - Its prompt asks for topic tags only, no sentiment tags like `bullish`. Those can never gate and only add Jev cost.
@@ -36,13 +38,14 @@ States: `proposed`, `active`, `dormant`. A merged synonym becomes an `alias`.
    - Existing posts are rewritten with `array_replace(tags, alias, key)`.
 5. **Backfill.** `tag_checked` is one-time, so a separate job classifies only the new tag against recent posts and appends matches.
 6. **Dormancy.**
-   - `ListTags` returns only `active` tags, so dormant tags cost nothing.
+   - `ListTags` returns only enabled `active` tags, so dormant and disabled tags cost nothing.
    - `CompleteTagging` updates `last_matched_at`.
    - A tag with no match inside the dormancy window goes dormant. A new proposal reactivates it.
 
 ## Schema changes
 
 ```sql
+ALTER TABLE tags ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE tags ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'; -- active | dormant
 ALTER TABLE tags ADD COLUMN IF NOT EXISTS gate BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE tags ADD COLUMN IF NOT EXISTS match_rate REAL;
