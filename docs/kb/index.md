@@ -15,7 +15,7 @@ Grow beyond hand-picked sources without losing quality. Scale slowly and prefer 
 | [Tag lifecycle](tag-lifecycle.md) | designed | Proposal, frequency promotion, aliases, gate eligibility, backfill and dormancy. |
 | [Classifier gate](classifier-gate.md) | designed | Jev tagging as a hard gate for discovered content and a shadow gate for trusted sources. |
 | [Link extraction](link-extraction.md) | designed | Go job queueing outbound links from trusted posts. |
-| [Search discovery](search-discovery.md) | designed | Searching for other coverage of events and LLM filtering of results. |
+| [Search discovery](search-discovery.md) | designed | Brave News search for other coverage of events, query dedupe and LLM filtering of results. |
 | [Discovered ingest](discovered-ingest.md) | designed | `ingest` service turning queued URLs into gated posts. |
 | [Source promotion](source-promotion.md) | designed | Suggesting reliable discovered domains as trusted sources. |
 
