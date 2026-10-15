@@ -53,7 +53,7 @@ ALTER TABLE sources ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ NOT N
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS fetch_failures INT NOT NULL DEFAULT 0;
 ```
 
-`schema.sql` is rerunnable, so the rename must be guarded: wrap it in a `DO` block that checks `information_schema.columns` for `active` first, and change the `CREATE TABLE` to say `enabled`.
+`schema.sql` is an init script for fresh databases and is not rerunnable. Existing databases get changes from numbered files in `internal/migrations`, written to be safe to run twice. The rename is wrapped in a `DO` block that checks `information_schema.columns` for `active` first. `schema.sql` is also updated to say `enabled`.
 
 `fetch_failures` resets on a successful fetch. `origin` is defined in [trust-model](trust-model.md). `flagged_at` is defined in [classifier-gate](classifier-gate.md).
 

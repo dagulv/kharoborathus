@@ -30,17 +30,19 @@ States: `proposed`, `active`, `dormant`. A merged synonym becomes an `alias`.
    - Support: enough posts from enough distinct domains inside the window. Distinct domains stop one site's house jargon.
    - Not a duplicate: the term is tested with `to_tsvector(cfg, term) @@ matcher` against active terms in the same language. Only a hit goes to an LLM merge check. A confirmed duplicate becomes an alias.
    - Consistent: Jev scores the candidate on its supporting posts. Most must reach the tag threshold.
-   - Broadness: Jev scores the candidate on a random sample of recent posts. The match rate sets `gate`. A weekly job recomputes `match_rate` and `gate` for active tags.
+   - Broadness: Jev scores the candidate on recent posts. The same pass is the backfill in step 5, so one set of Jev calls gives both. The match rate sets `gate`.
+   - A daily job recomputes `match_rate` and `gate` for active tags from `posts.tags`, with no Jev calls, since every post is already classified against every active tag.
 3. **Insert.** Promotion reuses `AddTags` to write `tags` and `tag_terms`.
 4. **Alias.**
    - The alias term is added as another `tag_terms` row under the canonical key. Search, `matcher` and the Tagger question pick it up for free.
    - `tag_aliases` remaps future generator output.
-   - Existing posts are rewritten with `array_replace(tags, alias, key)`.
-5. **Backfill.** `tag_checked` is one-time, so a separate job classifies only the new tag against recent posts and appends matches.
+   - Proposals for the alias key are deleted. Proposed keys were never on posts, so no posts need rewriting.
+5. **Backfill.** `tag_checked` is one-time, so promotion classifies only the new tag against recent posts and appends matches.
 6. **Dormancy.**
    - `ListTags` returns only enabled `active` tags, so dormant and disabled tags cost nothing.
    - `CompleteTagging` updates `last_matched_at`.
-   - A tag with no match inside the dormancy window goes dormant. A new proposal reactivates it.
+   - A tag with no match inside the dormancy window goes dormant. A new proposal reactivates it and resets `last_matched_at`, so it is not put back to sleep the next day.
+7. **Manual merge.** Admin can merge one active tag into another. That is the case where posts are rewritten with `array_replace`, along with `sources.target_tags`.
 
 ## Schema changes
 
@@ -76,8 +78,9 @@ CREATE TABLE IF NOT EXISTS tag_aliases (
 | Distinct domains | 2 | Filters single-site jargon. |
 | Support window | 30 days | Old proposals stop counting. |
 | Gate match rate | below 20% | Broader tags cannot filter. |
-| Broadness sample | 100 recent posts | Enough for a stable rate. |
-| Backfill window | 7 days | Recent feed gets the tag. |
+| Broadness and backfill set | Last 7 days, at most 200 posts | Recent feed gets the tag, and the rate comes for free. |
+| Min sample for `gate = true` | 20 posts | A tiny sample gives a meaningless rate. |
+| Rate recompute window | 30 days of `posts.tags` | Stable without Jev calls. |
 | Dormancy window | 90 days | Drops dead tags from Jev calls. |
 
 All values are untested starting points.

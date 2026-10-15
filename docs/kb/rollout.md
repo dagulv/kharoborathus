@@ -25,7 +25,8 @@ Nothing yet. See [architecture](architecture.md) for the system today.
 Migration steps:
 
 - **Phase 1:** existing tags start `enabled` and `active`. The first broadness run sets `gate` and `match_rate`. Existing sentiment tags stay and end up with `gate = false`.
-- **Phase 1:** existing sources get `origin = 'manual'` and `status = 'active'` from column defaults.
+- **Phase 1:** every source is manual, so every post is trusted. Trust checks arrive in phase 4 together with `origin` and source `status`, which existing sources get from column defaults.
+- **Every phase:** schema changes ship as a numbered, rerunnable file in `internal/migrations`, and `schema.sql` is updated for fresh databases.
 - **Phase 3:** a one-time job backfills `simhash` and `same_event` links for posts inside the event window.
 
 Monitoring:
