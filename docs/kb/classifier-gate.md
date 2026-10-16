@@ -16,7 +16,7 @@ The Jev tagging call doubles as a relevance gate. Discovered content must pass i
 **Hard gate for discovered content**
 
 1. Run `Tagger` on the trimmed markdown.
-2. Add one question to the same Jev batch: is this a news article or press release?
+2. Add one question to the same Jev batch: does this page report a specific business event, like a news article, press release or filing?
 3. Accept if the article question passes and any tag with `gate = true` scores at least the threshold.
 4. Discovered content uses the same threshold as tagging. Tune it later from `link_queue.gate_scores`.
 

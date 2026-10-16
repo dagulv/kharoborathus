@@ -1,7 +1,7 @@
 # Discovered ingest
 
 **Status:** designed
-**Related:** [link-extraction](link-extraction.md), [search-discovery](search-discovery.md), [classifier-gate](classifier-gate.md), [source-lifecycle](source-lifecycle.md), [event-linking](event-linking.md)
+**Related:** [link-extraction](link-extraction.md), [search-discovery](search-discovery.md), [classifier-gate](classifier-gate.md), [source-lifecycle](source-lifecycle.md), [post-linking](post-linking.md)
 
 ## Summary
 
@@ -24,14 +24,14 @@ Chosen over a `queue` adapter in the source pipeline. That adapter would summari
 2. Check `robots.txt` for the domain.
 3. Fetch, resolve domain and store it in `domain_id`, trim, convert to markdown.
 4. Reject on failed trimmer checks, short content or a missing title.
-5. Reject with `status = 'duplicate'` when the simhash matches a recent post, see [event linking](event-linking.md).
+5. Reject with `status = 'duplicate'` when the simhash matches a recent post, see [post linking](post-linking.md).
 6. Run the [gate](classifier-gate.md). Store scores in `gate_scores`.
 7. On reject, set `status = 'rejected'`. Only scores are kept. Raw content waits for the S3 TODO in the README.
 8. On accept:
    - Use the domain's oldest existing source, whatever its status. Otherwise create a `proposed` one, see [source lifecycle](source-lifecycle.md). The post still had to pass the gate either way.
    - Record `source_discovered_by_post` for the first post that led there.
    - Summarize and insert the post.
-   - Insert `post_links` from the origin post with relation `discovered` and metadata `via` and `query`.
+   - Insert a `discovered` link, see [post linking](post-linking.md).
    - Mark `tag_checked`, since the gate already tagged it.
 
 ## Schema changes
