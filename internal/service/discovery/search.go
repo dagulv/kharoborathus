@@ -115,11 +115,7 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, se Searcher
 		}
 
 		if errors.Is(err, errSearchUnreadable) {
-			if _, err := s.QueueResults(ctx, item, nil, 0); err != nil {
-				return err
-			}
-
-			return fmt.Errorf("%w: search %s: %w", errSearchWasted, item.ID, err)
+			return recordWasted(ctx, s, item, 0, err)
 		}
 
 		if err != nil {
@@ -134,25 +130,29 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, se Searcher
 
 		kept, err := f.Keep(ctx, item.Entity, item.Action, results)
 		if err != nil || ctx.Err() != nil {
-			// The search is paid either way, so it must count against the budget, even on shutdown.
-			if _, err := s.QueueResults(context.WithoutCancel(ctx), item, nil, len(results)); err != nil {
-				return err
-			}
-
-			if ctx.Err() != nil {
-				return nil
-			}
-
-			return fmt.Errorf("%w: filter %s: %w", errSearchWasted, item.ID, err)
+			return recordWasted(ctx, s, item, len(results), err)
 		}
 
-		n, err := s.QueueResults(ctx, item, ingest.FilterLinks(kept, item.BaseURL), len(results))
+		n, err := s.QueueResults(context.WithoutCancel(ctx), item, ingest.FilterLinks(kept, item.BaseURL), len(results))
 		if err != nil {
-			return err
+			return recordWasted(ctx, s, item, len(results), err)
 		}
 
 		queued += n
 	}
 
 	return nil
+}
+
+// Brave billed the search, so it counts against the budget even when its results are lost or the worker is shutting down.
+func recordWasted(ctx context.Context, s *Store, item SearchItem, resultCount int, cause error) error {
+	if _, err := s.QueueResults(context.WithoutCancel(ctx), item, nil, resultCount); err != nil {
+		return fmt.Errorf("err record wasted search %s: %w", item.ID, err)
+	}
+
+	if ctx.Err() != nil {
+		return nil
+	}
+
+	return fmt.Errorf("%w: %s: %w", errSearchWasted, item.ID, cause)
 }
