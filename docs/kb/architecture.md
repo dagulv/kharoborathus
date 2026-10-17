@@ -13,7 +13,9 @@ Kharoborathus collects business and financial news from hand-picked sources, tag
 |---|---|---|
 | HTTP | [feed/route.go](../../internal/service/feed/route.go), [source/route.go](../../internal/service/source/route.go) | Serves `/feeds` and manual source sync. |
 | Sources | [sourced.go](../../internal/service/source/sourced.go) | Polls enabled, active sources at their `rate` and dormant ones weekly, and turns articles into posts. |
-| Tagging | [tagged.go](../../internal/service/tagging/tagged.go) | Generates new tags, classifies posts against all tags and records the shadow gate result while its switch is on. |
+| Tagging | [tagged.go](../../internal/service/tagging/tagged.go) | Proposes tags from trusted posts, classifies every post against active tags and records the shadow gate result for trusted posts while its switch is on. |
+| Tag promotion | [promote.go](../../internal/service/tagging/promote.go) | Hourly: promotes or merges proposed tags that pass support, duplicate, consistency and broadness checks. |
+| Tag maintenance | [maintain.go](../../internal/service/tagging/maintain.go) | Daily: recomputes tag match rates and `gate`, puts unused tags to sleep and flags sources while `shadow_gate` is on. |
 | Discovery | [discovery.go](../../internal/service/discovery/discovery.go) | Extracts events with gate tag keys as actions into `discover_queue` and links `same_event` posts. |
 | Search | [search.go](../../internal/service/discovery/search.go) | Searches Brave for gate tag events from trusted posts and queues filtered results while `search_discovery` is on. |
 | Links | [extract.go](../../internal/service/ingest/extract.go) | Queues outbound links from trusted posts into `link_queue`. |
@@ -33,14 +35,14 @@ Source pipeline per article:
 
 AI providers live in [robot/adapter](../../internal/service/robot/adapter):
 
-- DeepSeek is the LLM for rule generation, summaries, tag generation and discovery.
+- DeepSeek is the LLM for rule generation, summaries, tag generation, event extraction and the search result filter.
 - Jev is the classifier. It answers yes or no questions as scores from 0 to 1.
 
 Brave Web Search is called from [brave.go](../../internal/service/discovery/brave.go).
 
 Unused parts of the schema:
 
-- `post_links` gets `discovered`, `duplicate_of` and `same_event`.
+- `post_links` relations `follows_up` and `translation_of` are never written.
 
 ## Design
 
