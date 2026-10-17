@@ -10,7 +10,6 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/ingest"
 	"github.com/dagulv/kharoborathus/internal/service/robot"
-	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/switches"
 )
 
@@ -22,11 +21,29 @@ const (
 	dailySearchBudget = 330
 	// One day of ingest at its daily cap. More would age out before it is fetched.
 	maxPendingResults = 200
+	// Each tick buys a search, so a failing filter must not be retried every minute.
+	wastedPause = 30 * time.Minute
 )
 
+var errSearchWasted = errors.New("discovery: paid search wasted")
+
 func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f *robot.ResultFilter, sched schedule.Schedule, l *slog.Logger) error {
+	var pausedUntil time.Time
+
 	for range sched.Tick(ctx, searchInterval) {
-		if err := searchEvents(ctx, s, sw, se, f, l); err != nil {
+		if time.Now().Before(pausedUntil) {
+			continue
+		}
+
+		err := searchEvents(ctx, s, sw, se, f, l)
+		if errors.Is(err, errSearchWasted) {
+			l.Warn("search paused", "for", wastedPause, "err", err)
+			pausedUntil = time.Now().Add(wastedPause)
+
+			continue
+		}
+
+		if err != nil {
 			l.Error("search events", "err", err)
 		}
 	}
@@ -108,21 +125,17 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, se Searcher
 		}
 
 		kept, err := f.Keep(ctx, item.Entity, item.Action, results)
-
-		switch {
-		case ctx.Err() != nil:
+		if ctx.Err() != nil {
 			return nil
-		case errors.Is(err, adapter.ErrUnavailable):
-			l.Warn("filter search results unavailable, results dropped", "item", item.ID, "err", err)
+		}
 
+		if err != nil {
 			// The search is paid either way, so it must count against the budget.
 			if _, err := s.QueueResults(ctx, item, nil, len(results)); err != nil {
 				return err
 			}
 
-			return nil
-		case err != nil:
-			l.Warn("filter search results", "item", item.ID, "err", err)
+			return fmt.Errorf("%w: filter %s: %w", errSearchWasted, item.ID, err)
 		}
 
 		n, err := s.QueueResults(ctx, item, ingest.FilterLinks(kept, item.BaseURL), len(results))
