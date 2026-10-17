@@ -44,7 +44,7 @@ Unused parts of the schema:
 
 ## Design
 
-This page describes the current system. The other pages describe changes.
+This page describes the current system. The other pages describe changes. Production runs as described in [infra](infra.md).
 
 ## Schema changes
 

@@ -1,6 +1,6 @@
 # Infra
 
-**Status:** designed
+**Status:** done
 **Related:** [architecture](architecture.md), [rollout](rollout.md)
 
 ## Summary
@@ -9,7 +9,10 @@ Runs the whole stack on one UpCloud VPS. OpenTofu creates the server and cloud-i
 
 ## Current state
 
-Nothing yet. [docker-compose.yaml](../../docker-compose.yaml) runs only the dev database.
+- [deploy/tofu](../../deploy/tofu) creates the server. It has not been applied or run through `tofu validate` yet.
+- [deploy/compose.yaml](../../deploy/compose.yaml) and [deploy/Caddyfile](../../deploy/Caddyfile) run the stack. A local smoke run served `/feeds` openly, answered 401 everywhere else without auth, and started Postgres with the schema and every switch off.
+- [deploy/deploy.sh](../../deploy/deploy.sh) deploys. [deploy/README.md](../../deploy/README.md) lists the first-time steps.
+- [docker-compose.yaml](../../docker-compose.yaml) runs the dev database, now with `schema.sql` baked into the image.
 
 ## Design
 
@@ -54,6 +57,11 @@ Deploy:
 1. `tofu apply` in `deploy/tofu` creates the server. You point your domain's A record at its IPv4 output.
 2. `deploy/deploy.sh` runs `docker compose` against `ssh://deploy@<ip>`. Images are built on the server from the local checkout, so no registry is needed.
 3. Postgres runs `schema.sql` on its first start with an empty volume. Later schema changes need migrations, see [rollout](rollout.md).
+
+Build notes:
+
+- `frontend/pnpm-lock.yaml` pins tarballs to a local registry proxy at `127.0.0.1:11230`. The admin image rewrites those URLs to `registry.npmjs.org`, and the integrity hashes still verify them.
+- SvelteKit validates env during the build, so the build passes a placeholder connection string. The real one is read at runtime.
 
 Secrets:
 
