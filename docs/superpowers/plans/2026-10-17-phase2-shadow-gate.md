@@ -2,21 +2,24 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Every classified post records whether it passed its source's shadow gate. A daily job flags enabled sources whose recent pass rate drops below 70%, and admin lists flagged sources so you can keep, retarget or disable them.
+**Goal:** Ship the admin switches, then the shadow gate behind the `shadow_gate` switch. While it is on, every classified post records whether it passed its source's shadow gate. A daily job flags enabled sources with a full window of 50 gated posts and a pass rate below 70%. Admin lists flagged sources so you can keep, retarget or disable them.
 
-**Architecture:** The tagging worker already classifies each post with Jev. After classification, a pure function `shadowGate` decides pass, fail or unknown from the post's source `target_tags`, the tag vocabulary and the matched keys. `CompleteTagging` stores the result in `tag_checked.gate_passed`. Daily maintenance runs `FlagSources`, which sets `sources.flagged_at` from the last 50 gated posts since the source's last review. The admin sources page shows flagged sources with their pass rate and a single review command.
+**Architecture:** A `switches` table holds one row per guarded feature, and a missing row means off. A small Go package reads a switch, and an admin page toggles it and shows readiness. The tagging worker reads `shadow_gate` once per tick. When it is on, a pure function `shadowGate` decides pass, fail or unknown from the post's source `target_tags`, the tag vocabulary and the matched keys, and `CompleteTagging` stores it in `tag_checked.gate_passed`. Daily maintenance reads the same switch and runs `FlagSources`, which sets `sources.flagged_at` from the last 50 gated posts since the source's last review. The admin sources page shows flagged sources with their pass rate and one review command.
 
 **Tech Stack:** Go 1.27, pgx v5, Postgres 18, SvelteKit 3 remote functions (`command(...).updates(...)`), postgres.js with camel transform, valibot, Svelte 5.
 
-**Spec:** `docs/kb/classifier-gate.md` (shadow gate section), `docs/kb/rollout.md` phase 2, `docs/kb/trust-model.md`.
+**Spec:** `docs/kb/rollout.md` (switches and phase 2), `docs/kb/classifier-gate.md` (shadow gate section), `docs/kb/trust-model.md`.
 
 ## Global Constraints
 
-- Phase 2 ships the shadow gate only. The hard gate, the article question, `link_queue` and source `status` or `origin` belong to phase 4. Do not add them.
+- Phase 2 ships the switches and the shadow gate only. The hard gate, the article question, `link_queue` and source `status` or `origin` belong to phase 4. Do not add them, and do not add rows for other switches.
 - Every post is trusted in phase 2. Never reject or hide a post because of the gate.
-- Schema changes go straight into `internal/migrations/schema.sql`. No numbered migration file, because the project has not been deployed yet.
+- Schema changes go straight into `internal/migrations/schema.sql`. No numbered migration file, because the project has not been deployed yet. This overrides the "Every phase" migration bullet in `rollout.md`, which Task 8 rewrites.
+- The `shadow_gate` row is inserted by `schema.sql` with `ON CONFLICT (key) DO NOTHING` and starts off.
+- While `shadow_gate` is off, tagging runs as before, no `gate_passed` is stored and nothing is flagged.
+- Workers read their switch at the start of every tick. Nothing but you sets a switch, and readiness is shown, never enforced.
 - Tag threshold stays the existing `tagThreshold` of 0.8. Nothing in `robot` changes.
-- Pass rate window: last 50 posts with a gate result. Pass rate floor: 70%. Minimum gated posts before a source can be flagged: 20.
+- Pass rate window: last 50 posts with a gate result. Pass rate floor: 70%. A source with fewer than 50 gated posts in the window is never flagged.
 - A post passes if it gets any of its source's `target_tags`. If `target_tags` is empty, any enabled, active tag with `gate = true` counts.
 - Go style: `any` not `interface{}`, guard clauses, wrap leaf errors as `fmt.Errorf("err <action>: %w", err)`, comments only for gotchas.
 - Use `pnpm`, never `npx`.
@@ -25,31 +28,255 @@
 
 ## Plan rulings against the spec
 
-These fill gaps the spec leaves open. Task 6 writes them back into the kb.
+These fill gaps the spec leaves open. Task 8 writes them back into the kb.
 
-- **`sources.reviewed_at` is added.** Without it, keeping or retargeting a flagged source does nothing: the same failing posts stay in the window and the next daily run flags it again. The window only counts posts checked after `reviewed_at`.
-- **Minimum 20 gated posts before flagging.** Otherwise a new source with 3 posts and 1 miss is flagged at 33%. 20 matches the broadness `minSample`.
-- **No basis means no result.** If a post's source has no `target_tags` and no enabled, active gate tag exists, `gate_passed` is NULL, not false. This covers a fresh database before the first broadness run.
+- **`sources.reviewed_at` is added.** Without it, keeping or retargeting a flagged source does nothing: the same failing posts stay in the window and the next daily run flags it again. The window only counts posts checked after `reviewed_at`, so a reviewed source needs a fresh full window before it can be flagged again.
+- **No basis means no result.** With the switch on, if a post's source has no `target_tags` and no enabled, active gate tag exists, `gate_passed` is NULL, not false.
 - **A failed classification stores NULL.** It is not evidence of drift.
 - **Target tags are resolved through `tag_aliases`.** Admin accepts free text, and a merge turns keys into aliases.
+- **Switch readiness is one text column per key, built in SQL.** Later phases add a `WHEN` branch for their key.
 
 ## Review Focus
 
-- A fresh database with no gate tags and sources without `target_tags` must store `gate_passed = NULL` and flag nobody. Pinned in Task 2 (`TestShadowGateWithoutGateTags`) and Task 4 (source `h`).
-- A target tag typed as an alias, like `investments`, must match posts tagged with the canonical `investment`. Pinned in Task 2.
-- A source you kept or retargeted must not be flagged again by posts checked before the review. Pinned in Task 4 (source `d`).
-- A source with fewer than 20 gated posts must not be flagged, however low its rate. Pinned in Task 4 (source `c`).
-- An already flagged source keeps its original `flagged_at`, and disabled or deleted sources are never flagged. Pinned in Task 4 (sources `f` and `g`).
+- With `shadow_gate` off, posts must be tagged as before and store `gate_passed = NULL`, and maintenance must flag nothing. Pinned by code in Task 5 and Task 6, and checked on the throwaway database in Task 6.
+- A fresh database with no gate tags and sources without `target_tags` must store NULL, not false. Pinned in Task 4 (`TestShadowGateWithoutGateTags`) and Task 6 (source `h`).
+- A target tag typed as an alias, like `investments`, must match posts tagged with the canonical `investment`. Pinned in Task 4.
+- A source with fewer than 50 gated posts, including one reviewed recently, must not be flagged however low its rate. Pinned in Task 6 (sources `c` and `d`).
+- An already flagged source keeps its original `flagged_at`, and disabled or deleted sources are never flagged. Pinned in Task 6 (sources `f` and `g`).
 
 ---
 
-### Task 1: Schema
+### Task 1: Switches table and admin page
 
 **Files:**
-- Modify: `internal/migrations/schema.sql` (the `sources` table and the `tag_checked` table)
+- Modify: `internal/migrations/schema.sql` (append the `switches` table)
+- Modify: `frontend/src/lib/types.ts` (append `Switch`)
+- Modify: `frontend/src/routes/admin/admin.remote.ts` (append `listSwitches` and `setSwitch`)
+- Create: `frontend/src/routes/admin/switches/+page.svelte`
+- Modify: `frontend/src/routes/admin/+layout.svelte` (nav link)
 
 **Interfaces:**
-- Produces: `tag_checked.gate_passed BOOLEAN` (nullable), `sources.flagged_at TIMESTAMPTZ`, `sources.reviewed_at TIMESTAMPTZ`.
+- Produces: table `switches (key, enabled, updated_at)`, type `Switch`, `listSwitches()` returning `Switch[]` with a `readiness: string | null` column, `setSwitch({ key, enabled })`. Task 2 adds the first row and its readiness branch.
+
+Edit the `.svelte` files through the `svelte:svelte-file-editor` agent or the Svelte MCP tools.
+
+- [ ] **Step 1: Add the table**
+
+Append to `internal/migrations/schema.sql`:
+
+```sql
+CREATE TABLE IF NOT EXISTS switches (
+  key TEXT PRIMARY KEY,
+  enabled BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+- [ ] **Step 2: Load the schema into a throwaway database**
+
+Run:
+
+```bash
+docker compose exec -T db sh -c 'createdb -U "$POSTGRES_USER" gate_check'
+docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d gate_check' < internal/migrations/schema.sql
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d gate_check -c "\d switches" -c "SELECT count(*) FROM switches"'
+docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" gate_check'
+```
+
+Expected: every command exits 0. `switches` has `key`, `enabled` defaulting to false and `updated_at`. The count is 0.
+
+- [ ] **Step 3: Add the type**
+
+Append to `frontend/src/lib/types.ts`:
+
+```ts
+
+export type Switch = {
+	key: string;
+	enabled: boolean;
+	updatedAt: Date;
+	readiness: string | null;
+};
+```
+
+- [ ] **Step 4: Add the remote functions**
+
+In `frontend/src/routes/admin/admin.remote.ts`, add `Switch` to the type import:
+
+```ts
+import type { Post, PostSummary, Source, Switch, Tag, TagAlias, TagProposal } from '#lib/types.js';
+```
+
+Append to the end of the file:
+
+```ts
+// Readiness per key mirrors the switch table in docs/kb/rollout.md
+export const listSwitches = query(async () => {
+	const sql = db();
+
+	return sql<Switch[]>`
+		SELECT
+			s.key,
+			s.enabled,
+			s.updated_at,
+			NULL::text AS readiness
+		FROM switches s
+		ORDER BY s.key
+	`;
+});
+
+export const setSwitch = command(
+	v.object({ key: v.pipe(v.string(), v.nonEmpty(), v.maxLength(40)), enabled: v.boolean() }),
+	async ({ key, enabled }) => {
+		const sql = db();
+		const [row] = await sql`
+			UPDATE switches SET enabled = ${enabled}, updated_at = now()
+			WHERE key = ${key}
+			RETURNING 1
+		`;
+
+		if (!row) error(404, `Unknown switch ${key}`);
+
+		await listSwitches().refresh();
+	}
+);
+```
+
+No switch exists yet, so readiness is NULL. Task 2 replaces it with a `CASE` per key.
+
+- [ ] **Step 5: Add the page**
+
+`frontend/src/routes/admin/switches/+page.svelte`:
+
+```svelte
+<script lang="ts">
+	import { listSwitches, setSwitch } from '../admin.remote';
+
+	const switches = $derived(await listSwitches());
+
+	const fmt = new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeStyle: 'short' });
+
+	const descriptions: Record<string, string> = {};
+
+	let failed = $state('');
+
+	async function toggle(key: string, enabled: boolean) {
+		failed = '';
+		try {
+			await setSwitch({ key, enabled });
+		} catch {
+			failed = key;
+			await listSwitches().refresh();
+		}
+	}
+</script>
+
+<svelte:head><title>Switches · Admin</title></svelte:head>
+
+<h1 class="mb-1 text-xl font-semibold">Switches</h1>
+<p class="mb-4 text-sm text-zinc-500">
+	Features that need data before they run. Readiness is a hint, never enforced.
+</p>
+
+<div class="overflow-x-auto rounded border border-zinc-200 bg-white">
+	<table class="w-full text-left text-sm">
+		<thead class="border-b border-zinc-200 bg-zinc-50 text-zinc-500">
+			<tr>
+				<th class="px-3 py-2 font-medium">Switch</th>
+				<th class="px-3 py-2 font-medium">Readiness</th>
+				<th class="px-3 py-2 font-medium">Changed</th>
+				<th class="px-3 py-2 font-medium">On</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#each switches as sw (sw.key)}
+				<tr class="border-b border-zinc-100 last:border-0">
+					<td class="px-3 py-2">
+						<div class="font-mono">{sw.key}</div>
+						{#if descriptions[sw.key]}
+							<div class="text-xs text-zinc-500">{descriptions[sw.key]}</div>
+						{/if}
+					</td>
+					<td class="px-3 py-2 text-zinc-600">{sw.readiness ?? '—'}</td>
+					<td class="px-3 py-2 whitespace-nowrap text-zinc-500">{fmt.format(sw.updatedAt)}</td>
+					<td class="px-3 py-2">
+						<input
+							type="checkbox"
+							checked={sw.enabled}
+							onchange={(e) => toggle(sw.key, e.currentTarget.checked)}
+						/>
+						{#if failed === sw.key}<span class="ml-2 text-xs text-red-600">Failed</span>{/if}
+					</td>
+				</tr>
+			{:else}
+				<tr><td colspan="4" class="px-3 py-6 text-center text-zinc-500">No switches</td></tr>
+			{/each}
+		</tbody>
+	</table>
+</div>
+```
+
+- [ ] **Step 6: Add the nav link**
+
+In `frontend/src/routes/admin/+layout.svelte`, replace:
+
+```ts
+		{ href: '/admin/tags', label: 'Tags' },
+		{ href: '/admin/posts', label: 'Posts' }
+```
+
+with:
+
+```ts
+		{ href: '/admin/tags', label: 'Tags' },
+		{ href: '/admin/posts', label: 'Posts' },
+		{ href: '/admin/switches', label: 'Switches' }
+```
+
+- [ ] **Step 7: Type check and autofix**
+
+Run: `cd frontend && pnpm check`
+Expected: `svelte-check found 0 errors`.
+
+Run the Svelte MCP `svelte-autofixer` on `switches/+page.svelte`. Expected: no issues.
+
+- [ ] **Step 8: Check the admin SQL on a throwaway database**
+
+Run the `createdb` and schema load commands from Step 2 again. Then run:
+
+```bash
+docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d gate_check' <<'SQL'
+SELECT s.key, s.enabled, s.updated_at, NULL::text AS readiness FROM switches s ORDER BY s.key;
+INSERT INTO switches (key) VALUES ('probe');
+UPDATE switches SET enabled = true, updated_at = now() WHERE key = 'probe' RETURNING key, enabled;
+UPDATE switches SET enabled = true, updated_at = now() WHERE key = 'missing' RETURNING 1;
+SQL
+docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" gate_check'
+```
+
+Expected: the first select returns 0 rows. The first update returns `probe | t`. The second update returns 0 rows, which `setSwitch` turns into a 404.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add internal/migrations/schema.sql frontend/src/lib/types.ts frontend/src/routes/admin/admin.remote.ts frontend/src/routes/admin/switches/+page.svelte frontend/src/routes/admin/+layout.svelte
+git commit -m "Add switches table and admin page
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 2: Shadow gate schema and switch row
+
+**Files:**
+- Modify: `internal/migrations/schema.sql` (the `sources` table, the `tag_checked` table, the end of the file)
+- Modify: `frontend/src/routes/admin/admin.remote.ts` (`listSwitches` readiness)
+- Modify: `frontend/src/routes/admin/switches/+page.svelte` (`descriptions`)
+
+**Interfaces:**
+- Consumes: `switches` table and `listSwitches` from Task 1.
+- Produces: `tag_checked.gate_passed BOOLEAN` (nullable), `sources.flagged_at TIMESTAMPTZ`, `sources.reviewed_at TIMESTAMPTZ`, switch row `shadow_gate` starting off, readiness text `<n> gate tags`.
 
 - [ ] **Step 1: Edit the `sources` table**
 
@@ -89,36 +316,180 @@ with:
 ```sql
 CREATE TABLE IF NOT EXISTS tag_checked (
   post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,
-  gate_passed BOOLEAN, -- NULL when there was nothing to gate against
+  gate_passed BOOLEAN, -- NULL when the switch was off or there was nothing to gate against
   checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-- [ ] **Step 3: Load the schema into a throwaway database**
+- [ ] **Step 3: Insert the switch row**
+
+Append to `internal/migrations/schema.sql`, after the `switches` table:
+
+```sql
+
+INSERT INTO switches (key) VALUES ('shadow_gate') ON CONFLICT (key) DO NOTHING;
+```
+
+- [ ] **Step 4: Add readiness and a description**
+
+In `admin.remote.ts`, inside `listSwitches`, replace:
+
+```sql
+			NULL::text AS readiness
+```
+
+with:
+
+```sql
+			CASE s.key
+				WHEN 'shadow_gate' THEN (
+					SELECT count(*) FROM tags WHERE enabled AND status = 'active' AND gate
+				) || ' gate tags'
+			END AS readiness
+```
+
+In `switches/+page.svelte`, replace:
+
+```ts
+	const descriptions: Record<string, string> = {};
+```
+
+with:
+
+```ts
+	const descriptions: Record<string, string> = {
+		shadow_gate:
+			'Stores the shadow gate result per post and flags drifting sources. Turn on when several gate tags exist.'
+	};
+```
+
+- [ ] **Step 5: Check on a throwaway database**
 
 Run:
 
 ```bash
 docker compose exec -T db sh -c 'createdb -U "$POSTGRES_USER" gate_check'
 docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d gate_check' < internal/migrations/schema.sql
-docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d gate_check -c "\d sources" -c "\d tag_checked"'
+docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d gate_check' <<'SQL'
+UPDATE switches SET enabled = true WHERE key = 'shadow_gate';
+INSERT INTO switches (key) VALUES ('shadow_gate') ON CONFLICT (key) DO NOTHING;
+INSERT INTO tags (key, gate) VALUES ('investment', true), ('earnings', false);
+SQL
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d gate_check' <<'SQL'
+\d sources
+\d tag_checked
+SELECT s.key, s.enabled,
+	CASE s.key
+		WHEN 'shadow_gate' THEN (
+			SELECT count(*) FROM tags WHERE enabled AND status = 'active' AND gate
+		) || ' gate tags'
+	END AS readiness
+FROM switches s ORDER BY s.key;
+SQL
 docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" gate_check'
 ```
 
-Expected: every command exits 0. `sources` lists `flagged_at` and `reviewed_at`, and `tag_checked` lists `gate_passed` as nullable `boolean`.
+Expected: every command exits 0. `sources` lists `flagged_at` and `reviewed_at`, and `tag_checked` lists nullable `gate_passed`. The select returns `shadow_gate | t | 1 gate tags`, so rerunning the insert did not reset your choice.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Type check**
+
+Run: `cd frontend && pnpm check`
+Expected: `svelte-check found 0 errors`.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add internal/migrations/schema.sql
-git commit -m "Add shadow gate schema
+git add internal/migrations/schema.sql frontend/src/routes/admin/admin.remote.ts frontend/src/routes/admin/switches/+page.svelte
+git commit -m "Add shadow gate schema and switch
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 2: Shadow gate decision
+### Task 3: Switches Go package
+
+**Files:**
+- Create: `internal/service/switches/store.go`
+
+**Interfaces:**
+- Consumes: `switches` table and the `shadow_gate` row from Tasks 1 and 2.
+- Produces: package `switches` with `const ShadowGate = "shadow_gate"`, `type Store`, `func NewStore(db *database.Database) Store`, `func (s *Store) Enabled(ctx context.Context, key string) (bool, error)`. A missing row returns false. Task 5 builds it in `cmd/main.go`.
+
+The package is a single SQL read with no logic of its own, so it has no unit test. Step 2 checks the SQL.
+
+- [ ] **Step 1: Write the store**
+
+`internal/service/switches/store.go`:
+
+```go
+package switches
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/dagulv/kharoborathus/internal/lib/database"
+)
+
+const ShadowGate = "shadow_gate"
+
+type Store struct {
+	db *database.Database
+}
+
+func NewStore(db *database.Database) Store {
+	return Store{db: db}
+}
+
+func (s *Store) Enabled(ctx context.Context, key string) (bool, error) {
+	var on bool
+
+	if err := s.db.QueryRow(ctx, `
+		SELECT coalesce((SELECT enabled FROM switches WHERE key = $1), false)
+		`, key).Scan(&on); err != nil {
+		return false, fmt.Errorf("err get switch %s: %w", key, err)
+	}
+
+	return on, nil
+}
+```
+
+- [ ] **Step 2: Check the SQL**
+
+Run:
+
+```bash
+docker compose exec -T db sh -c 'createdb -U "$POSTGRES_USER" gate_check'
+docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d gate_check' < internal/migrations/schema.sql
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d gate_check' <<'SQL'
+SELECT coalesce((SELECT enabled FROM switches WHERE key = 'shadow_gate'), false) AS shadow;
+SELECT coalesce((SELECT enabled FROM switches WHERE key = 'missing'), false) AS missing;
+UPDATE switches SET enabled = true WHERE key = 'shadow_gate';
+SELECT coalesce((SELECT enabled FROM switches WHERE key = 'shadow_gate'), false) AS shadow;
+SQL
+docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" gate_check'
+```
+
+Expected: `shadow = f`, `missing = f`, then `shadow = t`.
+
+- [ ] **Step 3: Build and vet**
+
+Run: `go build ./... && go vet ./...`
+Expected: no errors.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add internal/service/switches/store.go
+git commit -m "Add switches store
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 4: Shadow gate decision
 
 **Files:**
 - Create: `internal/service/tagging/gate.go`
@@ -264,16 +635,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Store the gate result in the tagging worker
+### Task 5: Store the gate result in the tagging worker
 
 **Files:**
 - Modify: `internal/service/tagging/model.go` (`Post`)
 - Modify: `internal/service/tagging/store.go` (`ListUntaggedPosts`, `CompleteTagging`, `Vocabulary`)
-- Modify: `internal/service/tagging/tagged.go` (`tagPosts`, `generateTags`)
+- Modify: `internal/service/tagging/tagged.go` (`Run`, `tagPosts`, `generateTags`)
+- Modify: `cmd/main.go`
 
 **Interfaces:**
-- Consumes: `shadowGate(v Vocabulary, targets, keys []string) *bool` and `TagState.Gate` from Task 2, `tag_checked.gate_passed` from Task 1.
-- Produces: `Post.TargetTags []string`, `func (s *Store) CompleteTagging(ctx context.Context, postID string, keys []string, gatePassed *bool) error`, `func generateTags(ctx context.Context, s *Store, g *robot.TagGenerator, v Vocabulary, lang string, post Post) error`.
+- Consumes: `shadowGate` and `TagState.Gate` from Task 4, `switches.Store.Enabled` and `switches.ShadowGate` from Task 3, `tag_checked.gate_passed` from Task 2.
+- Produces: `Post.TargetTags []string`, `func (s *Store) CompleteTagging(ctx context.Context, postID string, keys []string, gatePassed *bool) error`, `func Run(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error`, `func generateTags(ctx context.Context, s *Store, g *robot.TagGenerator, v Vocabulary, lang string, post Post) error`.
 
 - [ ] **Step 1: Add `TargetTags` to `Post`**
 
@@ -398,9 +770,56 @@ with:
 	if _, err := pgx.ForEachRow(rows, []any{&key, &state.Enabled, &state.Status, &state.Gate}, func() error {
 ```
 
-- [ ] **Step 5: Wire the gate into `tagPosts`**
+- [ ] **Step 5: Read the switch once per tick in `Run` and `tagPosts`**
 
-In `internal/service/tagging/tagged.go`, the vocabulary is now read once per post in `tagPosts` and passed to `generateTags`. Replace the loop body of `tagPosts`, from `for _, post := range posts {` up to and including its closing `}`, with:
+In `internal/service/tagging/tagged.go`, add the import `"github.com/dagulv/kharoborathus/internal/service/switches"`, and replace `Run` and the start of `tagPosts`:
+
+```go
+func Run(ctx context.Context, s *Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error {
+	for range schedule.Always.Tick(ctx, tickInterval) {
+		if err := tagPosts(ctx, s, g, t, l); err != nil {
+			l.Error("tag posts", "err", err)
+		}
+	}
+
+	return ctx.Err()
+}
+
+func tagPosts(ctx context.Context, s *Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error {
+	posts, err := iterx.Collect(s.ListUntaggedPosts(ctx, batchSize))
+	if err != nil {
+		return err
+	}
+```
+
+with:
+
+```go
+func Run(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error {
+	for range schedule.Always.Tick(ctx, tickInterval) {
+		if err := tagPosts(ctx, s, sw, g, t, l); err != nil {
+			l.Error("tag posts", "err", err)
+		}
+	}
+
+	return ctx.Err()
+}
+
+func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error {
+	shadow, err := sw.Enabled(ctx, switches.ShadowGate)
+	if err != nil {
+		return err
+	}
+
+	posts, err := iterx.Collect(s.ListUntaggedPosts(ctx, batchSize))
+	if err != nil {
+		return err
+	}
+```
+
+- [ ] **Step 6: Wire the gate into the post loop**
+
+The vocabulary is now read once per post in `tagPosts` and passed to `generateTags`. Replace the loop in `tagPosts`, from `for _, post := range posts {` up to and including its closing `}`, with:
 
 ```go
 	for _, post := range posts {
@@ -439,7 +858,7 @@ In `internal/service/tagging/tagged.go`, the vocabulary is now read once per pos
 			return nil
 		case err != nil:
 			l.Warn("classify tags", "post", post.ID, "err", err)
-		default:
+		case shadow:
 			gatePassed = shadowGate(v, post.TargetTags, keys)
 		}
 
@@ -470,12 +889,39 @@ func generateTags(ctx context.Context, s *Store, g *robot.TagGenerator, v Vocabu
 
 The gate reads `v` from before generation. That is safe: generation only adds terms, reactivates dormant tags and proposes new keys, and none of those change `gate`.
 
-- [ ] **Step 6: Build, vet and test**
+- [ ] **Step 7: Pass the switch store in `main.go`**
+
+In `cmd/main.go`, add the import `"github.com/dagulv/kharoborathus/internal/service/switches"` in sorted order, and replace:
+
+```go
+	taggingStore := tagging.NewStore(db)
+```
+
+with:
+
+```go
+	taggingStore := tagging.NewStore(db)
+	switchStore := switches.NewStore(db)
+```
+
+Then replace:
+
+```go
+		return tagging.Run(ctx, &taggingStore, tagGenerator, tagger, l.WithGroup("tagging"))
+```
+
+with:
+
+```go
+		return tagging.Run(ctx, &taggingStore, &switchStore, tagGenerator, tagger, l.WithGroup("tagging"))
+```
+
+- [ ] **Step 8: Build, vet and test**
 
 Run: `go build ./... && go vet ./... && go test ./...`
 Expected: no errors, all tests PASS.
 
-- [ ] **Step 7: Check the SQL on a throwaway database**
+- [ ] **Step 9: Check the SQL on a throwaway database**
 
 Run:
 
@@ -506,10 +952,10 @@ docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" gate_check'
 
 Expected: the tags row shows `investment | t | active | t`. The untagged query returns both posts with `target_tags = {investment}`. The last select shows `b1 | t` and `b2` with an empty `gate_passed`.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add internal/service/tagging/model.go internal/service/tagging/store.go internal/service/tagging/tagged.go
+git add internal/service/tagging/model.go internal/service/tagging/store.go internal/service/tagging/tagged.go cmd/main.go
 git commit -m "Store shadow gate result when tagging posts
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -517,30 +963,31 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: Flag drifting sources
+### Task 6: Flag drifting sources
 
 **Files:**
 - Modify: `internal/service/tagging/store.go` (append `FlagSources`)
 - Modify: `internal/service/tagging/maintain.go`
+- Modify: `cmd/main.go`
 
 **Interfaces:**
-- Consumes: `tag_checked.gate_passed` from Task 3, `sources.flagged_at` and `sources.reviewed_at` from Task 1.
-- Produces: `func (s *Store) FlagSources(ctx context.Context, window int, floor float64, minPosts int) (int64, error)`, constants `flagWindow = 50`, `flagFloor = 0.7`, `flagMinPosts = 20`. Task 5's admin pass rate mirrors this query.
+- Consumes: `tag_checked.gate_passed` from Task 5, `sources.flagged_at` and `sources.reviewed_at` from Task 2, `switches.Store` from Task 3 and `switchStore` in `cmd/main.go` from Task 5.
+- Produces: `func (s *Store) FlagSources(ctx context.Context, window int, floor float64) (int64, error)`, `func RunMaintenance(ctx context.Context, s *Store, sw *switches.Store, l *slog.Logger) error`, constants `flagWindow = 50` and `flagFloor = 0.7`. Task 7's admin pass rate mirrors this query.
 
 - [ ] **Step 1: Write the fixture and watch it fail**
 
-The fixture builds eight sources on a throwaway database and runs the flag query with `window = 50`, `floor = 0.7`, `minPosts = 20`. Post `i` of a source was checked `i` hours ago, so `i = 1` is the newest. A post passes when `i <= passed`. Source `h` stores NULL results.
+The fixture builds eight sources on a throwaway database. Post `i` of a source was checked `i` hours ago, so `i = 1` is the newest. A post passes when `i <= passed`. Source `h` stores NULL results.
 
 | Source | Posts | Passing | Other state | Expected |
 |---|---|---|---|---|
-| a | 25 | newest 10 | | flagged (40%) |
-| b | 25 | newest 20 | | not flagged (80%) |
-| c | 10 | none | | not flagged (under 20 posts) |
-| d | 25 | none | `reviewed_at` 90 minutes ago | not flagged (1 post after review) |
-| e | 80 | newest 50 | | not flagged (window is the newest 50) |
-| f | 25 | none | disabled | not flagged |
-| g | 25 | none | `flagged_at` 2026-01-01 | stays flagged with the old time |
-| h | 25 | NULL | | not flagged |
+| a | 60 | newest 30 | | flagged (60% of the newest 50) |
+| b | 60 | newest 40 | | not flagged (80%) |
+| c | 30 | none | | not flagged (window not full) |
+| d | 60 | none | `reviewed_at` 90 minutes ago | not flagged (1 post after review) |
+| e | 80 | newest 50 | | not flagged (window is the newest 50, all passing) |
+| f | 60 | none | disabled | not flagged |
+| g | 60 | none | `flagged_at` 2026-01-01 | stays flagged with the old time |
+| h | 60 | NULL | | not flagged |
 
 Save this as `.superpowers/flag_fixture.sql` (git-ignored scratch):
 
@@ -562,8 +1009,8 @@ FROM (VALUES
 
 CREATE TEMP TABLE spec (name text, total int, passed int, judged boolean);
 INSERT INTO spec VALUES
-  ('a', 25, 10, true), ('b', 25, 20, true), ('c', 10, 0, true), ('d', 25, 0, true),
-  ('e', 80, 50, true), ('f', 25, 0, true), ('g', 25, 0, true), ('h', 25, 0, false);
+  ('a', 60, 30, true), ('b', 60, 40, true), ('c', 30, 0, true), ('d', 60, 0, true),
+  ('e', 80, 50, true), ('f', 60, 0, true), ('g', 60, 0, true), ('h', 60, 0, false);
 
 INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content, content_hash, created_at)
 SELECT s.id, s.url || '/' || i, 'en', s.domain_id, 't', 's', 'c', '\x00', now() - make_interval(hours => i)
@@ -593,7 +1040,7 @@ Expected: `a` shows `flagged = f`. That is the failure the next step fixes. Only
 Append to `internal/service/tagging/store.go`:
 
 ```go
-func (s *Store) FlagSources(ctx context.Context, window int, floor float64, minPosts int) (int64, error) {
+func (s *Store) FlagSources(ctx context.Context, window int, floor float64) (int64, error) {
 	// Posts checked before the last review are skipped, otherwise a kept or retargeted source is flagged again the next day.
 	tag, err := s.db.Exec(ctx, `
 		WITH recent AS (
@@ -620,9 +1067,9 @@ func (s *Store) FlagSources(ctx context.Context, window int, floor float64, minP
 			AND s.flagged_at IS NULL
 			AND s.enabled
 			AND s.deleted_at IS NULL
-			AND rates.n >= $3
+			AND rates.n = $1
 			AND rates.rate < $2
-		`, window, floor, minPosts)
+		`, window, floor)
 	if err != nil {
 		return 0, fmt.Errorf("err flag sources: %w", err)
 	}
@@ -633,7 +1080,7 @@ func (s *Store) FlagSources(ctx context.Context, window int, floor float64, minP
 
 - [ ] **Step 3: Run the query against the fixture**
 
-Run the SQL from Step 2 with `$1 = 50`, `$2 = 0.7`, `$3 = 20` substituted, then the check select from Step 1:
+Run the SQL from Step 2 with `$1 = 50` and `$2 = 0.7` substituted, then the check select from Step 1:
 
 ```bash
 docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d gate_check' <<'SQL'
@@ -661,7 +1108,7 @@ WHERE rates.source_id = s.id
 	AND s.flagged_at IS NULL
 	AND s.enabled
 	AND s.deleted_at IS NULL
-	AND rates.n >= 20
+	AND rates.n = 50
 	AND rates.rate < 0.7;
 SELECT url, flagged_at IS NOT NULL AS flagged, flagged_at < now() - interval '1 day' AS old FROM sources ORDER BY url;
 SQL
@@ -670,7 +1117,7 @@ docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" gate_check'
 
 Expected: `UPDATE 1`. Then `a | t | f`, `g | t | t`, and every other source `f` with an empty `old`. If the SQL in `store.go` and the SQL here differ, fix them so they match before you go on.
 
-- [ ] **Step 4: Run it daily from maintenance**
+- [ ] **Step 4: Run it daily from maintenance, behind the switch**
 
 Replace `internal/service/tagging/maintain.go` with:
 
@@ -683,6 +1130,7 @@ import (
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
+	"github.com/dagulv/kharoborathus/internal/service/switches"
 )
 
 const (
@@ -691,10 +1139,9 @@ const (
 	dormancyWindow   = 90
 	flagWindow       = 50
 	flagFloor        = 0.7
-	flagMinPosts     = 20
 )
 
-func RunMaintenance(ctx context.Context, s *Store, l *slog.Logger) error {
+func RunMaintenance(ctx context.Context, s *Store, sw *switches.Store, l *slog.Logger) error {
 	for range schedule.Always.Tick(ctx, maintainInterval) {
 		rated, err := s.RecomputeRates(ctx, rateWindow, gateMaxRate, minSample)
 		if err != nil {
@@ -706,7 +1153,7 @@ func RunMaintenance(ctx context.Context, s *Store, l *slog.Logger) error {
 			l.Error("mark dormant tags", "err", err)
 		}
 
-		flagged, err := s.FlagSources(ctx, flagWindow, flagFloor, flagMinPosts)
+		flagged, err := flagSources(ctx, s, sw)
 		if err != nil {
 			l.Error("flag sources", "err", err)
 		}
@@ -716,17 +1163,40 @@ func RunMaintenance(ctx context.Context, s *Store, l *slog.Logger) error {
 
 	return ctx.Err()
 }
+
+func flagSources(ctx context.Context, s *Store, sw *switches.Store) (int64, error) {
+	on, err := sw.Enabled(ctx, switches.ShadowGate)
+	if err != nil || !on {
+		return 0, err
+	}
+
+	return s.FlagSources(ctx, flagWindow, flagFloor)
+}
 ```
 
-- [ ] **Step 5: Build, vet and test**
+- [ ] **Step 5: Pass the switch store in `main.go`**
+
+In `cmd/main.go`, replace:
+
+```go
+		return tagging.RunMaintenance(ctx, &taggingStore, l.WithGroup("maintenance"))
+```
+
+with:
+
+```go
+		return tagging.RunMaintenance(ctx, &taggingStore, &switchStore, l.WithGroup("maintenance"))
+```
+
+- [ ] **Step 6: Build, vet and test**
 
 Run: `go build ./... && go vet ./... && go test ./...`
 Expected: no errors, all tests PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add internal/service/tagging/store.go internal/service/tagging/maintain.go
+git add internal/service/tagging/store.go internal/service/tagging/maintain.go cmd/main.go
 git commit -m "Flag sources whose shadow gate pass rate drops
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -734,7 +1204,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Admin flagged sources
+### Task 7: Admin flagged sources
 
 **Files:**
 - Modify: `frontend/src/lib/types.ts` (`Source`)
@@ -743,7 +1213,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `frontend/src/routes/admin/sources/+page.svelte`
 
 **Interfaces:**
-- Consumes: `sources.flagged_at`, `sources.reviewed_at` and `tag_checked.gate_passed`, plus the window and floor from Task 4.
+- Consumes: `sources.flagged_at`, `sources.reviewed_at` and `tag_checked.gate_passed`, plus the window from Task 6.
 - Produces: `Source.flaggedAt: Date | null`, `Source.gateRate: number | null`, stat `flaggedSources`, and `reviewSource({ id, enabled, targetTags })`. The command sets `enabled` and `target_tags`, clears `flagged_at` and sets `reviewed_at = now()`.
 
 Edit the `.svelte` files through the `svelte:svelte-file-editor` agent or the Svelte MCP tools. Before you write the client call, read the SvelteKit remote functions docs from the Svelte MCP `get-documentation` tool to confirm `command(...).updates(query)`.
@@ -977,8 +1447,8 @@ Between the header `</div>` and `<div class="overflow-x-auto ...">`, add:
 	<section class="mb-6 rounded border border-amber-300 bg-amber-50 p-4">
 		<h2 class="font-medium">Flagged <span class="text-zinc-500">({flagged.length})</span></h2>
 		<p class="mb-3 text-sm text-zinc-600">
-			Fewer than 70% of recent posts passed the shadow gate. Keep saves the target tags below and
-			restarts the count.
+			Fewer than 70% of the last 50 posts passed the shadow gate. Keep saves the target tags below
+			and restarts the count.
 		</p>
 		<ul class="space-y-2">
 			{#each flagged as source (source.id)}
@@ -1052,7 +1522,7 @@ Run the Svelte MCP `svelte-autofixer` on `sources/+page.svelte` and `+page.svelt
 
 - [ ] **Step 9: Check the admin SQL on a throwaway database**
 
-Rebuild `gate_check` and load the Task 4 fixture as in Task 4 Step 1. Then run the `listSources` select with `${...}` replaced by `WHERE s.deleted_at IS NULL`, and the `reviewSource` update for source `a`:
+Rebuild `gate_check` and load the Task 6 fixture as in Task 6 Step 1. Then run the pass rate part of `listSources` and the `reviewSource` update for source `a`:
 
 ```bash
 docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d gate_check' <<'SQL'
@@ -1081,7 +1551,7 @@ SQL
 docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" gate_check'
 ```
 
-Expected rates: `a 0.40`, `b 0.80`, `c 0.00`, `d 0.00`, `e 1.00`, `f 0.00`, `g 0.00`, `h` empty. The update returns one row for `a` with an empty `flagged_at` and `reviewed = t`.
+Expected rates: `a 0.60`, `b 0.80`, `c 0.00`, `d 0.00`, `e 1.00`, `f 0.00`, `g 0.00`, `h` empty. The update returns one row for `a` with an empty `flagged_at` and `reviewed = t`.
 
 - [ ] **Step 10: Commit**
 
@@ -1094,7 +1564,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 6: Knowledge base
+### Task 8: Knowledge base
 
 **Files:**
 - Modify: `docs/kb/classifier-gate.md`
@@ -1108,38 +1578,38 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - [ ] **Step 1: Update `classifier-gate.md`**
 
 - Set `**Status:** shadow gate done, hard gate designed`.
-- Replace the Current state paragraph with: "The tagging worker stores the shadow gate result in `tag_checked.gate_passed`, see [gate.go](../../internal/service/tagging/gate.go). Daily maintenance sets `sources.flagged_at`, and admin lists flagged sources. The hard gate is not built. It ships with [discovered ingest](discovered-ingest.md) in phase 4."
+- Replace the Current state paragraph with: "While the `shadow_gate` switch is on, the tagging worker stores the shadow gate result in `tag_checked.gate_passed`, see [gate.go](../../internal/service/tagging/gate.go). Daily maintenance sets `sources.flagged_at`, and admin lists flagged sources. The hard gate is not built. It ships with [discovered ingest](discovered-ingest.md) in phase 4."
 - Under shadow gate step 2, add: "Target tags are resolved through `tag_aliases`."
 - Replace shadow gate step 3 with: "Store the result. Never reject the post. The result is NULL when the classification failed, or when the source has no target tags and no gate tag exists."
-- Replace shadow gate step 6 with: "You review flagged sources only, and keep, retarget or disable them. Every review clears `flagged_at` and sets `reviewed_at`. The pass rate only counts posts checked after `reviewed_at`."
+- Replace shadow gate step 6 with: "You review flagged sources only, and keep, retarget or disable them. Every review clears `flagged_at` and sets `reviewed_at`. The window only counts posts checked after `reviewed_at`, so a reviewed source needs a fresh full window before it can be flagged again."
 - Add `ALTER TABLE sources ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;` to Schema changes.
-- Add a Defaults row: `| Minimum gated posts | 20 | A new source is not judged on a handful of posts. Same as the broadness minimum. |`.
 
 - [ ] **Step 2: Update `architecture.md`**
 
 - In the Sources worker row, replace "Polls active sources" with "Polls enabled sources".
-- In the Tagging worker row, replace the job with "Generates new tags, classifies posts against all tags and records the shadow gate result."
+- In the Tagging worker row, replace the job with "Generates new tags, classifies posts against all tags and records the shadow gate result while its switch is on."
 - Remove the bullet "`sources.target_tags` is saved from admin but never read."
 
 - [ ] **Step 3: Update `rollout.md`**
 
-- Set Current state to: "Phases 1 and 2 are done."
+- Set Current state to: "Phases 1 and 2 are done, with the switches table and admin page. `shadow_gate` starts off."
 - Replace the "**Every phase:**" migration bullet with: "**Every phase:** until the first deploy, schema changes go straight into `schema.sql` and databases are recreated from it."
+- In the "**Phases 2, 4, 5 and 6:**" bullet, replace "the migration inserts" with "`schema.sql` inserts".
 
 - [ ] **Step 4: Update `index.md`**
 
 Set the Classifier gate row status to `shadow done`.
 
-- [ ] **Step 5: Check the links**
+- [ ] **Step 5: Check the edits**
 
-Run: `grep -n "gate.go\|reviewed_at\|shadow done" docs/kb/*.md`
-Expected: `classifier-gate.md` shows the new link and `reviewed_at`, and `index.md` shows `shadow done`. `ls internal/service/tagging/gate.go` exists.
+Run: `grep -n "gate.go\|reviewed_at\|shadow done\|recreated from it" docs/kb/*.md`
+Expected: `classifier-gate.md` shows the new link and `reviewed_at`, `index.md` shows `shadow done`, and `rollout.md` shows the new migration bullet. `ls internal/service/tagging/gate.go` exists.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add docs/kb/classifier-gate.md docs/kb/architecture.md docs/kb/rollout.md docs/kb/index.md
-git commit -m "Describe shipped shadow gate in kb
+git commit -m "Describe shipped shadow gate and switches in kb
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
