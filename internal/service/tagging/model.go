@@ -44,3 +44,17 @@ func (v Vocabulary) ActiveKeys() []string {
 
 	return keys
 }
+
+type Candidate struct {
+	Key     string
+	PostIDs []string
+	Terms   []Term
+}
+
+type Promotion struct {
+	Key       string
+	Terms     []Term
+	Gate      bool
+	MatchRate float64
+	Matched   []string
+}

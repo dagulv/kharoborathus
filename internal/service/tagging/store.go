@@ -203,3 +203,200 @@ func (s *Store) Reactivate(ctx context.Context, keys []string) error {
 
 	return nil
 }
+
+func (s *Store) ListCandidates(ctx context.Context, windowDays, minPosts, minDomains, limit int) ([]Candidate, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT
+			p.key,
+			array_agg(DISTINCT p.post_id::text),
+			array_agg(p.lang ORDER BY p.post_id),
+			array_agg(p.term ORDER BY p.post_id)
+		FROM tag_proposals p
+		JOIN posts po ON po.id = p.post_id
+		WHERE p.created_at > now() - make_interval(days => $1)
+			AND NOT EXISTS (SELECT 1 FROM tags t WHERE t.key = p.key)
+			AND NOT EXISTS (SELECT 1 FROM tag_aliases a WHERE a.alias = p.key)
+		GROUP BY p.key
+		HAVING count(DISTINCT p.post_id) >= $2 AND count(DISTINCT po.domain_id) >= $3
+		ORDER BY count(DISTINCT p.post_id) DESC, p.key
+		LIMIT $4
+		`, windowDays, minPosts, minDomains, limit)
+	if err != nil {
+		return nil, fmt.Errorf("err query candidates: %w", err)
+	}
+
+	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (c Candidate, err error) {
+		var langs, words []string
+
+		if err = row.Scan(&c.Key, &c.PostIDs, &langs, &words); err != nil {
+			return c, err
+		}
+
+		for i := range langs {
+			c.Terms = append(c.Terms, Term{Key: c.Key, Lang: langs[i], Term: words[i]})
+		}
+
+		return c, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("err scan candidates: %w", err)
+	}
+
+	return candidates, nil
+}
+
+func (s *Store) Similar(ctx context.Context, terms []Term) ([]robot.Tag, error) {
+	_, langs, words := termColumns(terms)
+
+	rows, err := s.db.Query(ctx, `
+		SELECT t.key, array_agg(tt.term ORDER BY tt.lang, tt.term)
+		FROM tags t
+		JOIN tag_terms tt ON tt.key = t.key
+		WHERE t.enabled
+			AND EXISTS (
+				SELECT 1
+				FROM tag_terms m
+				JOIN unnest($1::text[], $2::text[]) AS c(lang, term) ON c.lang = m.lang
+				WHERE m.key = t.key
+					AND to_tsvector(
+						CASE m.lang
+							WHEN 'sv' THEN 'ts_swedish'::regconfig
+							WHEN 'en' THEN 'english'::regconfig
+							ELSE 'simple'::regconfig
+						END,
+						c.term
+					) @@ m.matcher
+			)
+		GROUP BY t.key
+		ORDER BY t.key
+		`, langs, words)
+	if err != nil {
+		return nil, fmt.Errorf("err query similar tags: %w", err)
+	}
+
+	tags, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (tag robot.Tag, err error) {
+		err = row.Scan(&tag.Key, &tag.Terms)
+		return
+	})
+	if err != nil {
+		return nil, fmt.Errorf("err scan similar tags: %w", err)
+	}
+
+	return tags, nil
+}
+
+func (s *Store) GetPosts(ctx context.Context, ids []string) ([]Post, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, source_id, lang, title, content
+		FROM posts
+		WHERE id = ANY($1::text[]::uuid[])
+		`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("err query posts: %w", err)
+	}
+
+	posts, err := pgx.CollectRows(rows, scanPost)
+	if err != nil {
+		return nil, fmt.Errorf("err scan posts: %w", err)
+	}
+
+	return posts, nil
+}
+
+func (s *Store) ListRecentPosts(ctx context.Context, days, limit int) ([]Post, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, source_id, lang, title, content
+		FROM posts
+		WHERE created_at > now() - make_interval(days => $1)
+		ORDER BY created_at DESC
+		LIMIT $2
+		`, days, limit)
+	if err != nil {
+		return nil, fmt.Errorf("err query recent posts: %w", err)
+	}
+
+	posts, err := pgx.CollectRows(rows, scanPost)
+	if err != nil {
+		return nil, fmt.Errorf("err scan recent posts: %w", err)
+	}
+
+	return posts, nil
+}
+
+func scanPost(row pgx.CollectableRow) (p Post, err error) {
+	err = row.Scan(&p.ID, &p.SourceID, &p.Lang, &p.Title, &p.Content)
+	return
+}
+
+func (s *Store) AddAlias(ctx context.Context, alias, key string, terms []Term) error {
+	_, langs, words := termColumns(terms)
+
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO tag_terms (key, lang, term)
+			SELECT $1, * FROM unnest($2::text[], $3::text[])
+			ON CONFLICT (key, lang, term) DO NOTHING
+			`, key, langs, words); err != nil {
+			return fmt.Errorf("err insert alias terms: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO tag_aliases (alias, key) VALUES ($1, $2)
+			ON CONFLICT (alias) DO UPDATE SET key = EXCLUDED.key
+			`, alias, key); err != nil {
+			return fmt.Errorf("err insert tag alias: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx, `DELETE FROM tag_proposals WHERE key = $1`, alias); err != nil {
+			return fmt.Errorf("err delete alias proposals: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func (s *Store) PromoteTag(ctx context.Context, p Promotion) error {
+	_, langs, words := termColumns(p.Terms)
+
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO tags (key, gate, match_rate, last_matched_at)
+			VALUES ($1, $2, $3, CASE WHEN $4::boolean THEN now() END)
+			ON CONFLICT (key) DO NOTHING
+			`, p.Key, p.Gate, p.MatchRate, len(p.Matched) > 0); err != nil {
+			return fmt.Errorf("err insert tag: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO tag_terms (key, lang, term)
+			SELECT $1, * FROM unnest($2::text[], $3::text[])
+			ON CONFLICT (key, lang, term) DO NOTHING
+			`, p.Key, langs, words); err != nil {
+			return fmt.Errorf("err insert tag terms: %w", err)
+		}
+
+		if len(p.Matched) > 0 {
+			if _, err := tx.Exec(ctx, `
+				UPDATE posts
+				SET tags = ARRAY(SELECT DISTINCT unnest(array_append(tags, $1::text)))
+				WHERE id = ANY($2::text[]::uuid[])
+				`, p.Key, p.Matched); err != nil {
+				return fmt.Errorf("err backfill posts: %w", err)
+			}
+		}
+
+		if _, err := tx.Exec(ctx, `DELETE FROM tag_proposals WHERE key = $1`, p.Key); err != nil {
+			return fmt.Errorf("err delete proposals: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func (s *Store) DropProposals(ctx context.Context, key string) error {
+	if _, err := s.db.Exec(ctx, `DELETE FROM tag_proposals WHERE key = $1`, key); err != nil {
+		return fmt.Errorf("err drop proposals: %w", err)
+	}
+
+	return nil
+}
