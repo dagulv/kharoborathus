@@ -102,13 +102,13 @@ func (b brave) Search(ctx context.Context, q Query) ([]robot.SearchResult, error
 
 	res, err := b.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: brave: %w", adapter.ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: err call brave: %w", adapter.ErrUnavailable, err)
 	}
 	defer res.Body.Close()
 
 	switch {
 	case res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= http.StatusInternalServerError:
-		return nil, fmt.Errorf("%w: brave %s", adapter.ErrUnavailable, res.Status)
+		return nil, fmt.Errorf("%w: err brave status %s", adapter.ErrUnavailable, res.Status)
 	case res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusUnprocessableEntity:
 		var e braveError
 
@@ -117,13 +117,13 @@ func (b brave) Search(ctx context.Context, q Query) ([]robot.SearchResult, error
 
 		// Brave answers a bad key with 422 too, which must stop the worker instead of burning the queue item by item.
 		if e.Error.Code == "SUBSCRIPTION_TOKEN_INVALID" {
-			return nil, fmt.Errorf("brave %s: %s", res.Status, e.Error.Code)
+			return nil, fmt.Errorf("err brave status %s: %s", res.Status, e.Error.Code)
 		}
 
-		return nil, fmt.Errorf("%w: brave %s", errSearchRejected, res.Status)
+		return nil, fmt.Errorf("%w: err brave status %s", errSearchRejected, res.Status)
 	case res.StatusCode != http.StatusOK:
 		msg, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-		return nil, fmt.Errorf("brave: %s: %s", res.Status, bytes.TrimSpace(msg))
+		return nil, fmt.Errorf("err brave status %s: %s", res.Status, bytes.TrimSpace(msg))
 	}
 
 	var body braveResponse

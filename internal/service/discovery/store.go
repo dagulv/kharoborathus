@@ -223,14 +223,17 @@ func (s *Store) QueueResults(ctx context.Context, item SearchItem, urls []string
 
 		return nil
 	})
+	if err != nil {
+		return 0, fmt.Errorf("err save search results: %w", err)
+	}
 
-	return
+	return queued, nil
 }
 
 func (s *Store) MarkSearched(ctx context.Context, id string) error {
 	tag, err := s.db.Exec(ctx, `UPDATE discover_queue SET searched_at = now() WHERE id = $1`, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("err mark searched: %w", err)
 	}
 
 	if tag.RowsAffected() == 0 {
