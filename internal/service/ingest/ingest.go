@@ -35,8 +35,13 @@ const (
 
 var errGate = errors.New("ingest: gate failed")
 
+type domainAllower interface {
+	DomainAllowed(ctx context.Context, baseURL string) (bool, error)
+}
+
 type Ingester struct {
 	store      *Store
+	allower    domainAllower
 	switches   *switches.Store
 	tags       *tagging.Store
 	feeds      *feed.Store
@@ -64,6 +69,7 @@ func NewIngester(s *Store, sw *switches.Store, tags *tagging.Store, feeds *feed.
 
 	return &Ingester{
 		store:      s,
+		allower:    s,
 		switches:   sw,
 		tags:       tags,
 		feeds:      feeds,
@@ -160,6 +166,23 @@ func (in *Ingester) tick(ctx context.Context) error {
 
 // process returns the link's final status, or an error to retry it on a later tick.
 func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (res result, err error) {
+	base, err := domain.BaseURL(link.URL)
+	if err != nil {
+		res.status, res.reason = statusFailed, "bad url"
+		return res, nil
+	}
+
+	// Redirects to another host fail below, so the link's own domain decides before any request.
+	allowedDomain, err := in.allower.DomainAllowed(ctx, base)
+	if err != nil {
+		return res, err
+	}
+
+	if !allowedDomain {
+		res.status, res.reason = statusFailed, "source disabled"
+		return res, nil
+	}
+
 	allowed, err := in.robots.Allowed(ctx, link.URL)
 	if errors.Is(err, safehttp.ErrPrivateAddress) {
 		res.status, res.reason = statusFailed, "private address"
@@ -196,16 +219,6 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 	}
 
 	res.domainID = d.ID
-
-	allowedDomain, err := in.store.DomainAllowed(ctx, d.ID)
-	if err != nil {
-		return res, err
-	}
-
-	if !allowedDomain {
-		res.status, res.reason = statusFailed, "source disabled"
-		return res, nil
-	}
 
 	f := in.trim.Apply(ctx, d, feed.Feed{URL: finalURL, DomainID: d.ID, Lang: pageLang(page)}, page)
 
@@ -264,7 +277,7 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 
 	f.Tags = v.Keys
 
-	_, err = in.store.Accept(ctx, link, f, v)
+	_, err = in.store.Accept(ctx, link, d.BaseURL, f, v)
 	if errors.Is(err, errSourceDisabled) {
 		res.status, res.reason = statusFailed, "source disabled"
 		return res, nil

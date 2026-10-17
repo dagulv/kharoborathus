@@ -154,16 +154,17 @@ const oldestSourceSQL = `
 	SELECT s.id, s.enabled AND s.deleted_at IS NULL
 	FROM sources s
 	JOIN domains d ON d.id = s.domain_id
-	WHERE split_part(d.base_url, '://', 2) = (SELECT split_part(base_url, '://', 2) FROM domains WHERE id = $1)
-	ORDER BY s.enabled AND s.deleted_at IS NULL DESC, s.domain_id = $1 DESC, s.created_at
+	WHERE split_part(d.base_url, '://', 2) = split_part($1::text, '://', 2)
+	ORDER BY s.enabled AND s.deleted_at IS NULL DESC, d.base_url = $1 DESC, s.created_at
 	LIMIT 1`
 
-func (s *Store) DomainAllowed(ctx context.Context, domainID string) (bool, error) {
+// Takes a base URL, so a link can be checked before its domain row exists.
+func (s *Store) DomainAllowed(ctx context.Context, baseURL string) (bool, error) {
 	var id string
 
 	allowed := true
 
-	err := s.db.QueryRow(ctx, oldestSourceSQL, domainID).Scan(&id, &allowed)
+	err := s.db.QueryRow(ctx, oldestSourceSQL, baseURL).Scan(&id, &allowed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return true, nil
 	}
@@ -176,11 +177,11 @@ func (s *Store) DomainAllowed(ctx context.Context, domainID string) (bool, error
 }
 
 // Rechecks the source inside the transaction, since it can change during the paid steps.
-func (s *Store) Accept(ctx context.Context, link Link, f feed.Feed, scores any) (post feed.Feed, err error) {
+func (s *Store) Accept(ctx context.Context, link Link, baseURL string, f feed.Feed, scores any) (post feed.Feed, err error) {
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		allowed := true
 
-		err := tx.QueryRow(ctx, oldestSourceSQL, f.DomainID).Scan(&f.SourceID, &allowed)
+		err := tx.QueryRow(ctx, oldestSourceSQL, baseURL).Scan(&f.SourceID, &allowed)
 		if errors.Is(err, pgx.ErrNoRows) {
 			f.SourceID, err = proposeSource(ctx, tx, f.DomainID, link.FromPostID)
 		}

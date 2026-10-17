@@ -11,9 +11,13 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 )
 
+type allowAll struct{}
+
+func (allowAll) DomainAllowed(context.Context, string) (bool, error) { return true, nil }
+
 func TestProcessPrivateAddress(t *testing.T) {
 	p := newPacer(0)
-	in := &Ingester{pacer: p, robots: NewRobots(safehttp.NewClient(time.Second), p)}
+	in := &Ingester{allower: allowAll{}, pacer: p, robots: NewRobots(safehttp.NewClient(time.Second), p)}
 
 	res, err := in.process(context.Background(), Link{URL: "http://127.0.0.1:1/news"}, nil)
 	if err != nil || res.status != statusFailed || res.reason != "private address" {
@@ -41,7 +45,7 @@ func TestProcessOffHostRedirect(t *testing.T) {
 	defer srv.Close()
 
 	p := newPacer(0)
-	in := &Ingester{client: srv.Client(), pacer: p, robots: NewRobots(srv.Client(), p)}
+	in := &Ingester{allower: allowAll{}, client: srv.Client(), pacer: p, robots: NewRobots(srv.Client(), p)}
 
 	res, err := in.process(context.Background(), Link{URL: srv.URL + "/news"}, nil)
 	if err != nil || res.status != statusFailed || res.reason != "redirected to localhost" {
