@@ -197,6 +197,16 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 
 	res.domainID = d.ID
 
+	allowedDomain, err := in.store.DomainAllowed(ctx, d.ID)
+	if err != nil {
+		return res, err
+	}
+
+	if !allowedDomain {
+		res.status, res.reason = statusFailed, "source disabled"
+		return res, nil
+	}
+
 	f := in.trim.Apply(ctx, d, feed.Feed{URL: finalURL, DomainID: d.ID, Lang: pageLang(page)}, page)
 
 	if f.Content == "" {

@@ -148,13 +148,31 @@ func (s *Store) Retry(ctx context.Context, id, domainID, reason string, maxAttem
 var errSourceDisabled = errors.New("ingest: source disabled")
 
 // A disabled or deleted source blocks its domain, so you can stop a domain without a code change.
+const oldestSourceSQL = `SELECT id, enabled AND deleted_at IS NULL FROM sources WHERE domain_id = $1 ORDER BY created_at LIMIT 1`
+
+func (s *Store) DomainAllowed(ctx context.Context, domainID string) (bool, error) {
+	var id string
+
+	allowed := true
+
+	err := s.db.QueryRow(ctx, oldestSourceSQL, domainID).Scan(&id, &allowed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("err check domain source: %w", err)
+	}
+
+	return allowed, nil
+}
+
+// Rechecks the source inside the transaction, since it can change during the paid steps.
 func (s *Store) Accept(ctx context.Context, link Link, f feed.Feed, scores any) (post feed.Feed, err error) {
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		allowed := true
 
-		err := tx.QueryRow(ctx, `
-			SELECT id, enabled AND deleted_at IS NULL FROM sources WHERE domain_id = $1 ORDER BY created_at LIMIT 1
-			`, f.DomainID).Scan(&f.SourceID, &allowed)
+		err := tx.QueryRow(ctx, oldestSourceSQL, f.DomainID).Scan(&f.SourceID, &allowed)
 		if errors.Is(err, pgx.ErrNoRows) {
 			f.SourceID, err = proposeSource(ctx, tx, f.DomainID, link.FromPostID)
 		}
