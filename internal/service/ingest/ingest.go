@@ -32,6 +32,8 @@ const (
 	fetchTimeout = 20 * time.Second
 )
 
+var errGate = errors.New("ingest: gate failed")
+
 type Ingester struct {
 	store      *Store
 	switches   *switches.Store
@@ -128,14 +130,20 @@ func (in *Ingester) tick(ctx context.Context) error {
 		case errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil:
 			return nil
 		case err != nil:
-			failed, err := in.store.Retry(ctx, link.ID, res.domainID, err.Error(), maxAttempts)
-			if err != nil {
-				return err
+			failed, rerr := in.store.Retry(ctx, link.ID, res.domainID, err.Error(), maxAttempts)
+			if rerr != nil {
+				return rerr
 			}
 
 			res.status = "retried"
 			if failed {
 				res.status = statusFailed
+			}
+
+			// A classifier outage would otherwise burn every link of the tick. One attempt per tick keeps a poison page from blocking the queue.
+			if errors.Is(err, errGate) {
+				counts[res.status]++
+				return err
 			}
 		case res.status != statusAccepted:
 			if err := in.store.Finish(ctx, link.ID, res.status, res.domainID, res.scores, res.reason); err != nil {
@@ -219,7 +227,7 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 
 	v, err := in.tagger.Gate(ctx, f.Title, f.Content, tags)
 	if err != nil {
-		return res, fmt.Errorf("err gate: %w", err)
+		return res, fmt.Errorf("%w: %w", errGate, err)
 	}
 
 	res.scores = v
