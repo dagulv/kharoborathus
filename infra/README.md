@@ -67,16 +67,16 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
 
    Keep `terraform.tfstate`: it is encrypted with the passphrase and gitignored, so back it up yourself.
 
-5. Point three A records at `infra/secrets.sh prod tofu -chdir=infra/tofu output -raw ipv4`: the site, the API and the Haloy API domain. Haloy gets the certificates on the first request.
+5. Point three A records at `infra/secrets.sh prod tofu -chdir=infra/tofu output -raw ipv4`: `kharoborathus.dagulv.me`, `api.kharoborathus.dagulv.me` and `haloy.kharoborathus.dagulv.me`. Haloy gets the certificates on the first request.
 
 6. Wait for cloud-init, then register the server:
 
    ```bash
    ssh deploy@<ip> cloud-init status --wait
-   haloy server add <haloy api domain> "$(ssh deploy@<ip> cat haloy-token)"
+   haloy server add haloy.kharoborathus.dagulv.me "$(ssh deploy@<ip> cat haloy-token)"
    ```
 
-7. Set your domains in `infra/haloy.yaml` and `infra/web/.env`. Copy the safe values, then seal the prod vault's `app.yaml`:
+7. Copy the safe values, then seal the prod vault's `app.yaml`:
 
    ```bash
    for t in db api web; do cp infra/$t/.env.example infra/$t/.env; done

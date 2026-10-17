@@ -1,8 +1,8 @@
-# Replace the example domains with yours. server is haloy_api_domain from terraform.tfvars.
+# server is haloy_api_domain from terraform.tfvars.
 # Each target reads its safe values from its own <target>/.env, see .env.example there.
 # Secrets come from the prod vault. Run through haloy.sh, which gives every target its own env:
 # infra/secrets.sh prod infra/haloy.sh deploy api web
-server: haloy.news.example.com
+server: haloy.kharoborathus.dagulv.me
 
 targets:
   db:
@@ -37,7 +37,7 @@ targets:
         context: ..
         dockerfile: infra/api/Dockerfile
     domains:
-      - domain: api.news.example.com
+      - domain: api.kharoborathus.dagulv.me
     port: 3001
     health_check_path: /feeds?limit=1
     env:
@@ -61,7 +61,7 @@ targets:
         context: ../frontend
         dockerfile: ../infra/web/Dockerfile
     domains:
-      - domain: news.example.com
+      - domain: kharoborathus.dagulv.me
     port: 3000
     health_check_path: /healthz
     env:
