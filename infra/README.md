@@ -102,7 +102,7 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
 ## Later
 
 - Redeploy with `infra/secrets.sh prod:app infra/haloy.sh deploy api web`. Images build locally and upload to the server. Leave `db` out unless its image changed.
-- Logs: `infra/secrets.sh prod:app infra/haloy.sh logs api`. `rollback-targets` through `haloy.sh` lists deployment IDs for `haloy rollback <id>`.
+- Logs: `infra/secrets.sh prod:app infra/haloy.sh logs api`. `infra/secrets.sh prod:app infra/haloy.sh rollback-targets api` lists deployment IDs, and `infra/secrets.sh prod:app infra/haloy.sh rollback api -- <id>` rolls back to one.
 - `schema.sql` runs only on an empty database volume. Schema changes after the first deploy need migrations.
 - Every switch starts off. Turn them on in the admin under Switches.
 - `tofu apply` never replaces the server: it has `prevent_destroy`, and edits to `cloud-init.yaml` or the SSH key are ignored for the existing server.
