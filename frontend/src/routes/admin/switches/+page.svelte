@@ -9,7 +9,9 @@
 		shadow_gate:
 			'Stores the shadow gate result per post and flags drifting sources. Turn on when several gate tags exist.',
 		discovered_ingest:
-			'Fetches queued links, gates them and adds accepted pages as posts with proposed sources. Link extraction fills the queue either way.'
+			'Fetches queued links, gates them and adds accepted pages as posts with proposed sources. Link extraction fills the queue either way.',
+		search_discovery:
+			'Searches Brave for events from trusted posts whose action is a gate tag and queues relevant results for ingest. Event extraction runs either way. At most 330 searches a day.'
 	};
 
 	let failed = $state('');

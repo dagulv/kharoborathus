@@ -5,6 +5,9 @@
 	const linkQueue = $derived(await getLinkQueue());
 
 	const LINK_STATUSES = ['pending', 'accepted', 'rejected', 'duplicate', 'failed'];
+
+	// Mirrors dailySearchBudget in internal/service/discovery/search.go
+	const SEARCH_BUDGET = 330;
 </script>
 
 <svelte:head><title>Admin</title></svelte:head>
@@ -29,6 +32,15 @@
 			<div class="text-2xl font-semibold tabular-nums">{linkQueue[status] ?? 0}</div>
 		</div>
 	{/each}
+</div>
+
+<h2 class="mt-8 mb-2 font-medium">Search discovery</h2>
+
+<div class="grid grid-cols-2 gap-4 sm:grid-cols-5">
+	<div class="rounded border border-zinc-200 bg-white p-4">
+		<div class="text-sm text-zinc-500">Brave searches (24h)</div>
+		<div class="text-2xl font-semibold tabular-nums">{stats.searchesToday} / {SEARCH_BUDGET}</div>
+	</div>
 </div>
 
 <div class="mt-6 flex gap-4 text-sm">

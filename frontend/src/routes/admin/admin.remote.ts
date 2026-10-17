@@ -18,6 +18,7 @@ export const getStats = query(async () => {
 			flaggedSources: number;
 			posts: number;
 			postsToday: number;
+			searchesToday: number;
 		}[]
 	>`
 		SELECT
@@ -25,7 +26,8 @@ export const getStats = query(async () => {
 			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND enabled) AS enabled_sources,
 			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND flagged_at IS NOT NULL) AS flagged_sources,
 			(SELECT count(*)::int FROM posts) AS posts,
-			(SELECT count(*)::int FROM posts WHERE created_at > now() - interval '24 hours') AS posts_today
+			(SELECT count(*)::int FROM posts WHERE created_at > now() - interval '24 hours') AS posts_today,
+			(SELECT count(*)::int FROM discover_queue WHERE searched_at > now() - interval '24 hours' AND result_count IS NOT NULL) AS searches_today
 	`;
 
 	return row;
@@ -352,6 +354,12 @@ export const listSwitches = query(async () => {
 						|| (SELECT count(*) FROM sources WHERE deleted_at IS NULL AND flagged_at IS NOT NULL) || ' flagged sources'
 					FROM tag_checked
 					WHERE gate_passed IS NOT NULL
+				)
+				WHEN 'search_discovery' THEN (
+					SELECT coalesce(round(avg((status = 'accepted')::int) * 100) || '% accepted', 'no acceptance rate')
+						|| ' of ' || count(*) || ' gate decisions in 7 days'
+					FROM link_queue
+					WHERE status IN ('accepted', 'rejected') AND checked_at > now() - interval '7 days'
 				)
 			END AS readiness
 		FROM switches s
