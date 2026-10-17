@@ -1,4 +1,7 @@
 .env
+# Haloy also loads .env.local and others, which may hold secrets.
+.env.*
+!.env.example
 infra/tofu/.terraform/
 infra/tofu/*.tfstate*
 infra/tofu/*.tfplan
