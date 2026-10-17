@@ -20,6 +20,17 @@ variable "ssh_public_key" {
   }
 }
 
+variable "haloy_api_domain" {
+  description = "Domain for the Haloy API. haloy.yaml uses it as server."
+  type        = string
+
+  # Cloud-init runs once, so a wrong domain needs a manual `haloyd config set api-domain`.
+  validation {
+    condition     = can(regex("^[a-z0-9.-]+\\.[a-z]{2,}$", var.haloy_api_domain)) && !endswith(var.haloy_api_domain, "example.com")
+    error_message = "Set haloy_api_domain to your real domain, not the example."
+  }
+}
+
 variable "hostname" {
   description = "Server hostname."
   type        = string

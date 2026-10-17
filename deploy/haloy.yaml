@@ -1,0 +1,77 @@
+# Replace the example domains with yours. server is haloy_api_domain from terraform.tfvars.
+# Secrets come from deploy/.env, see .env.example.
+server: haloy.news.example.com
+
+targets:
+  db:
+    preset: database
+    image:
+      repository: kharoborathus-db
+      build_config:
+        context: ..
+        dockerfile: docker/postgres/Dockerfile
+    port: 5432
+    volumes:
+      - kharoborathus-db:/var/lib/postgresql
+    env:
+      - name: POSTGRES_USER
+        from:
+          env: POSTGRES_USER
+      - name: POSTGRES_PASSWORD
+        from:
+          env: POSTGRES_PASSWORD
+      - name: POSTGRES_DB
+        from:
+          env: POSTGRES_DB
+
+  api:
+    # A fixed name lets the admin reach the internal port at api:3002.
+    # Replace also keeps two scrapers from overlapping during a deploy.
+    naming_strategy: static
+    deployment_strategy: replace
+    image:
+      repository: kharoborathus-api
+      build_config:
+        context: ..
+        dockerfile: deploy/api.Dockerfile
+    domains:
+      - domain: api.news.example.com
+    port: 3001
+    health_check_path: /feeds?limit=1
+    env:
+      - name: POSTGRES_CONNECTION_STRING
+        from:
+          env: POSTGRES_CONNECTION_STRING
+      - name: DEEPSEEK_API_KEY
+        from:
+          env: DEEPSEEK_API_KEY
+      - name: TYPESAFE_API_KEY
+        from:
+          env: TYPESAFE_API_KEY
+      - name: BRAVE_API_KEY
+        from:
+          env: BRAVE_API_KEY
+
+  web:
+    image:
+      repository: kharoborathus-web
+      build_config:
+        context: ../frontend
+    domains:
+      - domain: news.example.com
+    port: 3000
+    health_check_path: /healthz
+    env:
+      - name: ORIGIN
+        value: https://news.example.com
+      - name: API_URL
+        value: http://api:3002
+      - name: POSTGRES_CONNECTION_STRING
+        from:
+          env: POSTGRES_CONNECTION_STRING
+      - name: ADMIN_USER
+        from:
+          env: ADMIN_USER
+      - name: ADMIN_PASSWORD
+        from:
+          env: ADMIN_PASSWORD

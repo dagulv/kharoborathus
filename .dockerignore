@@ -4,6 +4,6 @@
 docs
 frontend
 deploy/tofu
-deploy/production.env*
+deploy/.env*
 .env
 .env-sample

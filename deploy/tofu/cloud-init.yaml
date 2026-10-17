@@ -4,8 +4,6 @@ package_upgrade: true
 
 packages:
   - docker.io
-  - docker-buildx
-  - docker-compose-v2
   - ufw
   - unattended-upgrades
 
@@ -15,15 +13,21 @@ write_files:
       PermitRootLogin no
       PasswordAuthentication no
       KbdInteractiveAuthentication no
+  # Rotated logs, so a long-running scraper cannot fill the disk.
+  - path: /etc/docker/daemon.json
+    content: |
+      {"log-driver": "local"}
 
 runcmd:
-  - usermod -aG docker deploy
   - ufw default deny incoming
   - ufw default allow outgoing
   - ufw allow OpenSSH
   - ufw allow 80/tcp
   - ufw allow 443/tcp
-  - ufw allow 443/udp
   - ufw --force enable
   - systemctl enable --now docker
+  - curl -fsSL https://sh.haloy.dev/install-haloyd.sh | VERSION=v0.1.0-beta.73 API_DOMAIN=${haloy_api_domain} sh
+  # The token lives in root-only /etc/haloy. A copy lets the deploy user read it over SSH.
+  - install -m 600 -o deploy /dev/null /home/deploy/haloy-token
+  - /usr/local/bin/haloyd config get api-token --raw > /home/deploy/haloy-token
   - systemctl restart ssh

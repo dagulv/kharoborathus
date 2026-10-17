@@ -5,7 +5,7 @@ resource "upcloud_server" "app" {
 
   # Required by cloud-init based templates.
   metadata  = true
-  user_data = file("${path.module}/cloud-init.yaml")
+  user_data = templatefile("${path.module}/cloud-init.yaml", { haloy_api_domain = var.haloy_api_domain })
 
   template {
     storage = "Ubuntu Server 24.04 LTS (Noble Numbat)"
