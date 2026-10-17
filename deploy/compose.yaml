@@ -1,0 +1,60 @@
+name: kharoborathus
+
+services:
+  db:
+    build:
+      context: ..
+      dockerfile: docker/postgres/Dockerfile
+    restart: unless-stopped
+    env_file: production.env
+    volumes:
+      - db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    restart: unless-stopped
+    env_file: production.env
+    environment:
+      HTTP_HOST: 0.0.0.0:3001
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ../frontend
+    restart: unless-stopped
+    env_file: production.env
+    environment:
+      API_URL: http://api:3001
+    depends_on:
+      db:
+        condition: service_healthy
+
+  caddy:
+    build:
+      context: .
+      dockerfile: caddy.Dockerfile
+    restart: unless-stopped
+    env_file: production.env
+    ports:
+      - 80:80
+      - 443:443
+      - 443:443/udp
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - web
+
+volumes:
+  db:
+  caddy_data:
+  caddy_config:
