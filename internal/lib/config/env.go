@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/caarlos0/env/v11"
 )
@@ -35,6 +36,14 @@ func Load(useFile ...bool) (e *Environment, err error) {
 	if len(useFile) > 0 && useFile[0] {
 		// If file doesn't exist, use OS environment variables
 		m, _ = fromFile()
+	}
+
+	// Secrets never sit in .env. infra/secrets.sh puts them in the process env.
+	if m != nil {
+		for _, kv := range os.Environ() {
+			k, v, _ := strings.Cut(kv, "=")
+			m[k] = v
+		}
 	}
 
 	e = new(Environment)
