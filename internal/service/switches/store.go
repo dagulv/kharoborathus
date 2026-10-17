@@ -11,6 +11,7 @@ const (
 	ShadowGate       = "shadow_gate"
 	DiscoveredIngest = "discovered_ingest"
 	SearchDiscovery  = "search_discovery"
+	SourcePromotion  = "source_promotion"
 )
 
 type Store struct {

@@ -154,3 +154,37 @@ func scanSource(row pgx.Row) (source Source, err error) {
 
 	return
 }
+
+func (s *Store) RecordFetch(ctx context.Context, id string, ok bool, maxFailures int) error {
+	if ok {
+		if _, err := s.db.Exec(ctx, `UPDATE sources SET fetch_failures = 0 WHERE id = $1 AND fetch_failures > 0`, id); err != nil {
+			return fmt.Errorf("err reset fetch failures: %w", err)
+		}
+
+		return nil
+	}
+
+	if _, err := s.db.Exec(ctx, `
+		UPDATE sources
+		SET
+			fetch_failures = fetch_failures + 1,
+			status = CASE WHEN status = 'active' AND fetch_failures + 1 >= $2 THEN 'dormant' ELSE status END,
+			status_changed_at = CASE WHEN status = 'active' AND fetch_failures + 1 >= $2 THEN now() ELSE status_changed_at END
+		WHERE id = $1
+		`, id, maxFailures); err != nil {
+		return fmt.Errorf("err record fetch failure: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Store) Revive(ctx context.Context, id string) error {
+	if _, err := s.db.Exec(ctx, `
+		UPDATE sources SET status = 'active', status_changed_at = now()
+		WHERE id = $1 AND status = 'dormant'
+		`, id); err != nil {
+		return fmt.Errorf("err revive source: %w", err)
+	}
+
+	return nil
+}

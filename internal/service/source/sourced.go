@@ -30,6 +30,9 @@ const (
 	refreshInterval = time.Minute
 	sourcePage      = 200
 	excerptLen      = 280
+
+	maxFetchFailures = 10
+	probeInterval    = 7 * 24 * time.Hour
 )
 
 type Pipeline interface {
@@ -88,8 +91,18 @@ func Run(ctx context.Context, s *Store, syncs <-chan Source, trim *Trim, summari
 	}
 
 	for f := range merge(ctx, feeds...) {
-		if _, err := s.feedStore.CreateFeed(ctx, f); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		_, err := s.feedStore.CreateFeed(ctx, f)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+
+		if err != nil {
 			l.Error("create feed", "source", f.SourceID, "url", f.URL, "err", err)
+			continue
+		}
+
+		if err := s.Revive(ctx, f.SourceID); err != nil {
+			l.Error("revive source", "source", f.SourceID, "err", err)
 		}
 	}
 
@@ -168,24 +181,34 @@ func continuousSources(ctx context.Context, s *Store, syncs <-chan Source, sched
 func enabledSources(ctx context.Context, s *Store) ([]Source, error) {
 	var sources []Source
 
-	for offset := 0; ; offset += sourcePage {
-		page, err := iterx.Collect(s.ListSources(ctx, Filter{
-			Limit:   strconv.Itoa(sourcePage),
-			Offset:  strconv.Itoa(offset),
-			OrderBy: "id",
-			Enabled: sql.Null[bool]{V: true, Valid: true},
-			Status:  sql.Null[string]{V: StatusActive, Valid: true},
-		}))
-		if err != nil {
-			return nil, err
-		}
+	for _, status := range []string{StatusActive, StatusDormant} {
+		for offset := 0; ; offset += sourcePage {
+			page, err := iterx.Collect(s.ListSources(ctx, Filter{
+				Limit:   strconv.Itoa(sourcePage),
+				Offset:  strconv.Itoa(offset),
+				OrderBy: "id",
+				Enabled: sql.Null[bool]{V: true, Valid: true},
+				Status:  sql.Null[string]{V: status, Valid: true},
+			}))
+			if err != nil {
+				return nil, err
+			}
 
-		sources = append(sources, page...)
+			for _, source := range page {
+				if source.Status == StatusDormant {
+					source.Rate = int(probeInterval / time.Minute)
+				}
 
-		if len(page) < sourcePage {
-			return sources, nil
+				sources = append(sources, source)
+			}
+
+			if len(page) < sourcePage {
+				break
+			}
 		}
 	}
+
+	return sources, nil
 }
 
 type fetched[T any] struct {
@@ -231,6 +254,10 @@ func (p pipeline[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-c
 
 		for source := range in {
 			dataset, err := p.FetchFromSource(ctx, source.URL)
+			if rerr := p.store.RecordFetch(ctx, source.ID, err == nil, maxFetchFailures); rerr != nil {
+				l.Error("record fetch", "source", source.ID, "err", rerr)
+			}
+
 			if err != nil {
 				l.Error("fetchFromSource", "source", source.ID, "url", source.URL, "err", err)
 				continue

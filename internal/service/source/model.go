@@ -7,7 +7,11 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/query"
 )
 
-const StatusActive = "active"
+const (
+	StatusProposed = "proposed"
+	StatusActive   = "active"
+	StatusDormant  = "dormant"
+)
 
 type Source struct {
 	ID         string            `json:"id"`
