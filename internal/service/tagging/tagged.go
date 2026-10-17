@@ -50,14 +50,14 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 			return fmt.Errorf("err vocabulary: %w", err)
 		}
 
-		if err := generateTags(ctx, s, g, v, lang, post); err != nil {
-			if !errors.Is(err, adapter.ErrUnavailable) {
-				l.Warn("generate tags", "post", post.ID, "err", err)
-			}
+		err = generateTags(ctx, s, g, v, lang, post)
 
-			if ctx.Err() != nil {
-				return nil
-			}
+		switch {
+		// Tag proposals only come from generation, so a post must wait for the LLM instead of being marked checked without them.
+		case errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil:
+			return nil
+		case err != nil:
+			l.Warn("generate tags", "post", post.ID, "err", err)
 		}
 
 		tags, err := s.ListTags(ctx)
