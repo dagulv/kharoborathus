@@ -285,5 +285,5 @@ func (d deepSeek) gate() error {
 		return nil
 	}
 
-	return fmt.Errorf("%w: deepseek is in peak hours until %s", ErrUnavailable, OffPeak.Next(now).Format(time.RFC3339))
+	return fmt.Errorf("%w: %w: deepseek until %s", ErrUnavailable, ErrPeakHours, OffPeak.Next(now).Format(time.RFC3339))
 }

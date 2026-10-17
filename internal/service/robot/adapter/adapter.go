@@ -9,7 +9,9 @@ import (
 
 var (
 	ErrUnavailable = errors.New("adapter: unavailable")
-	ErrIncomplete  = errors.New("adapter: incomplete answer")
+	// Always wrapped with ErrUnavailable. Peak hours are expected, an outage is not.
+	ErrPeakHours  = errors.New("adapter: peak hours")
+	ErrIncomplete = errors.New("adapter: incomplete answer")
 )
 
 type LLM interface {

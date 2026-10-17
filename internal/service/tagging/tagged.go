@@ -57,7 +57,10 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 
 		switch {
 		// Tag proposals only come from generation, so a post must wait for the LLM instead of being marked checked without them.
-		case errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil:
+		case errors.Is(err, adapter.ErrPeakHours) || ctx.Err() != nil:
+			return nil
+		case errors.Is(err, adapter.ErrUnavailable):
+			l.Warn("tagging held, generator unavailable", "err", err)
 			return nil
 		case err != nil:
 			l.Warn("generate tags", "post", post.ID, "err", err)
