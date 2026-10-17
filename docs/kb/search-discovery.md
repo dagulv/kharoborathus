@@ -40,7 +40,9 @@ Rules:
 - Newest items first. When the cap holds back a backlog, older items age out of the window.
 - `search_lang` only for `sv` and `en`.
 - 429, 5xx and network errors stop the tick and leave the item. 400 and 422 mark it searched without a call. Other statuses stop the tick.
-- The tick follows the LLM schedule. If the filter is unavailable after a search, the item is searched again later. Other filter errors keep nothing.
+- The tick follows the LLM schedule. If the filter is unavailable after a search, the results are dropped and the item still counts as a paid search. Other filter errors keep nothing.
+- No searches while `discovered_ingest` is off or the classifier is mocked, since nothing would fetch the results.
+- No searches while 200 or more `via = 'search'` links are pending inside the window, one day of ingest at its cap.
 - No results means no LLM call.
 - Result URLs pass the link extraction filter, without its 10-link cap, and skip URLs already in `posts`.
 - The filter never sees result URLs and answers with result ids.
@@ -84,6 +86,7 @@ ALTER TABLE discover_queue ADD COLUMN result_count INT;
 | Monthly budget alert | $50 | About 10k queries at $5 per 1k. |
 | Daily search cap | 330 | $50 a month at $5 per 1k queries over 30 days. |
 | Searches per tick | 5 | Every minute, inside the cap. |
+| Pending search results limit | 200 | One day of ingest at its daily cap. |
 
 ## Open questions
 
