@@ -125,10 +125,11 @@ func (s *Store) UpdateSource(ctx context.Context, source Source) (Source, error)
 	))
 }
 
+// Soft deletes, so posts keep their source and ingest never proposes the domain again. Disabling it drops trust everywhere.
 func (s *Store) DeleteSource(ctx context.Context, id string) error {
-	tag, err := s.db.Exec(ctx, `DELETE FROM sources WHERE id = $1`, id)
+	tag, err := s.db.Exec(ctx, `UPDATE sources SET deleted_at = now(), enabled = false WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("err delete source: %w", err)
 	}
 
 	if tag.RowsAffected() == 0 {
