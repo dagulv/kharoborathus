@@ -31,6 +31,15 @@ export const getStats = query(async () => {
 	return row;
 });
 
+export const getLinkQueue = query(async () => {
+	const sql = db();
+	const rows = await sql<{ status: string; count: number }[]>`
+		SELECT status, count(*)::int AS count FROM link_queue GROUP BY status
+	`;
+
+	return Object.fromEntries(rows.map((r) => [r.status, r.count])) as Record<string, number>;
+});
+
 export const listSources = query(
 	v.object({ includeDeleted: v.optional(v.boolean(), false) }),
 	async ({ includeDeleted }) => {
@@ -45,6 +54,8 @@ export const listSources = query(
 				s.adapter,
 				s.url,
 				s.enabled,
+				s.status,
+				s.origin,
 				s.rate,
 				s.target_tags,
 				s.metadata,
@@ -335,6 +346,13 @@ export const listSwitches = query(async () => {
 				WHEN 'shadow_gate' THEN (
 					SELECT count(*) FROM tags WHERE enabled AND status = 'active' AND gate
 				) || ' gate tags'
+				WHEN 'discovered_ingest' THEN (
+					SELECT count(*) || ' gate-checked posts, '
+						|| coalesce(round(avg(gate_passed::int) * 100) || '% pass', 'no pass rate') || ', '
+						|| (SELECT count(*) FROM sources WHERE deleted_at IS NULL AND flagged_at IS NOT NULL) || ' flagged sources'
+					FROM tag_checked
+					WHERE gate_passed IS NOT NULL
+				)
 			END AS readiness
 		FROM switches s
 		ORDER BY s.key

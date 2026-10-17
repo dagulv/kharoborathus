@@ -163,6 +163,15 @@
 						{#if source.flaggedAt && !source.deletedAt}
 							<span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">flagged</span>
 						{/if}
+						{#if source.status !== 'active'}
+							<span class="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700"
+								>{source.status}</span
+							>
+						{/if}
+						{#if source.origin === 'discovered'}
+							<span class="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600">discovered</span
+							>
+						{/if}
 					</td>
 					<td class="px-3 py-2 text-right tabular-nums">{source.rate}m</td>
 					<td class="px-3 py-2">
@@ -182,7 +191,7 @@
 					</td>
 					<td class="px-3 py-2 whitespace-nowrap text-zinc-500">{fmt.format(source.createdAt)}</td>
 					<td class="px-3 py-2 text-right whitespace-nowrap">
-						{#if !source.deletedAt}
+						{#if !source.deletedAt && source.status === 'active'}
 							{@const status = syncState.get(source.id)}
 							<button
 								type="button"

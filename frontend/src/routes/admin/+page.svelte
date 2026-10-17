@@ -1,7 +1,10 @@
 <script lang="ts">
-	import { getStats } from './admin.remote';
+	import { getLinkQueue, getStats } from './admin.remote';
 
 	const stats = $derived(await getStats());
+	const linkQueue = $derived(await getLinkQueue());
+
+	const LINK_STATUSES = ['pending', 'accepted', 'rejected', 'duplicate', 'failed'];
 </script>
 
 <svelte:head><title>Admin</title></svelte:head>
@@ -13,6 +16,17 @@
 		<div class="rounded border border-zinc-200 bg-white p-4">
 			<div class="text-sm text-zinc-500">{label}</div>
 			<div class="text-2xl font-semibold tabular-nums">{value}</div>
+		</div>
+	{/each}
+</div>
+
+<h2 class="mt-8 mb-2 font-medium">Link queue</h2>
+
+<div class="grid grid-cols-2 gap-4 sm:grid-cols-5">
+	{#each LINK_STATUSES as status (status)}
+		<div class="rounded border border-zinc-200 bg-white p-4">
+			<div class="text-sm text-zinc-500 capitalize">{status}</div>
+			<div class="text-2xl font-semibold tabular-nums">{linkQueue[status] ?? 0}</div>
 		</div>
 	{/each}
 </div>

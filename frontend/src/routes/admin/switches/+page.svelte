@@ -7,7 +7,9 @@
 
 	const descriptions: Record<string, string> = {
 		shadow_gate:
-			'Stores the shadow gate result per post and flags drifting sources. Turn on when several gate tags exist.'
+			'Stores the shadow gate result per post and flags drifting sources. Turn on when several gate tags exist.',
+		discovered_ingest:
+			'Fetches queued links, gates them and adds accepted pages as posts with proposed sources. Link extraction fills the queue either way.'
 	};
 
 	let failed = $state('');

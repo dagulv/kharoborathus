@@ -5,6 +5,8 @@ export type Source = {
 	adapter: string;
 	url: string;
 	enabled: boolean;
+	status: 'proposed' | 'active' | 'dormant';
+	origin: 'manual' | 'discovered';
 	rate: number;
 	targetTags: string[];
 	metadata: Record<string, string>;
