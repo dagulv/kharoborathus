@@ -191,7 +191,7 @@
 					</td>
 					<td class="px-3 py-2 whitespace-nowrap text-zinc-500">{fmt.format(source.createdAt)}</td>
 					<td class="px-3 py-2 text-right whitespace-nowrap">
-						{#if !source.deletedAt && source.status === 'active'}
+						{#if !source.deletedAt && source.enabled && source.status === 'active'}
 							{@const status = syncState.get(source.id)}
 							<button
 								type="button"

@@ -9,7 +9,7 @@ Trust belongs to sources. An enabled source with `status = 'active'` or `'dorman
 
 ## Current state
 
-`sources.origin` and `sources.status` exist. Only `active` sources are scraped, and manual sync of other sources returns 409. Link extraction reads trusted posts only. Tag rates and the broadness sample count trusted posts only, and never discovered posts, which all passed the gate. Discovered posts are marked `tag_checked` on insert, so they never propose tags.
+`sources.origin` and `sources.status` exist. Only `active` sources are scraped, and manual sync of other or disabled sources returns 409. Link extraction reads trusted posts only. Tag rates and the broadness sample count trusted posts only, and never discovered posts, which all passed the gate. Discovered posts are marked `tag_checked` on insert, so they never propose tags.
 
 ## Design
 

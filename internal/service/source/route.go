@@ -32,8 +32,8 @@ func syncSource(s *Store, syncs chan<- Source, l *slog.Logger) http.HandlerFunc 
 			return
 		}
 
-		if source.Status != StatusActive {
-			http.Error(w, "source not active", http.StatusConflict)
+		if source.Status != StatusActive || !source.Enabled {
+			http.Error(w, "source not active or disabled", http.StatusConflict)
 			return
 		}
 

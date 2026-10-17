@@ -227,6 +227,7 @@ export const syncSource = command(uuid, async (id) => {
 	});
 
 	if (res.status === 404) error(404, 'Source not found');
+	if (res.status === 409) error(409, 'Source is not active or is disabled');
 	if (!res.ok) error(502, `Go app responded ${res.status}`);
 });
 
