@@ -26,6 +26,9 @@ const (
 	fetchTimeout    = 20 * time.Second
 )
 
+// Discovered domains are often seen once and never reach ruleSamples, so their pages must not pile up.
+const maxSampleDomains = 200
+
 type Trim struct {
 	domainStore *domain.Store
 	html        trimmer.Trimmer[html.Rule]
@@ -38,6 +41,8 @@ type Trim struct {
 
 	mu            sync.Mutex
 	samples       map[string][]trimmer.Sample
+	sampledAt     map[string]uint64
+	sampleSeq     uint64
 	failedAt      map[string]time.Time
 	listings      map[string][]trimmer.Sample
 	listedAt      map[string]time.Time
@@ -54,6 +59,7 @@ func NewTrim(domains *domain.Store, llm adapter.LLM, l *slog.Logger) *Trim {
 		l:             l,
 		generating:    make(chan struct{}, 1),
 		samples:       make(map[string][]trimmer.Sample),
+		sampledAt:     make(map[string]uint64),
 		failedAt:      make(map[string]time.Time),
 		listings:      make(map[string][]trimmer.Sample),
 		listedAt:      make(map[string]time.Time),
@@ -96,8 +102,14 @@ func (t *Trim) collect(ctx context.Context, d domain.Domain, sample trimmer.Samp
 	}
 
 	if len(samples) < ruleSamples {
+		if samples == nil && len(t.samples) >= maxSampleDomains {
+			t.evictOldestSamples()
+		}
+
 		samples = append(samples, sample)
 		t.samples[d.ID] = samples
+		t.sampleSeq++
+		t.sampledAt[d.ID] = t.sampleSeq
 	}
 
 	if len(samples) < ruleSamples || !t.llm.Schedule().Active(time.Now()) {
@@ -111,12 +123,26 @@ func (t *Trim) collect(ctx context.Context, d domain.Domain, sample trimmer.Samp
 	}
 
 	delete(t.samples, d.ID)
+	delete(t.sampledAt, d.ID)
 
 	go func() {
 		defer func() { <-t.generating }()
 
 		t.generate(ctx, d, samples)
 	}()
+}
+
+func (t *Trim) evictOldestSamples() {
+	oldest, first := "", true
+
+	for id := range t.samples {
+		if first || t.sampledAt[id] < t.sampledAt[oldest] {
+			oldest, first = id, false
+		}
+	}
+
+	delete(t.samples, oldest)
+	delete(t.sampledAt, oldest)
 }
 
 func (t *Trim) generate(ctx context.Context, d domain.Domain, samples []trimmer.Sample) {
