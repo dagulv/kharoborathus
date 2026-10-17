@@ -472,8 +472,8 @@ func (s *Store) FlagSources(ctx context.Context, window int, floor float64) (int
 		UPDATE sources s
 		SET
 			flagged_at = now(),
-			status = CASE WHEN s.origin = 'discovered' AND s.status = 'active' THEN 'proposed' ELSE s.status END,
-			status_changed_at = CASE WHEN s.origin = 'discovered' AND s.status = 'active' THEN now() ELSE s.status_changed_at END
+			status = CASE WHEN s.origin = 'discovered' AND s.status IN ('active', 'dormant') THEN 'proposed' ELSE s.status END,
+			status_changed_at = CASE WHEN s.origin = 'discovered' AND s.status IN ('active', 'dormant') THEN now() ELSE s.status_changed_at END
 		FROM rates
 		WHERE rates.source_id = s.id
 			AND s.flagged_at IS NULL

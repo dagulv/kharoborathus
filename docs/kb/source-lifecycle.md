@@ -12,7 +12,7 @@ Sources move through `proposed`, `active` and `dormant`, like tags. Discovered d
 - [Discovered ingest](discovered-ingest.md) creates proposed sources. The source worker scrapes enabled `active` sources at their `rate` and enabled `dormant` sources once per probe interval, see [sourced.go](../../internal/service/source/sourced.go).
 - Every listing fetch updates `fetch_failures` through `RecordFetch`. A new post from a dormant source revives it through `Revive`.
 - [lifecycle.go](../../internal/service/source/lifecycle.go) runs daily: dormancy always, promotion while `source_promotion` is on. [listing.go](../../internal/service/source/listing.go) finds a feed on the homepage.
-- `FlagSources` in [tagging/store.go](../../internal/service/tagging/store.go) demotes active discovered sources in the update that flags them.
+- `FlagSources` in [tagging/store.go](../../internal/service/tagging/store.go) demotes trusted discovered sources, active or dormant, in the update that flags them.
 - Admin shows promotion readiness on the Switches page and source status on the Sources page.
 
 ## Design
@@ -36,7 +36,7 @@ The existing `active` boolean is renamed to `enabled` and stays your manual swit
    - RSS autodiscovery: a `<link rel="alternate" type="application/rss+xml">` tag gives `adapter = 'rss'` and the feed URL.
    - Otherwise `adapter = 'page'` with the homepage URL. The existing linker generates a link rule after its listing samples.
 4. **Cap.** At most a few promotions per week, oldest qualifying first.
-5. **Demote.** When the [shadow gate](classifier-gate.md) flags an active discovered source, set `status = 'proposed'`. It must earn promotion again and shows in admin. A flagged manual source stays active for your review.
+5. **Demote.** When the [shadow gate](classifier-gate.md) flags an active or dormant discovered source, set `status = 'proposed'`. Dormant counts too, since gate results can land after a source goes dormant and it is still trusted. It must earn promotion again and shows in admin. A flagged manual source stays active for your review.
 6. **Dormancy.** An active source goes dormant after no new posts inside the dormancy window, or after repeated consecutive fetch failures.
 7. **Probe.** A dormant source is scraped once per probe interval. New posts move it back to `active`.
 
