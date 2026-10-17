@@ -208,6 +208,12 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 		return res, nil
 	}
 
+	// An old article linked from fresh news would otherwise show up as current, since a missing date becomes now.
+	if !f.PostedAt.IsZero() && time.Since(f.PostedAt) > pendingWindow*24*time.Hour {
+		res.status, res.reason = statusRejected, "stale"
+		return res, nil
+	}
+
 	f, err = source.Markdown(f)
 	if err != nil {
 		return res, err
