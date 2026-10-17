@@ -35,7 +35,7 @@ func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f
 			continue
 		}
 
-		err := searchEvents(ctx, s, sw, se, f, l)
+		err := searchEvents(ctx, s, sw, sched, se, f, l)
 		if errors.Is(err, errSearchWasted) {
 			l.Warn("search paused", "for", wastedPause, "err", err)
 			pausedUntil = time.Now().Add(wastedPause)
@@ -51,7 +51,7 @@ func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f
 	return ctx.Err()
 }
 
-func searchEvents(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f *robot.ResultFilter, l *slog.Logger) error {
+func searchEvents(ctx context.Context, s *Store, sw *switches.Store, sched schedule.Schedule, se Searcher, f *robot.ResultFilter, l *slog.Logger) error {
 	on, err := sw.Enabled(ctx, switches.SearchDiscovery)
 	if err != nil || !on {
 		return err
@@ -101,6 +101,11 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, se Searcher
 			deduped++
 
 			continue
+		}
+
+		// A tick can outlast the schedule, and a search bought then could not be filtered.
+		if !sched.Active(time.Now()) {
+			return nil
 		}
 
 		results, err := se.Search(ctx, Query{Q: item.Query, Lang: item.Lang})
