@@ -1,6 +1,6 @@
 # Classifier gate
 
-**Status:** designed
+**Status:** shadow gate done, hard gate designed
 **Related:** [trust-model](trust-model.md), [tag-lifecycle](tag-lifecycle.md), [discovered-ingest](discovered-ingest.md)
 
 ## Summary
@@ -9,7 +9,7 @@ The Jev tagging call doubles as a relevance gate. Discovered content must pass i
 
 ## Current state
 
-[tagger.go](../../internal/service/robot/tagger.go) returns keys scoring at least 0.8. Nothing uses the result as a filter. `sources.target_tags` is never read.
+While the `shadow_gate` switch is on, the tagging worker stores the shadow gate result in `tag_checked.gate_passed`, see [gate.go](../../internal/service/tagging/gate.go). Daily maintenance sets `sources.flagged_at`, and admin lists flagged sources. The hard gate is not built. It ships with [discovered ingest](discovered-ingest.md) in phase 4.
 
 ## Design
 
@@ -23,17 +23,18 @@ The Jev tagging call doubles as a relevance gate. Discovered content must pass i
 **Shadow gate for trusted content**
 
 1. The tagging worker runs as today. The steps below run only while the `shadow_gate` switch is on, see [rollout](rollout.md).
-2. A trusted post passes if it gets any of its source's `target_tags`. If `target_tags` is empty, any gate tag counts.
-3. Store the result. Never reject the post.
+2. A trusted post passes if it gets any of its source's `target_tags`. If `target_tags` is empty, any gate tag counts. Target tags are resolved through `tag_aliases`.
+3. Store the result. Never reject the post. The result is NULL when the classification failed, or when the source has no target tags and no gate tag exists.
 4. A source with a full pass rate window whose pass rate drops below the floor gets `flagged_at`. A source with fewer gate-checked posts is never flagged, so turning the switch on flags nothing early.
 5. A flagged discovered source is demoted to `proposed`, see [source lifecycle](source-lifecycle.md). A flagged manual source keeps running.
-6. You review flagged sources only, and keep, retarget or disable them.
+6. You review flagged sources only, and keep, retarget or disable them. Every review clears `flagged_at` and sets `reviewed_at`. The window only counts posts checked after `reviewed_at`, so a reviewed source needs a fresh full window before it can be flagged again.
 
 ## Schema changes
 
 ```sql
 ALTER TABLE tag_checked ADD COLUMN IF NOT EXISTS gate_passed BOOLEAN;
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS flagged_at TIMESTAMPTZ;
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
 ```
 
 ## Defaults

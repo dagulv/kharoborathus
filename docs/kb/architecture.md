@@ -12,8 +12,8 @@ Kharoborathus collects business and financial news from hand-picked sources, tag
 | Worker | Code | Job |
 |---|---|---|
 | HTTP | [feed/route.go](../../internal/service/feed/route.go), [source/route.go](../../internal/service/source/route.go) | Serves `/feeds` and manual source sync. |
-| Sources | [sourced.go](../../internal/service/source/sourced.go) | Polls active sources at their `rate` and turns articles into posts. |
-| Tagging | [tagged.go](../../internal/service/tagging/tagged.go) | Generates new tags and classifies posts against all tags. |
+| Sources | [sourced.go](../../internal/service/source/sourced.go) | Polls enabled sources at their `rate` and turns articles into posts. |
+| Tagging | [tagged.go](../../internal/service/tagging/tagged.go) | Generates new tags, classifies posts against all tags and records the shadow gate result while its switch is on. |
 | Discovery | [discovery.go](../../internal/service/discovery/discovery.go) | Extracts searchable events from posts into `discover_queue`. |
 
 Source pipeline per article:
@@ -36,7 +36,6 @@ Unused parts of the schema:
 
 - `discover_queue` is filled but never read.
 - `source_discovered_by_post` and `post_links` have no writers.
-- `sources.target_tags` is saved from admin but never read.
 
 ## Design
 
