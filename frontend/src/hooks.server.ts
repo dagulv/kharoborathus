@@ -7,7 +7,8 @@ const digest = (value: string) => createHash('sha256').update(value).digest();
 
 const expected = digest(`${ADMIN_USER}:${ADMIN_PASSWORD}`);
 
-// The admin has no login and its remote functions live outside /admin, so the whole site needs auth.
+// The admin has no login and its remote functions live outside /admin, so every route needs auth.
+// adapter-node serves the static build before this hook, so bundles stay public. They hold code, never data.
 export const handle: Handle = ({ event, resolve }) => {
 	// Haloy's health check sends no credentials.
 	if (event.url.pathname === '/healthz') return new Response('ok');
