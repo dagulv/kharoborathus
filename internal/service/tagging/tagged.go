@@ -12,6 +12,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/robot"
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
+	"github.com/dagulv/kharoborathus/internal/service/switches"
 )
 
 const (
@@ -20,9 +21,9 @@ const (
 	englishLang  = "en"
 )
 
-func Run(ctx context.Context, s *Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error {
+func Run(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error {
 	for range schedule.Always.Tick(ctx, tickInterval) {
-		if err := tagPosts(ctx, s, g, t, l); err != nil {
+		if err := tagPosts(ctx, s, sw, g, t, l); err != nil {
 			l.Error("tag posts", "err", err)
 		}
 	}
@@ -30,7 +31,12 @@ func Run(ctx context.Context, s *Store, g *robot.TagGenerator, t *robot.Tagger, 
 	return ctx.Err()
 }
 
-func tagPosts(ctx context.Context, s *Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error {
+func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error {
+	shadow, err := sw.Enabled(ctx, switches.ShadowGate)
+	if err != nil {
+		return err
+	}
+
 	posts, err := iterx.Collect(s.ListUntaggedPosts(ctx, batchSize))
 	if err != nil {
 		return err
@@ -39,7 +45,12 @@ func tagPosts(ctx context.Context, s *Store, g *robot.TagGenerator, t *robot.Tag
 	for _, post := range posts {
 		lang := normalizeLang(post.Lang)
 
-		if err := generateTags(ctx, s, g, lang, post); err != nil {
+		v, err := s.Vocabulary(ctx)
+		if err != nil {
+			return fmt.Errorf("err vocabulary: %w", err)
+		}
+
+		if err := generateTags(ctx, s, g, v, lang, post); err != nil {
 			if !errors.Is(err, adapter.ErrUnavailable) {
 				l.Warn("generate tags", "post", post.ID, "err", err)
 			}
@@ -60,14 +71,18 @@ func tagPosts(ctx context.Context, s *Store, g *robot.TagGenerator, t *robot.Tag
 
 		keys, err := t.Tags(ctx, post.Title, post.Content, tags)
 
+		var gatePassed *bool
+
 		switch {
 		case errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil:
 			return nil
 		case err != nil:
 			l.Warn("classify tags", "post", post.ID, "err", err)
+		case shadow:
+			gatePassed = shadowGate(v, post.TargetTags, keys)
 		}
 
-		if err := s.CompleteTagging(ctx, post.ID, keys); err != nil {
+		if err := s.CompleteTagging(ctx, post.ID, keys, gatePassed); err != nil {
 			return err
 		}
 	}
@@ -75,12 +90,7 @@ func tagPosts(ctx context.Context, s *Store, g *robot.TagGenerator, t *robot.Tag
 	return nil
 }
 
-func generateTags(ctx context.Context, s *Store, g *robot.TagGenerator, lang string, post Post) error {
-	v, err := s.Vocabulary(ctx)
-	if err != nil {
-		return fmt.Errorf("err vocabulary: %w", err)
-	}
-
+func generateTags(ctx context.Context, s *Store, g *robot.TagGenerator, v Vocabulary, lang string, post Post) error {
 	generated, err := g.Generate(ctx, lang, post.Content, v.ActiveKeys())
 	if err != nil {
 		return fmt.Errorf("err generate tags: %w", err)

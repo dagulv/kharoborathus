@@ -8,11 +8,12 @@ const (
 )
 
 type Post struct {
-	ID       string
-	SourceID string
-	Lang     string
-	Title    string
-	Content  string
+	ID         string
+	SourceID   string
+	Lang       string
+	Title      string
+	Content    string
+	TargetTags []string
 }
 
 type Term struct {

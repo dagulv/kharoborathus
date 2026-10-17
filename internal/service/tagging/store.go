@@ -44,8 +44,9 @@ func (s *Store) ListTags(ctx context.Context) ([]robot.Tag, error) {
 func (s *Store) ListUntaggedPosts(ctx context.Context, limit int) iter.Seq2[Post, error] {
 	return func(yield func(Post, error) bool) {
 		rows, err := s.db.Query(ctx, `
-			SELECT p.id, p.source_id, p.lang, p.title, p.content
+			SELECT p.id, p.source_id, p.lang, p.title, p.content, s.target_tags
 			FROM posts p
+			JOIN sources s ON s.id = p.source_id
 			WHERE NOT EXISTS (SELECT 1 FROM tag_checked c WHERE c.post_id = p.id)
 			ORDER BY p.created_at
 			LIMIT $1
@@ -59,7 +60,7 @@ func (s *Store) ListUntaggedPosts(ctx context.Context, limit int) iter.Seq2[Post
 		for rows.Next() {
 			var post Post
 
-			if err := rows.Scan(&post.ID, &post.SourceID, &post.Lang, &post.Title, &post.Content); err != nil {
+			if err := rows.Scan(&post.ID, &post.SourceID, &post.Lang, &post.Title, &post.Content, &post.TargetTags); err != nil {
 				yield(Post{}, err)
 				return
 			}
@@ -95,7 +96,7 @@ func (s *Store) AddTags(ctx context.Context, terms []Term) error {
 	return nil
 }
 
-func (s *Store) CompleteTagging(ctx context.Context, postID string, keys []string) error {
+func (s *Store) CompleteTagging(ctx context.Context, postID string, keys []string, gatePassed *bool) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if len(keys) > 0 {
 			if _, err := tx.Exec(ctx, `
@@ -111,7 +112,10 @@ func (s *Store) CompleteTagging(ctx context.Context, postID string, keys []strin
 			}
 		}
 
-		_, err := tx.Exec(ctx, `INSERT INTO tag_checked (post_id) VALUES ($1) ON CONFLICT (post_id) DO NOTHING`, postID)
+		_, err := tx.Exec(ctx, `
+			INSERT INTO tag_checked (post_id, gate_passed) VALUES ($1, $2)
+			ON CONFLICT (post_id) DO NOTHING
+			`, postID, gatePassed)
 
 		return err
 	})
@@ -132,7 +136,7 @@ func termColumns(terms []Term) (keys, langs, words []string) {
 func (s *Store) Vocabulary(ctx context.Context) (Vocabulary, error) {
 	v := Vocabulary{Tags: make(map[string]TagState), Aliases: make(map[string]string)}
 
-	rows, err := s.db.Query(ctx, `SELECT key, enabled, status FROM tags`)
+	rows, err := s.db.Query(ctx, `SELECT key, enabled, status, gate FROM tags`)
 	if err != nil {
 		return v, fmt.Errorf("err query tags: %w", err)
 	}
@@ -140,7 +144,7 @@ func (s *Store) Vocabulary(ctx context.Context) (Vocabulary, error) {
 	var key string
 	var state TagState
 
-	if _, err := pgx.ForEachRow(rows, []any{&key, &state.Enabled, &state.Status}, func() error {
+	if _, err := pgx.ForEachRow(rows, []any{&key, &state.Enabled, &state.Status, &state.Gate}, func() error {
 		v.Tags[key] = state
 		return nil
 	}); err != nil {

@@ -20,6 +20,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/service/robot"
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/source"
+	"github.com/dagulv/kharoborathus/internal/service/switches"
 	"github.com/dagulv/kharoborathus/internal/service/tagging"
 	"golang.org/x/sync/errgroup"
 )
@@ -51,6 +52,7 @@ func app(ctx context.Context) (err error) {
 	sourceStore := source.NewStore(db, feedStore, domainStore)
 	discoveryStore := discovery.NewStore(db)
 	taggingStore := tagging.NewStore(db)
+	switchStore := switches.NewStore(db)
 
 	llm, err := adapter.NewDeepSeek(env, l.WithGroup("deepseek"))
 	if err != nil {
@@ -97,7 +99,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return tagging.Run(ctx, &taggingStore, tagGenerator, tagger, l.WithGroup("tagging"))
+		return tagging.Run(ctx, &taggingStore, &switchStore, tagGenerator, tagger, l.WithGroup("tagging"))
 	})
 
 	g.Go(func() error {
