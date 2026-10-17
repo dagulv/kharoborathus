@@ -42,7 +42,7 @@ The existing `active` boolean is renamed to `enabled` and stays your manual swit
 
 Rules:
 
-- Promotion evidence counts every `link_queue` row of the domain until the first promotion, so rejections before the proposal lower the rate. A demoted source counts only rows checked since its demotion.
+- Promotion evidence counts every `link_queue` row of the domain, in either scheme, until the first promotion, so rejections before the proposal lower the rate. A demoted source counts only rows checked since its demotion.
 - The acceptance rate is accepted over accepted plus rejected. Distinct days are calendar days of `created_at`, when links were found, so one burst processed over several days cannot promote.
 - Promotion fetches the domain base URL, not the stored source URL, which may be a feed after an earlier promotion.
 - `promoted_at` records promotions, so the weekly cap ignores probe revivals.

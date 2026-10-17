@@ -234,7 +234,9 @@ func (s *Store) ListPromotable(ctx context.Context, minAccepted, minDays int, mi
 				count(DISTINCT q.created_at::date) FILTER (WHERE q.status = 'accepted') AS days,
 				count(*) FILTER (WHERE q.status IN ('accepted', 'rejected')) AS decided
 			FROM link_queue q
-			WHERE q.domain_id = s.domain_id
+			JOIN domains qd ON qd.id = q.domain_id
+			-- Ingest attaches http and https links to one source, so evidence counts both.
+			WHERE split_part(qd.base_url, '://', 2) = split_part(d.base_url, '://', 2)
 				AND q.checked_at >= CASE WHEN s.promoted_at IS NULL THEN '-infinity' ELSE s.status_changed_at END
 		) e ON true
 		WHERE s.status = 'proposed'
