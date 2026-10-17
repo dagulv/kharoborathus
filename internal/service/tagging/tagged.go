@@ -42,6 +42,14 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 		return err
 	}
 
+	var processed, generated, failed, aiCalls int
+
+	defer func() {
+		if aiCalls > 0 {
+			l.Info("tag posts", "processed", processed, "generated", generated, "failed", failed, "aiCalls", aiCalls)
+		}
+	}()
+
 	for _, post := range posts {
 		lang := normalizeLang(post.Lang)
 
@@ -53,6 +61,7 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 		// Only trusted posts shape the vocabulary, but every post is still classified.
 		if post.Trusted {
 			err = generateTags(ctx, s, g, v, lang, post)
+			aiCalls++
 		}
 
 		switch {
@@ -64,6 +73,9 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 			return nil
 		case err != nil:
 			l.Warn("generate tags", "post", post.ID, "err", err)
+			failed++
+		case post.Trusted:
+			generated++
 		}
 
 		tags, err := s.ListTags(ctx)
@@ -76,6 +88,7 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 		}
 
 		keys, err := t.Tags(ctx, post.Title, post.Content, tags)
+		aiCalls++
 
 		var gatePassed *bool
 
@@ -84,6 +97,7 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 			return nil
 		case err != nil:
 			l.Warn("classify tags", "post", post.ID, "err", err)
+			failed++
 		// Only trusted sources are judged, so a disabled source collects no results to be flagged on once re-enabled.
 		case shadow && post.Trusted:
 			gatePassed = shadowGate(v, post.TargetTags, keys)
@@ -92,6 +106,8 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 		if err := s.CompleteTagging(ctx, post.ID, keys, gatePassed); err != nil {
 			return err
 		}
+
+		processed++
 	}
 
 	return nil

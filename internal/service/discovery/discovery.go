@@ -38,19 +38,34 @@ func discoverPosts(ctx context.Context, s *Store, d *robot.Discoverer, l *slog.L
 		return err
 	}
 
+	var processed, events, failed, aiCalls int
+
+	defer func() {
+		if aiCalls > 0 {
+			l.Info("discover events", "processed", processed, "events", events, "failed", failed, "aiCalls", aiCalls)
+		}
+	}()
+
 	for _, post := range posts {
 		keywords, err := d.Keywords(ctx, post.Content, gateKeys)
+		aiCalls++
 
 		switch {
 		case errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil:
 			return nil
 		case err != nil:
 			l.Warn("discover keywords", "post", post.ID, "err", err)
+			failed++
 		}
 
-		if err := s.CompleteDiscovery(ctx, post.ID, eventItems(post.ID, keywords, aliases)); err != nil {
+		items := eventItems(post.ID, keywords, aliases)
+
+		if err := s.CompleteDiscovery(ctx, post.ID, items); err != nil {
 			return err
 		}
+
+		processed++
+		events += len(items)
 	}
 
 	return nil
