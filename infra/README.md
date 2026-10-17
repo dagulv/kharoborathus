@@ -67,7 +67,7 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
 
    Keep `terraform.tfstate`: it is encrypted with the passphrase and gitignored, so back it up yourself.
 
-5. Point three A records at `infra/secrets.sh prod tofu -chdir=infra/tofu output -raw ipv4`: `kharoborathus.dagulv.me`, `api.kharoborathus.dagulv.me` and `haloy.kharoborathus.dagulv.me`. Haloy gets the certificates on the first request.
+5. Point three A records at `infra/secrets.sh prod tofu -chdir=infra/tofu output -raw ipv4`: `kharoborathus.dagulv.me`, `api.kharoborathus.dagulv.me` and `haloy.kharoborathus.dagulv.me`. Haloy requests the certificates from Let's Encrypt, which fails until the records resolve, so wait for them before step 6.
 
 6. Wait for cloud-init, then register the server:
 
