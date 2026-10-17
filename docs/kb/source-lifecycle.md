@@ -42,16 +42,18 @@ The existing `active` boolean is renamed to `enabled` and stays your manual swit
 
 Rules:
 
-- Promotion evidence counts only `link_queue` rows checked since `status_changed_at`, so a demoted source cannot be promoted again on old evidence.
-- The acceptance rate is accepted over accepted plus rejected. Distinct days are calendar days of `checked_at` of accepted rows.
+- Promotion evidence counts every `link_queue` row of the domain until the first promotion, so rejections before the proposal lower the rate. A demoted source counts only rows checked since its demotion.
+- The acceptance rate is accepted over accepted plus rejected. Distinct days are calendar days of `created_at`, when links were found, so one burst processed over several days cannot promote.
+- Promotion fetches the domain base URL, not the stored source URL, which may be a feed after an earlier promotion.
 - `promoted_at` records promotions, so the weekly cap ignores probe revivals.
 - Only enabled, not deleted proposed sources are promoted.
 - Promotion clears `flagged_at` and sets `reviewed_at`, so the shadow gate judges the source on its new posts only.
 - A homepage fetch failure skips the source until the next daily run without using the cap.
-- Atom autodiscovery counts as RSS. The first matching `<link>` wins. The page adapter keeps the source URL.
+- Atom autodiscovery counts as RSS. The first matching `<link>` wins. The page adapter uses the final homepage URL when it is on the same domain, since the linker keeps only links on the listing's host, otherwise the source URL.
+- Homepage, listing and article fetches go through the private address guard, like ingest, since discovered domains choose where they point.
 - Dormancy measures from the later of the last post and `status_changed_at`. Only enabled sources go dormant.
 - The tenth consecutive failure makes a source dormant at once.
-- The probe schedule lives in memory, so a restart probes every dormant source once.
+- The probe schedule lives in memory, so a restart probes every dormant source once. A revived source drops the probe pause at the next refresh.
 - Only a fresh flag demotes, since demotion happens in the update that flags.
 
 ## Schema changes
