@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
@@ -58,7 +59,7 @@ type result struct {
 }
 
 func NewIngester(s *Store, sw *switches.Store, tags *tagging.Store, feeds *feed.Store, domains *domain.Store, trim *source.Trim, tagger *robot.Tagger, summarizer *robot.Summarizer, l *slog.Logger) *Ingester {
-	client := safeClient(fetchTimeout)
+	client := safehttp.NewClient(fetchTimeout)
 	p := newPacer(domainGap)
 
 	return &Ingester{
@@ -160,7 +161,7 @@ func (in *Ingester) tick(ctx context.Context) error {
 // process returns the link's final status, or an error to retry it on a later tick.
 func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (res result, err error) {
 	allowed, err := in.robots.Allowed(ctx, link.URL)
-	if errors.Is(err, errPrivateAddress) {
+	if errors.Is(err, safehttp.ErrPrivateAddress) {
 		res.status, res.reason = statusFailed, "private address"
 		return res, nil
 	}

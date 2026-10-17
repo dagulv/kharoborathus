@@ -1,4 +1,4 @@
-package ingest
+package safehttp
 
 import (
 	"errors"
@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-var errPrivateAddress = errors.New("ingest: private address")
+var ErrPrivateAddress = errors.New("safehttp: private address")
 
 // Control runs after DNS resolution, so a public hostname resolving to an internal address is refused too.
-func safeClient(timeout time.Duration) *http.Client {
+func NewClient(timeout time.Duration) *http.Client {
 	dialer := &net.Dialer{
 		Timeout: timeout,
 		Control: func(_, address string, _ syscall.RawConn) error {
@@ -27,7 +27,7 @@ func safeClient(timeout time.Duration) *http.Client {
 			}
 
 			if ip = ip.Unmap(); !ip.IsGlobalUnicast() || ip.IsPrivate() {
-				return errPrivateAddress
+				return ErrPrivateAddress
 			}
 
 			return nil
