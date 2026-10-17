@@ -11,7 +11,7 @@ import (
 )
 
 type fakeLLM struct {
-	answer discoveryAnswer
+	answer any
 	req    adapter.Request
 }
 
