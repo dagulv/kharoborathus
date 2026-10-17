@@ -56,7 +56,7 @@ type result struct {
 }
 
 func NewIngester(s *Store, sw *switches.Store, tags *tagging.Store, feeds *feed.Store, domains *domain.Store, trim *source.Trim, tagger *robot.Tagger, summarizer *robot.Summarizer, l *slog.Logger) *Ingester {
-	client := &http.Client{Timeout: fetchTimeout}
+	client := safeClient(fetchTimeout)
 	p := newPacer(domainGap)
 
 	return &Ingester{
@@ -152,6 +152,11 @@ func (in *Ingester) tick(ctx context.Context) error {
 // process returns the link's final status, or an error to retry it on a later tick.
 func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (res result, err error) {
 	allowed, err := in.robots.Allowed(ctx, link.URL)
+	if errors.Is(err, errPrivateAddress) {
+		res.status, res.reason = statusFailed, "private address"
+		return res, nil
+	}
+
 	if err != nil {
 		return res, err
 	}
