@@ -22,16 +22,28 @@ var blockedHosts = []string{
 }
 
 func outboundLinks(markdown, ownBaseURL string) []string {
-	own := hostOf(ownBaseURL)
-
-	var out []string
+	var raw []string
 
 	for _, m := range markdownLink.FindAllStringSubmatch(markdown, -1) {
 		if m[1] == "!" {
 			continue
 		}
 
-		link, ok := normalizeLink(m[2])
+		raw = append(raw, m[2])
+	}
+
+	links := FilterLinks(raw, ownBaseURL)
+
+	return links[:min(len(links), maxLinksPerPost)]
+}
+
+func FilterLinks(raw []string, ownBaseURL string) []string {
+	own := hostOf(ownBaseURL)
+
+	var out []string
+
+	for _, r := range raw {
+		link, ok := normalizeLink(r)
 		if !ok || slices.Contains(out, link) {
 			continue
 		}
@@ -41,10 +53,6 @@ func outboundLinks(markdown, ownBaseURL string) []string {
 		}
 
 		out = append(out, link)
-
-		if len(out) == maxLinksPerPost {
-			break
-		}
 	}
 
 	return out

@@ -64,3 +64,18 @@ func TestHostOf(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterLinks(t *testing.T) {
+	got := FilterLinks([]string{
+		"https://news.example/a?utm_source=x#top",
+		"https://www.own.example/x",
+		"https://www.youtube.com/watch?v=1",
+		"ftp://files.example/f",
+		"https://news.example/a",
+		"https://other.example/b",
+	}, "https://own.example")
+
+	if want := []string{"https://news.example/a", "https://other.example/b"}; !slices.Equal(got, want) {
+		t.Errorf("got %v", got)
+	}
+}
