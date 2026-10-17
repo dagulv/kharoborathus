@@ -201,8 +201,11 @@ func (s *Store) Accept(ctx context.Context, link Link, baseURL string, f feed.Fe
 
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO post_links (from_post_id, to_post_id, relation, metadata)
-			VALUES ($1, $2, 'discovered', jsonb_build_object('via', $3::text))
-			`, post.ID, link.FromPostID, link.Via); err != nil {
+			VALUES ($1, $2, 'discovered', jsonb_strip_nulls(jsonb_build_object(
+				'via', $3::text,
+				'query', (SELECT q.query FROM link_queue l JOIN discover_queue q ON q.id = l.discover_item_id WHERE l.id = $4)
+			)))
+			`, post.ID, link.FromPostID, link.Via, link.ID); err != nil {
 			return fmt.Errorf("err link discovered: %w", err)
 		}
 
