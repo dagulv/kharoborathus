@@ -29,12 +29,17 @@ func Run(ctx context.Context, s *Store, d *robot.Discoverer, sched schedule.Sche
 
 func discoverPosts(ctx context.Context, s *Store, d *robot.Discoverer, l *slog.Logger) error {
 	posts, err := iterx.Collect(s.ListUndiscoveredPosts(ctx, batchSize))
+	if err != nil || len(posts) == 0 {
+		return err
+	}
+
+	gateKeys, aliases, err := s.Actions(ctx)
 	if err != nil {
 		return err
 	}
 
 	for _, post := range posts {
-		keywords, err := d.Keywords(ctx, post.Content)
+		keywords, err := d.Keywords(ctx, post.Content, gateKeys)
 
 		switch {
 		case errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil:
@@ -43,16 +48,25 @@ func discoverPosts(ctx context.Context, s *Store, d *robot.Discoverer, l *slog.L
 			l.Warn("discover keywords", "post", post.ID, "err", err)
 		}
 
-		items := make([]DiscoverItem, 0, len(keywords))
-
-		for _, k := range keywords {
-			items = append(items, DiscoverItem{PostID: post.ID, Entity: k.Entity, Action: k.Action, Query: k.Query})
-		}
-
-		if err := s.CompleteDiscovery(ctx, post.ID, items); err != nil {
+		if err := s.CompleteDiscovery(ctx, post.ID, eventItems(post.ID, keywords, aliases)); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func eventItems(postID string, keywords []robot.Keyword, aliases map[string]string) []DiscoverItem {
+	items := make([]DiscoverItem, 0, len(keywords))
+
+	for _, k := range keywords {
+		action := k.Action
+		if key, ok := aliases[action]; ok {
+			action = key
+		}
+
+		items = append(items, DiscoverItem{PostID: postID, Entity: k.Entity, Action: action, Query: k.Query})
+	}
+
+	return items
 }

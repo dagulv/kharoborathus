@@ -113,6 +113,36 @@ func (s *Store) CompleteDiscovery(ctx context.Context, postID string, items []Di
 	})
 }
 
+func (s *Store) Actions(ctx context.Context) (gateKeys []string, aliases map[string]string, err error) {
+	rows, err := s.db.Query(ctx, `SELECT key FROM tags WHERE enabled AND status = 'active' AND gate ORDER BY key`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("err query gate tags: %w", err)
+	}
+
+	gateKeys, err = pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, nil, fmt.Errorf("err scan gate tags: %w", err)
+	}
+
+	rows, err = s.db.Query(ctx, `SELECT alias, key FROM tag_aliases`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("err query tag aliases: %w", err)
+	}
+
+	aliases = make(map[string]string)
+
+	var alias, key string
+
+	if _, err = pgx.ForEachRow(rows, []any{&alias, &key}, func() error {
+		aliases[alias] = key
+		return nil
+	}); err != nil {
+		return nil, nil, fmt.Errorf("err scan tag aliases: %w", err)
+	}
+
+	return gateKeys, aliases, nil
+}
+
 func (s *Store) ListQueue(ctx context.Context, limit int) iter.Seq2[DiscoverItem, error] {
 	return func(yield func(DiscoverItem, error) bool) {
 		rows, err := s.db.Query(ctx, `

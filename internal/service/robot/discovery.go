@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"strings"
+	"text/template"
 	"unicode/utf8"
 
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
@@ -19,6 +20,13 @@ const (
 
 //go:embed prompts/discovery.md
 var discoveryPrompt string
+
+//go:embed prompts/discovery_user.md
+var discoveryUserPrompt string
+
+var discoveryUser = template.Must(template.New("discovery_user.md").
+	Funcs(template.FuncMap{"join": strings.Join}).
+	Parse(discoveryUserPrompt))
 
 type Keyword struct {
 	Entity string `json:"entity"`
@@ -38,9 +46,18 @@ func NewDiscoverer(llm adapter.LLM) *Discoverer {
 	return &Discoverer{llm: llm}
 }
 
-func (d *Discoverer) Keywords(ctx context.Context, markdown string) ([]Keyword, error) {
+func (d *Discoverer) Keywords(ctx context.Context, markdown string, gateKeys []string) ([]Keyword, error) {
 	if r := []rune(markdown); len(r) > maxDiscoveryInput {
 		markdown = string(r[:maxDiscoveryInput])
+	}
+
+	var prompt strings.Builder
+
+	if err := discoveryUser.Execute(&prompt, map[string]any{
+		"Keys":    gateKeys[:min(len(gateKeys), maxExistingTags)],
+		"Article": markdown,
+	}); err != nil {
+		return nil, err
 	}
 
 	temp := 0.2
@@ -49,7 +66,7 @@ func (d *Discoverer) Keywords(ctx context.Context, markdown string) ([]Keyword, 
 
 	if err := d.llm.Unmarshal(ctx, adapter.Request{
 		System:      strings.TrimSpace(discoveryPrompt),
-		Prompt:      markdown,
+		Prompt:      prompt.String(),
 		Temperature: &temp,
 	}, &answer); err != nil {
 		return nil, err
@@ -65,7 +82,7 @@ func groundKeywords(keywords []Keyword, article string) []Keyword {
 
 	for _, k := range keywords {
 		k.Entity = collapse(k.Entity)
-		k.Action = strings.ToLower(collapse(k.Action))
+		k.Action = TagKey(k.Action)
 		k.Query = collapse(k.Query)
 
 		entity := strings.ToLower(k.Entity)

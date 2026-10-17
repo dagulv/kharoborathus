@@ -3,6 +3,7 @@ package robot
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
@@ -41,14 +42,14 @@ func TestKeywords(t *testing.T) {
 		{Entity: "Ericsson", Action: "contract", Query: "ericsson avtal telia 5g"},
 		{Entity: "Nokia", Action: "contract", Query: "Nokia avtal Telia"},
 		{Entity: "Telia", Action: "contract", Query: "avtal 5G"},
-		{Entity: "Northvolt", Action: "expansion", Query: "Northvolt expansion"},
+		{Entity: "Northvolt", Action: "New  Factory", Query: "Northvolt expansion"},
 		{Entity: "Saab", Action: "order", Query: "Saab order"},
 		{Entity: "Scania", Action: "order", Query: "Scania order"},
 		{Entity: "ABB", Action: "order", Query: "ABB order"},
 		{Entity: "", Action: "order", Query: "order"},
 	}}}
 
-	keywords, err := NewDiscoverer(llm).Keywords(context.Background(), article)
+	keywords, err := NewDiscoverer(llm).Keywords(context.Background(), article, []string{"acquisition", "contract"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +57,7 @@ func TestKeywords(t *testing.T) {
 	want := []Keyword{
 		{Entity: "Volvo Cars", Action: "investment", Query: "Volvo Cars investerar batterifabrik"},
 		{Entity: "Ericsson", Action: "contract", Query: "Ericsson avtal Telia 5G"},
-		{Entity: "Northvolt", Action: "expansion", Query: "Northvolt expansion"},
+		{Entity: "Northvolt", Action: "new_factory", Query: "Northvolt expansion"},
 		{Entity: "Saab", Action: "order", Query: "Saab order"},
 		{Entity: "Scania", Action: "order", Query: "Scania order"},
 	}
@@ -71,14 +72,20 @@ func TestKeywords(t *testing.T) {
 		}
 	}
 
-	if llm.req.Prompt != article || llm.req.System == "" {
-		t.Error("article and prompt not sent to the model")
+	if !strings.Contains(llm.req.Prompt, article) || !strings.Contains(llm.req.Prompt, "Gate tag keys: acquisition, contract") || llm.req.System == "" {
+		t.Errorf("prompt %q", llm.req.Prompt)
 	}
 }
 
 func TestKeywordsNone(t *testing.T) {
-	keywords, err := NewDiscoverer(&fakeLLM{}).Keywords(context.Background(), article)
+	llm := &fakeLLM{}
+
+	keywords, err := NewDiscoverer(llm).Keywords(context.Background(), article, nil)
 	if err != nil || len(keywords) != 0 {
 		t.Fatalf("got %v, %v", keywords, err)
+	}
+
+	if !strings.Contains(llm.req.Prompt, "Gate tag keys: none") {
+		t.Errorf("prompt %q", llm.req.Prompt)
 	}
 }
