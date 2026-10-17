@@ -94,6 +94,7 @@ None.
 | Plan | `2xCPU-4GB` | Postgres, two app processes and Haloy fit with headroom. |
 | Disk | 50 GB | Posts are text. Grows with `size`. |
 | Backups | Daily, 7 kept | UpCloud storage backups, no extra tooling. |
+| Disk encryption | On | Free, and backups inherit it. Costs about 10-20% of disk speed. It can only be set when the server is created. |
 
 ## Open questions
 
