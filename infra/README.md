@@ -82,6 +82,8 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
    for t in db api web; do cp infra/$t/.env.example infra/$t/.env; done
    ```
 
+   Generate `POSTGRES_PASSWORD` with `openssl rand -hex 32` and put the same value in `POSTGRES_CONNECTION_STRING`. Characters like `/`, `@` or `$` break the URL or get expanded.
+
 8. Deploy the database first, then the rest once its logs say it accepts connections:
 
    ```bash
