@@ -12,7 +12,7 @@ Grow beyond hand-picked sources without losing quality. Scale slowly and prefer 
 |---|---|---|
 | [Architecture](architecture.md) | done | Current workers, source pipeline, AI providers and unused schema. |
 | [Trust model](trust-model.md) | designed | Trusted versus untrusted sources and what their posts may do. |
-| [Tag lifecycle](tag-lifecycle.md) | designed | Proposal, frequency promotion, aliases, gate eligibility, backfill and dormancy. |
+| [Tag lifecycle](tag-lifecycle.md) | done | Proposal, frequency promotion, aliases, gate eligibility, backfill and dormancy. |
 | [Classifier gate](classifier-gate.md) | designed | Jev tagging as a hard gate for discovered content and a shadow gate for trusted sources. |
 | [Link extraction](link-extraction.md) | designed | Go job queueing outbound links from trusted posts. |
 | [Search discovery](search-discovery.md) | designed | Brave Web Search for events whose action is a gate tag, across news, press releases and other sources. |

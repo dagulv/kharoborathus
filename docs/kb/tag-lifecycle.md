@@ -1,6 +1,6 @@
 # Tag lifecycle
 
-**Status:** designed
+**Status:** done
 **Related:** [trust-model](trust-model.md), [classifier-gate](classifier-gate.md)
 
 ## Summary
