@@ -218,24 +218,27 @@ func (s *Store) PromotedLastWeek(ctx context.Context) (n int, err error) {
 	return n, nil
 }
 
+// A demoted source counts only evidence since its demotion. Days count when links were found, so one burst cannot pass.
 func (s *Store) ListPromotable(ctx context.Context, minAccepted, minDays int, minRate float64, limit int) ([]Promotable, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT s.id, s.url
+		SELECT s.id, d.base_url
 		FROM sources s
+		JOIN domains d ON d.id = s.domain_id
 		JOIN LATERAL (
 			SELECT
 				count(*) FILTER (WHERE q.status = 'accepted') AS accepted,
-				count(DISTINCT q.checked_at::date) FILTER (WHERE q.status = 'accepted') AS days,
+				count(DISTINCT q.created_at::date) FILTER (WHERE q.status = 'accepted') AS days,
 				count(*) FILTER (WHERE q.status IN ('accepted', 'rejected')) AS decided
 			FROM link_queue q
-			WHERE q.domain_id = s.domain_id AND q.checked_at >= s.status_changed_at
+			WHERE q.domain_id = s.domain_id
+				AND q.checked_at >= CASE WHEN s.promoted_at IS NULL THEN '-infinity' ELSE s.status_changed_at END
 		) e ON true
 		WHERE s.status = 'proposed'
 			AND s.enabled
 			AND s.deleted_at IS NULL
 			AND e.accepted >= $1
 			AND e.days >= $2
-			AND e.accepted >= $3 * e.decided
+			AND e.accepted >= $3::float8 * e.decided
 		ORDER BY s.created_at
 		LIMIT $4
 		`, minAccepted, minDays, minRate, limit)
