@@ -1,2 +1,6 @@
 .env
 deploy/production.env
+deploy/tofu/.terraform/
+deploy/tofu/*.tfstate*
+deploy/tofu/*.tfplan
+deploy/tofu/terraform.tfvars

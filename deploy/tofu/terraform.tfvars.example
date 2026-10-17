@@ -1,0 +1,2 @@
+# Copy to terraform.tfvars, which is gitignored.
+ssh_public_key = "ssh-ed25519 AAAA... you@example.com"
