@@ -42,6 +42,7 @@ Rules:
 - Ingest does not run while the classifier is mocked, since the mock passes almost any page.
 - Failed trimmer checks and short content are one check: `Trim.Apply` leaves no content, and the link is rejected with `no content`. A missing title rejects with `no title`.
 - A URL conflict on insert sets `duplicate` with `url exists`.
+- Domains that differ only in scheme share their sources, so a block on `https://x` also stops `http://x`. Subdomains are separate sites.
 - Deleted sources count, so a domain whose source you deleted is not proposed again. When every source of the domain is disabled or deleted, the link fails with `source disabled` and nothing is inserted, so disabling a source blocks its domain. The check runs right after the domain lookup, before trim, the gate or the summary, and again inside the insert transaction.
 - `source_discovered_by_post` records the referring post once, when the proposed source is created.
 - Language comes from `<html lang>`.

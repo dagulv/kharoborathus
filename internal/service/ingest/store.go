@@ -149,9 +149,13 @@ var errSourceDisabled = errors.New("ingest: source disabled")
 
 // A domain whose sources are all disabled or deleted is blocked, so you can stop a domain without a code change.
 // An enabled source wins over older disabled ones, so a manual feed can replace a disabled discovered source.
+// Domains differing only in scheme share sources, or http links would slip past a block on https.
 const oldestSourceSQL = `
-	SELECT id, enabled AND deleted_at IS NULL FROM sources WHERE domain_id = $1
-	ORDER BY enabled AND deleted_at IS NULL DESC, created_at
+	SELECT s.id, s.enabled AND s.deleted_at IS NULL
+	FROM sources s
+	JOIN domains d ON d.id = s.domain_id
+	WHERE split_part(d.base_url, '://', 2) = (SELECT split_part(base_url, '://', 2) FROM domains WHERE id = $1)
+	ORDER BY s.enabled AND s.deleted_at IS NULL DESC, s.domain_id = $1 DESC, s.created_at
 	LIMIT 1`
 
 func (s *Store) DomainAllowed(ctx context.Context, domainID string) (bool, error) {
