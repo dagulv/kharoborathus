@@ -9,5 +9,13 @@ export const variables = defineEnvVars({
 	API_URL: {
 		schema: (value) => (value || 'http://localhost:3002').replace(/\/+$/, ''),
 		description: 'Base URL of the Go app internal HTTP server'
+	},
+	ADMIN_USER: {
+		schema: v.pipe(v.string(), v.nonEmpty()),
+		description: 'Basic auth user for the whole site'
+	},
+	ADMIN_PASSWORD: {
+		schema: v.pipe(v.string(), v.nonEmpty()),
+		description: 'Basic auth password for the whole site'
 	}
 });
