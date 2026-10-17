@@ -32,3 +32,28 @@ export type Post = PostSummary & {
 	content: string;
 	sourceUrl: string;
 };
+
+export type Tag = {
+	key: string;
+	enabled: boolean;
+	status: 'active' | 'dormant';
+	gate: boolean;
+	matchRate: number | null;
+	lastMatchedAt: Date | null;
+	createdAt: Date;
+	terms: string[];
+	postCount: number;
+};
+
+export type TagProposal = {
+	key: string;
+	terms: string[];
+	postCount: number;
+	domainCount: number;
+	lastProposedAt: Date;
+};
+
+export type TagAlias = {
+	alias: string;
+	key: string;
+};

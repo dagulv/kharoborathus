@@ -3,7 +3,7 @@ import { error, invalid, redirect } from '@sveltejs/kit';
 import { command, form, query } from '$app/server';
 import { API_URL } from '$app/env/private';
 import { db } from '#lib/server/db.js';
-import type { Post, PostSummary, Source } from '#lib/types.js';
+import type { Post, PostSummary, Source, Tag, TagAlias, TagProposal } from '#lib/types.js';
 
 const PAGE_SIZE = 50;
 
@@ -192,4 +192,94 @@ export const syncSource = command(uuid, async (id) => {
 
 	if (res.status === 404) error(404, 'Source not found');
 	if (!res.ok) error(502, `Go app responded ${res.status}`);
+});
+
+const tagKey = v.pipe(v.string(), v.nonEmpty(), v.maxLength(40));
+
+export const listTags = query(async () => {
+	const sql = db();
+
+	return sql<Tag[]>`
+		SELECT
+			t.key,
+			t.enabled,
+			t.status,
+			t.gate,
+			t.match_rate,
+			t.last_matched_at,
+			t.created_at,
+			coalesce(array_agg(tt.lang || ': ' || tt.term ORDER BY tt.lang, tt.term) FILTER (WHERE tt.term IS NOT NULL), '{}') AS terms,
+			(SELECT count(*)::int FROM posts p WHERE p.tags @> ARRAY[t.key]) AS post_count
+		FROM tags t
+		LEFT JOIN tag_terms tt ON tt.key = t.key
+		GROUP BY t.key
+		ORDER BY t.key
+	`;
+});
+
+export const listProposals = query(async () => {
+	const sql = db();
+
+	return sql<TagProposal[]>`
+		SELECT
+			p.key,
+			array_agg(DISTINCT p.term) AS terms,
+			count(DISTINCT p.post_id)::int AS post_count,
+			count(DISTINCT po.domain_id)::int AS domain_count,
+			max(p.created_at) AS last_proposed_at
+		FROM tag_proposals p
+		JOIN posts po ON po.id = p.post_id
+		GROUP BY p.key
+		ORDER BY post_count DESC, p.key
+	`;
+});
+
+export const listAliases = query(async () => {
+	const sql = db();
+
+	return sql<TagAlias[]>`SELECT alias, key FROM tag_aliases ORDER BY alias`;
+});
+
+export const setTagEnabled = command(
+	v.object({ key: tagKey, enabled: v.boolean() }),
+	async ({ key, enabled }) => {
+		const sql = db();
+		await sql`UPDATE tags SET enabled = ${enabled} WHERE key = ${key}`;
+		await listTags().refresh();
+	}
+);
+
+export const mergeTag = command(v.object({ from: tagKey, to: tagKey }), async ({ from, to }) => {
+	if (from === to) error(400, 'Cannot merge a tag into itself');
+
+	const sql = db();
+
+	await sql.begin(async (tx) => {
+		const [target] = await tx`SELECT 1 FROM tags WHERE key = ${to}`;
+		if (!target) error(404, `Unknown tag ${to}`);
+
+		await tx`
+			INSERT INTO tag_terms (key, lang, term)
+			SELECT ${to}, lang, term FROM tag_terms WHERE key = ${from}
+			ON CONFLICT DO NOTHING
+		`;
+		await tx`
+			UPDATE posts
+			SET tags = ARRAY(SELECT DISTINCT unnest(array_replace(tags, ${from}, ${to})))
+			WHERE tags @> ARRAY[${from}]::text[]
+		`;
+		await tx`
+			UPDATE sources
+			SET target_tags = ARRAY(SELECT DISTINCT unnest(array_replace(target_tags, ${from}, ${to})))
+			WHERE target_tags @> ARRAY[${from}]::text[]
+		`;
+		await tx`UPDATE tag_aliases SET key = ${to} WHERE key = ${from}`;
+		await tx`
+			INSERT INTO tag_aliases (alias, key) VALUES (${from}, ${to})
+			ON CONFLICT (alias) DO UPDATE SET key = EXCLUDED.key
+		`;
+		await tx`DELETE FROM tags WHERE key = ${from}`;
+	});
+
+	await Promise.all([listTags().refresh(), listAliases().refresh()]);
 });
