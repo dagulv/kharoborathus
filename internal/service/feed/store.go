@@ -3,7 +3,6 @@ package feed
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"fmt"
 	"iter"
 	"strings"
@@ -199,36 +198,6 @@ func textSimhash(content string) *int64 {
 	v := int64(h)
 
 	return &v
-}
-
-func (s *Store) UpdateFeed(ctx context.Context, feed Feed) (Feed, error) {
-	hash := sha256.Sum256([]byte(feed.Content))
-
-	return scanFeed(s.db.QueryRow(ctx, `
-		UPDATE posts
-		SET
-			title = $2,
-			short_content = $3,
-			content = $4,
-			content_hash = $5,
-			simhash = $6
-		WHERE id = $1
-		RETURNING `+feedColumns,
-		feed.ID, feed.Title, feed.ShortContent, feed.Content, hash[:], textSimhash(feed.Content),
-	))
-}
-
-func (s *Store) DeleteFeed(ctx context.Context, id string) error {
-	tag, err := s.db.Exec(ctx, `DELETE FROM posts WHERE id = $1`, id)
-	if err != nil {
-		return err
-	}
-
-	if tag.RowsAffected() == 0 {
-		return sql.ErrNoRows
-	}
-
-	return nil
 }
 
 func scanFeed(row pgx.Row) (feed Feed, err error) {

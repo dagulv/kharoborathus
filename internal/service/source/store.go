@@ -2,7 +2,6 @@ package source
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"iter"
 	"time"
@@ -89,54 +88,6 @@ func (s *Store) ListSources(ctx context.Context, filter Filter) iter.Seq2[Source
 
 func (s *Store) GetSource(ctx context.Context, id string) (Source, error) {
 	return scanSource(s.db.QueryRow(ctx, `SELECT `+sourceColumns+` FROM sources WHERE id = $1 AND deleted_at IS NULL`, id))
-}
-
-func (s *Store) CreateSource(ctx context.Context, source Source) (out Source, err error) {
-	if source.DomainID == "" {
-		d, err := s.domainStore.GetOrCreateDomain(ctx, source.URL)
-		if err != nil {
-			return out, err
-		}
-
-		source.DomainID = d.ID
-	}
-
-	return scanSource(s.db.QueryRow(ctx, `
-		INSERT INTO sources (domain_id, adapter, url, enabled, rate, metadata, target_tags)
-		VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '{}'), COALESCE($7::text[], '{}'))
-		RETURNING `+sourceColumns,
-		source.DomainID, source.Adapter, source.URL, source.Enabled, source.Rate, source.Metadata, source.TargetTags,
-	))
-}
-
-func (s *Store) UpdateSource(ctx context.Context, source Source) (Source, error) {
-	return scanSource(s.db.QueryRow(ctx, `
-		UPDATE sources
-		SET
-			adapter = $2,
-			url = $3,
-			enabled = $4,
-			rate = $5,
-			metadata = COALESCE($6::jsonb, '{}'),
-			target_tags = COALESCE($7::text[], '{}')
-		WHERE id = $1
-		RETURNING `+sourceColumns,
-		source.ID, source.Adapter, source.URL, source.Enabled, source.Rate, source.Metadata, source.TargetTags,
-	))
-}
-
-// Soft deletes, so posts keep their source and ingest never proposes the domain again. Disabling it drops trust everywhere.
-func (s *Store) DeleteSource(ctx context.Context, id string) error {
-	tag, err := s.db.Exec(ctx, `UPDATE sources SET deleted_at = now(), enabled = false WHERE id = $1 AND deleted_at IS NULL`, id)
-	if err != nil {
-		return fmt.Errorf("err delete source: %w", err)
-	}
-
-	if tag.RowsAffected() == 0 {
-		return sql.ErrNoRows
-	}
-
-	return nil
 }
 
 func scanSource(row pgx.Row) (source Source, err error) {
