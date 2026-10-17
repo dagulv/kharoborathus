@@ -2,6 +2,7 @@ package safehttp
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -18,12 +19,12 @@ func NewClient(timeout time.Duration) *http.Client {
 		Control: func(_, address string, _ syscall.RawConn) error {
 			host, _, err := net.SplitHostPort(address)
 			if err != nil {
-				return err
+				return fmt.Errorf("err split dial address: %w", err)
 			}
 
 			ip, err := netip.ParseAddr(host)
 			if err != nil {
-				return err
+				return fmt.Errorf("err parse dial address: %w", err)
 			}
 
 			if ip = ip.Unmap(); !ip.IsGlobalUnicast() || ip.IsPrivate() {

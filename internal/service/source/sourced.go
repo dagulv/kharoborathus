@@ -204,7 +204,7 @@ func enabledSources(ctx context.Context, s *Store) ([]Source, error) {
 				Status:  sql.Null[string]{V: status, Valid: true},
 			}))
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("err list %s sources: %w", status, err)
 			}
 
 			for _, source := range page {
