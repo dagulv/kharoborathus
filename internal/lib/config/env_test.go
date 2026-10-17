@@ -30,3 +30,20 @@ func TestLoadProcessEnvOverridesFile(t *testing.T) {
 		t.Errorf("PostgresConn = %q, want %q", e.PostgresConn, want)
 	}
 }
+
+func TestLoadDefaultConnection(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("POSTGRES_PASSWORD=pw\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	e, err := Load(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := "postgresql://postgres:pw@localhost:5432/postgres?sslmode=disable"; e.PostgresConn != want {
+		t.Errorf("PostgresConn = %q, want %q", e.PostgresConn, want)
+	}
+}

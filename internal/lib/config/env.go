@@ -16,7 +16,7 @@ type Environment struct {
 	PostgresUser     string `env:"POSTGRES_USER" envDefault:"postgres"`
 	PostgresPassword string `env:"POSTGRES_PASSWORD" envDefault:"postgres"`
 	PostgresDb       string `env:"POSTGRES_DB" envDefault:"postgres"`
-	PostgresConn     string `env:"POSTGRES_CONNECTION_STRING,expand" envDefault:"postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}/${POSTGRES_NAME}?sslmode=disable"`
+	PostgresConn     string `env:"POSTGRES_CONNECTION_STRING,expand" envDefault:"postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}?sslmode=disable"`
 	HttpHost         string `env:"HTTP_HOST" envDefault:"0.0.0.0:3001"`
 	InternalHttpHost string `env:"INTERNAL_HTTP_HOST" envDefault:"0.0.0.0:3002"`
 	HttpCors         string `env:"HTTP_CORS" envDefault:"*"`
