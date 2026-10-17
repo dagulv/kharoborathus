@@ -28,7 +28,7 @@ States: `proposed`, `active`, `dormant`. A merged synonym becomes an `alias`.
    - Proposals stay out of `tags`, because search reads `tag_terms` and would surface them.
 2. **Promote.** A periodic job promotes a key when all checks pass:
    - Support: enough posts from enough distinct domains inside the window. Distinct domains stop one site's house jargon.
-   - Not a duplicate: the term is tested with `to_tsvector(cfg, term) @@ matcher` against active terms in the same language. Only a hit goes to an LLM merge check. A confirmed duplicate becomes an alias.
+   - Not a duplicate: the term is tested with `to_tsvector(cfg, term) @@ matcher` against active terms in the same language. Only a hit goes to a Jev merge check, one question per hit in one request. The highest score at or above the tag threshold makes the candidate an alias of that tag.
    - Consistent: Jev scores the candidate on its supporting posts. Most must reach the tag threshold.
    - Broadness: Jev scores the candidate on recent posts. The same pass is the backfill in step 5, so one set of Jev calls gives both. The match rate sets `gate`.
    - A daily job recomputes `match_rate` and `gate` for active tags from `posts.tags`, with no Jev calls, since every post is already classified against every active tag.
