@@ -266,7 +266,7 @@ func (s *Store) Promote(ctx context.Context, id, adapterName, url string) (bool,
 	tag, err := s.db.Exec(ctx, `
 		UPDATE sources
 		SET status = 'active', adapter = $2, url = $3, status_changed_at = now(), promoted_at = now(),
-			flagged_at = NULL, reviewed_at = now(), fetch_failures = 0
+			flagged_at = NULL, reviewed_at = now(), fetch_failures = 0, failing_since = NULL
 		WHERE id = $1 AND status = 'proposed'
 		`, id, adapterName, url)
 	if err != nil {
