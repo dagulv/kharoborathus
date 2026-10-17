@@ -2,11 +2,15 @@ package source
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 
+	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
@@ -44,5 +48,16 @@ func TestCollectEvictsOldestDomain(t *testing.T) {
 		if _, ok := tr.samples[id]; ok != want {
 			t.Errorf("domain %s kept %v", id, ok)
 		}
+	}
+}
+
+func TestTrimClientRefusesPrivate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("private address fetched")
+	}))
+	defer srv.Close()
+
+	if _, err := NewTrim(nil, idleLLM{}, slog.New(slog.DiscardHandler)).client.Get(srv.URL); !errors.Is(err, safehttp.ErrPrivateAddress) {
+		t.Errorf("err %v", err)
 	}
 }

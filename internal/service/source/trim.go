@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
@@ -55,7 +56,7 @@ func NewTrim(domains *domain.Store, llm adapter.LLM, l *slog.Logger) *Trim {
 		html:          html.New(llm, ""),
 		linker:        html.NewLinker(llm, ""),
 		llm:           llm,
-		client:        &http.Client{Timeout: fetchTimeout},
+		client:        safehttp.NewClient(fetchTimeout),
 		l:             l,
 		generating:    make(chan struct{}, 1),
 		samples:       make(map[string][]trimmer.Sample),

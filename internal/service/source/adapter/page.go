@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 )
 
@@ -33,9 +34,7 @@ type page struct {
 
 func NewPage(feedStore *feed.Store, linker Linker, l *slog.Logger) Adapter[pageDocument] {
 	return page{
-		client: &http.Client{
-			Timeout: time.Second * 20,
-		},
+		client:    safehttp.NewClient(time.Second * 20),
 		feedStore: feedStore,
 		linker:    linker,
 		l:         l,

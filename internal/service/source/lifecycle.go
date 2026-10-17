@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/switches"
@@ -23,7 +24,7 @@ const (
 )
 
 func RunLifecycle(ctx context.Context, s *Store, sw *switches.Store, l *slog.Logger) error {
-	client := &http.Client{Timeout: homepageTimeout}
+	client := safehttp.NewClient(homepageTimeout)
 
 	for range schedule.Always.Tick(ctx, lifecycleInterval) {
 		if err := lifecycle(ctx, s, sw, client, l); err != nil {

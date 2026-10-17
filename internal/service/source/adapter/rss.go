@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/mmcdole/gofeed"
 )
@@ -31,9 +32,7 @@ type rss struct {
 }
 
 func NewRSS(feedStore *feed.Store, l *slog.Logger) Adapter[rssDocument] {
-	client := &http.Client{
-		Timeout: time.Second * 20,
-	}
+	client := safehttp.NewClient(time.Second * 20)
 
 	fp := gofeed.NewParser()
 	fp.Client = client
