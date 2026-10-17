@@ -3,11 +3,14 @@ package discovery
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"iter"
 
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/jackc/pgx/v5"
 )
+
+const eventWindowDays = 7
 
 const queueColumns = `
 	id,
@@ -79,6 +82,28 @@ func (s *Store) CompleteDiscovery(ctx context.Context, postID string, items []Di
 				ON CONFLICT (post_id, query) DO NOTHING
 				`, postID, entities, actions, queries); err != nil {
 				return err
+			}
+
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO post_links (from_post_id, to_post_id, relation, metadata)
+				SELECT n.id, anchor.id, 'same_event', jsonb_build_object('entity', e.entity, 'action', e.action)
+				FROM posts n
+				JOIN discover_queue e ON e.post_id = n.id
+				CROSS JOIN LATERAL (
+					SELECT o.id
+					FROM discover_queue q
+					JOIN posts o ON o.id = q.post_id
+					WHERE lower(q.entity) = lower(e.entity)
+						AND lower(q.action) = lower(e.action)
+						AND o.created_at < n.created_at
+						AND o.created_at > n.created_at - $2 * interval '1 day'
+					ORDER BY o.created_at
+					LIMIT 1
+				) anchor
+				WHERE n.id = $1
+				ON CONFLICT (from_post_id, to_post_id, relation) DO NOTHING
+				`, postID, eventWindowDays); err != nil {
+				return fmt.Errorf("err link same event: %w", err)
 			}
 		}
 

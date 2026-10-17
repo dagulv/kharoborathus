@@ -140,6 +140,8 @@ CREATE INDEX IF NOT EXISTS discover_queue_pending_idx ON discover_queue (created
 WHERE
   searched_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS discover_queue_event_idx ON discover_queue (lower(entity), lower(action), searched_at);
+
 CREATE TABLE IF NOT EXISTS discover_checked (
   post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,
   checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
