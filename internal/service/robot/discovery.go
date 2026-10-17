@@ -3,6 +3,7 @@ package robot
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"strings"
 	"text/template"
 	"unicode/utf8"
@@ -57,7 +58,7 @@ func (d *Discoverer) Keywords(ctx context.Context, markdown string, gateKeys []s
 		"Keys":    gateKeys[:min(len(gateKeys), maxExistingTags)],
 		"Article": markdown,
 	}); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("err render discovery prompt: %w", err)
 	}
 
 	temp := 0.2
@@ -69,7 +70,7 @@ func (d *Discoverer) Keywords(ctx context.Context, markdown string, gateKeys []s
 		Prompt:      prompt.String(),
 		Temperature: &temp,
 	}, &answer); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("err extract keywords: %w", err)
 	}
 
 	return groundKeywords(answer.Keywords, markdown), nil

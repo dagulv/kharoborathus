@@ -71,7 +71,7 @@ func (f *ResultFilter) Keep(ctx context.Context, entity, action string, results 
 		Prompt:      string(b),
 		Temperature: &temp,
 	}, &answer); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("err filter search results: %w", err)
 	}
 
 	var urls []string
