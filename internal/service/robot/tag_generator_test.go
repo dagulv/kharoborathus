@@ -67,3 +67,15 @@ func (f *tagLLM) Unmarshal(ctx context.Context, req adapter.Request, out any) er
 
 	return json.Unmarshal(b, out)
 }
+
+func TestTagGeneratePromptTopicOnly(t *testing.T) {
+	llm := &fakeLLM{}
+
+	if _, err := NewTagGenerator(&tagLLM{fakeLLM: llm}).Generate(context.Background(), "sv", "Volvo investerar.", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if s := llm.req.System; strings.Contains(s, "market direction and sentiment:") || !strings.Contains(s, "No sentiment or market direction") {
+		t.Errorf("system prompt %q", s)
+	}
+}
