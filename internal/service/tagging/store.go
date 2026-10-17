@@ -436,3 +436,40 @@ func (s *Store) MarkDormant(ctx context.Context, days int) (int64, error) {
 
 	return tag.RowsAffected(), nil
 }
+
+func (s *Store) FlagSources(ctx context.Context, window int, floor float64) (int64, error) {
+	// Posts checked before the last review are skipped, otherwise a kept or retargeted source is flagged again the next day.
+	tag, err := s.db.Exec(ctx, `
+		WITH recent AS (
+			SELECT
+				p.source_id,
+				c.gate_passed,
+				row_number() OVER (PARTITION BY p.source_id ORDER BY c.checked_at DESC) AS rank
+			FROM tag_checked c
+			JOIN posts p ON p.id = c.post_id
+			JOIN sources s ON s.id = p.source_id
+			WHERE c.gate_passed IS NOT NULL
+				AND c.checked_at > coalesce(s.reviewed_at, '-infinity')
+		),
+		rates AS (
+			SELECT source_id, avg(gate_passed::int) AS rate, count(*) AS n
+			FROM recent
+			WHERE rank <= $1
+			GROUP BY source_id
+		)
+		UPDATE sources s
+		SET flagged_at = now()
+		FROM rates
+		WHERE rates.source_id = s.id
+			AND s.flagged_at IS NULL
+			AND s.enabled
+			AND s.deleted_at IS NULL
+			AND rates.n = $1
+			AND rates.rate < $2
+		`, window, floor)
+	if err != nil {
+		return 0, fmt.Errorf("err flag sources: %w", err)
+	}
+
+	return tag.RowsAffected(), nil
+}

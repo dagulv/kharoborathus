@@ -107,7 +107,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return tagging.RunMaintenance(ctx, &taggingStore, l.WithGroup("maintenance"))
+		return tagging.RunMaintenance(ctx, &taggingStore, &switchStore, l.WithGroup("maintenance"))
 	})
 
 	g.Go(func() error {
