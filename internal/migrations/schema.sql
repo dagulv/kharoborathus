@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS sources (
   status TEXT NOT NULL DEFAULT 'active', -- proposed | active | dormant
   status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   fetch_failures INT NOT NULL DEFAULT 0, -- consecutive listing fetch failures
+  failing_since TIMESTAMPTZ, -- first of the current run of failures
   promoted_at TIMESTAMPTZ,
   flagged_at TIMESTAMPTZ,
   reviewed_at TIMESTAMPTZ,

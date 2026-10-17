@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"iter"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
@@ -155,9 +156,10 @@ func scanSource(row pgx.Row) (source Source, err error) {
 	return
 }
 
-func (s *Store) RecordFetch(ctx context.Context, id string, ok bool, maxFailures int) error {
+// A source must also fail for a day, so a short outage of the server's network cannot put every source to sleep for a probe interval.
+func (s *Store) RecordFetch(ctx context.Context, id string, ok bool, maxFailures int, minFailing time.Duration) error {
 	if ok {
-		if _, err := s.db.Exec(ctx, `UPDATE sources SET fetch_failures = 0 WHERE id = $1 AND fetch_failures > 0`, id); err != nil {
+		if _, err := s.db.Exec(ctx, `UPDATE sources SET fetch_failures = 0, failing_since = NULL WHERE id = $1 AND fetch_failures > 0`, id); err != nil {
 			return fmt.Errorf("err reset fetch failures: %w", err)
 		}
 
@@ -168,10 +170,11 @@ func (s *Store) RecordFetch(ctx context.Context, id string, ok bool, maxFailures
 		UPDATE sources
 		SET
 			fetch_failures = fetch_failures + 1,
-			status = CASE WHEN status = 'active' AND fetch_failures + 1 >= $2 THEN 'dormant' ELSE status END,
-			status_changed_at = CASE WHEN status = 'active' AND fetch_failures + 1 >= $2 THEN now() ELSE status_changed_at END
+			failing_since = coalesce(failing_since, now()),
+			status = CASE WHEN status = 'active' AND fetch_failures + 1 >= $2 AND failing_since < now() - $3::interval THEN 'dormant' ELSE status END,
+			status_changed_at = CASE WHEN status = 'active' AND fetch_failures + 1 >= $2 AND failing_since < now() - $3::interval THEN now() ELSE status_changed_at END
 		WHERE id = $1
-		`, id, maxFailures); err != nil {
+		`, id, maxFailures, minFailing); err != nil {
 		return fmt.Errorf("err record fetch failure: %w", err)
 	}
 

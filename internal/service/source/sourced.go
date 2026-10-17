@@ -32,6 +32,7 @@ const (
 	excerptLen      = 280
 
 	maxFetchFailures = 10
+	minFailing       = 24 * time.Hour
 	probeInterval    = 7 * 24 * time.Hour
 )
 
@@ -266,7 +267,7 @@ func (p pipeline[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-c
 
 		for source := range in {
 			dataset, err := p.FetchFromSource(ctx, source.URL)
-			if rerr := p.store.RecordFetch(ctx, source.ID, err == nil, maxFetchFailures); rerr != nil {
+			if rerr := p.store.RecordFetch(ctx, source.ID, err == nil, maxFetchFailures, minFailing); rerr != nil {
 				l.Error("record fetch", "source", source.ID, "err", rerr)
 			}
 
