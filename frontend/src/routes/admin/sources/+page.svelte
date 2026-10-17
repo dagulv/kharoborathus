@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { SvelteMap } from 'svelte/reactivity';
-	import { listSources, syncSource } from '../admin.remote';
+	import { listSources, reviewSource, syncSource } from '../admin.remote';
+	import type { Source } from '#lib/types.js';
 
 	const includeDeleted = $derived(page.url.searchParams.has('deleted'));
 	const sources = $derived(await listSources({ includeDeleted }));
@@ -20,6 +21,38 @@
 		}
 		setTimeout(() => syncState.delete(id), 3000);
 	}
+
+	const flagged = $derived(sources.filter((s) => s.flaggedAt && !s.deletedAt));
+	const pct = new Intl.NumberFormat('sv-SE', { style: 'percent', maximumFractionDigits: 0 });
+
+	const targetInput = new SvelteMap<string, string>();
+	const reviewState = new SvelteMap<string, 'pending' | 'failed'>();
+
+	function parseTags(text: string) {
+		return [
+			...new Set(
+				text
+					.split(',')
+					.map((t) => t.trim())
+					.filter(Boolean)
+			)
+		];
+	}
+
+	async function review(source: Source, enabled: boolean) {
+		const targetTags = parseTags(targetInput.get(source.id) ?? source.targetTags.join(', '));
+
+		reviewState.set(source.id, 'pending');
+		try {
+			await reviewSource({ id: source.id, enabled, targetTags }).updates(
+				listSources({ includeDeleted })
+			);
+			reviewState.delete(source.id);
+			targetInput.delete(source.id);
+		} catch {
+			reviewState.set(source.id, 'failed');
+		}
+	}
 </script>
 
 <svelte:head><title>Sources · Admin</title></svelte:head>
@@ -37,6 +70,56 @@
 		</a>
 	</div>
 </div>
+
+{#if flagged.length}
+	<section class="mb-6 rounded border border-amber-300 bg-amber-50 p-4">
+		<h2 class="font-medium">Flagged <span class="text-zinc-500">({flagged.length})</span></h2>
+		<p class="mb-3 text-sm text-zinc-600">
+			Fewer than 70% of the last 50 posts passed the shadow gate. Keep saves the target tags below
+			and restarts the count.
+		</p>
+		<ul class="space-y-2">
+			{#each flagged as source (source.id)}
+				{@const status = reviewState.get(source.id)}
+				<li class="flex flex-wrap items-center gap-2 text-sm">
+					<a
+						class="min-w-0 flex-1 truncate hover:underline"
+						href="/admin/posts?source={source.id}"
+						title={source.url}
+					>
+						{source.url}
+					</a>
+					<span class="text-zinc-600 tabular-nums">
+						{source.gateRate === null ? '—' : pct.format(source.gateRate)} pass
+					</span>
+					<input
+						class="w-56 rounded border border-zinc-300 bg-white px-2 py-0.5"
+						placeholder="target tags, comma separated"
+						value={targetInput.get(source.id) ?? source.targetTags.join(', ')}
+						oninput={(e) => targetInput.set(source.id, e.currentTarget.value)}
+					/>
+					<button
+						type="button"
+						class="rounded border border-zinc-300 bg-white px-2 py-0.5 text-xs hover:bg-zinc-100 disabled:opacity-50"
+						disabled={status === 'pending'}
+						onclick={() => review(source, true)}
+					>
+						Keep
+					</button>
+					<button
+						type="button"
+						class="rounded border border-red-300 bg-white px-2 py-0.5 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
+						disabled={status === 'pending'}
+						onclick={() => review(source, false)}
+					>
+						Disable
+					</button>
+					{#if status === 'failed'}<span class="text-xs text-red-600">Failed</span>{/if}
+				</li>
+			{/each}
+		</ul>
+	</section>
+{/if}
 
 <div class="overflow-x-auto rounded border border-zinc-200 bg-white">
 	<table class="w-full text-left text-sm">
@@ -76,6 +159,9 @@
 							<span class="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700">enabled</span>
 						{:else}
 							<span class="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600">disabled</span>
+						{/if}
+						{#if source.flaggedAt && !source.deletedAt}
+							<span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">flagged</span>
 						{/if}
 					</td>
 					<td class="px-3 py-2 text-right tabular-nums">{source.rate}m</td>

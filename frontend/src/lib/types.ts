@@ -12,6 +12,8 @@ export type Source = {
 	deletedAt: Date | null;
 	postCount: number;
 	lastPostedAt: Date | null;
+	flaggedAt: Date | null;
+	gateRate: number | null;
 };
 
 export type PostSummary = {

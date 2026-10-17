@@ -12,11 +12,18 @@ const uuid = v.pipe(v.string(), v.uuid());
 export const getStats = query(async () => {
 	const sql = db();
 	const [row] = await sql<
-		{ sources: number; enabledSources: number; posts: number; postsToday: number }[]
+		{
+			sources: number;
+			enabledSources: number;
+			flaggedSources: number;
+			posts: number;
+			postsToday: number;
+		}[]
 	>`
 		SELECT
 			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL) AS sources,
 			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND enabled) AS enabled_sources,
+			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND flagged_at IS NOT NULL) AS flagged_sources,
 			(SELECT count(*)::int FROM posts) AS posts,
 			(SELECT count(*)::int FROM posts WHERE created_at > now() - interval '24 hours') AS posts_today
 	`;
@@ -29,6 +36,7 @@ export const listSources = query(
 	async ({ includeDeleted }) => {
 		const sql = db();
 
+		// gate_rate mirrors the window in tagging.Store.FlagSources in the Go app
 		return sql<Source[]>`
 			SELECT
 				s.id,
@@ -43,7 +51,9 @@ export const listSources = query(
 				s.created_at,
 				s.deleted_at,
 				coalesce(p.post_count, 0)::int AS post_count,
-				p.last_posted_at
+				p.last_posted_at,
+				s.flagged_at,
+				g.gate_rate
 			FROM sources s
 			JOIN domains d ON d.id = s.domain_id
 			LEFT JOIN (
@@ -51,6 +61,19 @@ export const listSources = query(
 				FROM posts
 				GROUP BY source_id
 			) p ON p.source_id = s.id
+			LEFT JOIN LATERAL (
+				SELECT avg(r.gate_passed::int)::real AS gate_rate
+				FROM (
+					SELECT c.gate_passed
+					FROM tag_checked c
+					JOIN posts po ON po.id = c.post_id
+					WHERE po.source_id = s.id
+						AND c.gate_passed IS NOT NULL
+						AND c.checked_at > coalesce(s.reviewed_at, '-infinity')
+					ORDER BY c.checked_at DESC
+					LIMIT 50
+				) r
+			) g ON true
 			${includeDeleted ? sql`` : sql`WHERE s.deleted_at IS NULL`}
 			ORDER BY s.created_at DESC
 		`;
@@ -283,6 +306,21 @@ export const mergeTag = command(v.object({ from: tagKey, to: tagKey }), async ({
 
 	await Promise.all([listTags().refresh(), listAliases().refresh()]);
 });
+
+export const reviewSource = command(
+	v.object({ id: uuid, enabled: v.boolean(), targetTags: v.array(tagKey) }),
+	async ({ id, enabled, targetTags }) => {
+		const sql = db();
+		const [source] = await sql`
+			UPDATE sources
+			SET enabled = ${enabled}, target_tags = ${targetTags}::text[], flagged_at = NULL, reviewed_at = now()
+			WHERE id = ${id} AND deleted_at IS NULL
+			RETURNING 1
+		`;
+
+		if (!source) error(404, 'Source not found');
+	}
+);
 
 // Readiness per key mirrors the switch table in docs/kb/rollout.md
 export const listSwitches = query(async () => {
