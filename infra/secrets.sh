@@ -64,4 +64,7 @@ for file in "${files[@]}"; do
 	done <<<"$lines"
 done
 
+# The command needs the secrets, never the key that decrypts every vault.
+unset SOPS_AGE_KEY
+
 exec "$@"
