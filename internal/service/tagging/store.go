@@ -45,7 +45,7 @@ func (s *Store) ListTags(ctx context.Context) ([]robot.Tag, error) {
 func (s *Store) ListUntaggedPosts(ctx context.Context, limit int) iter.Seq2[Post, error] {
 	return func(yield func(Post, error) bool) {
 		rows, err := s.db.Query(ctx, `
-			SELECT p.id, p.source_id, p.lang, p.title, p.content, s.target_tags
+			SELECT p.id, p.source_id, p.lang, p.title, p.content, s.target_tags, s.enabled AND s.status IN ('active', 'dormant')
 			FROM posts p
 			JOIN sources s ON s.id = p.source_id
 			WHERE NOT EXISTS (SELECT 1 FROM tag_checked c WHERE c.post_id = p.id)
@@ -61,7 +61,7 @@ func (s *Store) ListUntaggedPosts(ctx context.Context, limit int) iter.Seq2[Post
 		for rows.Next() {
 			var post Post
 
-			if err := rows.Scan(&post.ID, &post.SourceID, &post.Lang, &post.Title, &post.Content, &post.TargetTags); err != nil {
+			if err := rows.Scan(&post.ID, &post.SourceID, &post.Lang, &post.Title, &post.Content, &post.TargetTags, &post.Trusted); err != nil {
 				yield(Post{}, err)
 				return
 			}
@@ -212,7 +212,10 @@ func (s *Store) ListCandidates(ctx context.Context, windowDays, minPosts, minDom
 			array_agg(p.term ORDER BY p.post_id)
 		FROM tag_proposals p
 		JOIN posts po ON po.id = p.post_id
+		JOIN sources s ON s.id = po.source_id
 		WHERE p.created_at > now() - make_interval(days => $1)
+			AND s.enabled
+			AND s.status IN ('active', 'dormant')
 			AND NOT EXISTS (SELECT 1 FROM tags t WHERE t.key = p.key)
 			AND NOT EXISTS (SELECT 1 FROM tag_aliases a WHERE a.alias = p.key)
 		GROUP BY p.key

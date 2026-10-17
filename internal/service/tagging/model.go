@@ -14,6 +14,7 @@ type Post struct {
 	Title      string
 	Content    string
 	TargetTags []string
+	Trusted    bool
 }
 
 type Term struct {

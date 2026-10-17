@@ -50,7 +50,10 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 			return fmt.Errorf("err vocabulary: %w", err)
 		}
 
-		err = generateTags(ctx, s, g, v, lang, post)
+		// Only trusted posts shape the vocabulary, but every post is still classified.
+		if post.Trusted {
+			err = generateTags(ctx, s, g, v, lang, post)
+		}
 
 		switch {
 		// Tag proposals only come from generation, so a post must wait for the LLM instead of being marked checked without them.

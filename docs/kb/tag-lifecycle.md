@@ -22,12 +22,12 @@ States: `proposed`, `active`, `dormant`. A merged synonym becomes an `alias`.
 `enabled` is your manual switch, same as on sources. The classifier only uses tags with `enabled = true` and `status = 'active'`. Generator output for a disabled key is dropped, so a disabled tag is never re-proposed or reactivated. The lifecycle never changes `enabled`.
 
 1. **Propose.**
-   - `TagGenerator` runs only on trusted posts.
+   - `TagGenerator` runs only on posts whose source is trusted when they are tagged. Untrusted posts are still classified.
    - Its prompt asks for topic tags only, no sentiment tags like `bullish`. Those can never gate and only add Jev cost.
    - Output is remapped through `tag_aliases`, then written to `tag_proposals`.
    - Proposals stay out of `tags`, because search reads `tag_terms` and would surface them.
 2. **Promote.** A periodic job promotes a key when all checks pass:
-   - Support: enough posts from enough distinct domains inside the window. Distinct domains stop one site's house jargon.
+   - Support: enough posts from enough distinct domains inside the window. Distinct domains stop one site's house jargon. Only posts whose source is still trusted count, so disabling a source withdraws its support.
    - Not a duplicate: the term is tested with `to_tsvector(cfg, term) @@ matcher` against active terms in the same language. Only a hit goes to a Jev merge check, one question per hit in one request. The highest score at or above the tag threshold makes the candidate an alias of that tag.
    - Consistent: Jev scores the candidate on its supporting posts. Most must reach the tag threshold.
    - Broadness: Jev scores the candidate on recent posts. The same pass is the backfill in step 5, so one set of Jev calls gives both. The match rate sets `gate`.
