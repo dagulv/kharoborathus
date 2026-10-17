@@ -133,14 +133,14 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, se Searcher
 		}
 
 		kept, err := f.Keep(ctx, item.Entity, item.Action, results)
-		if ctx.Err() != nil {
-			return nil
-		}
-
-		if err != nil {
-			// The search is paid either way, so it must count against the budget.
-			if _, err := s.QueueResults(ctx, item, nil, len(results)); err != nil {
+		if err != nil || ctx.Err() != nil {
+			// The search is paid either way, so it must count against the budget, even on shutdown.
+			if _, err := s.QueueResults(context.WithoutCancel(ctx), item, nil, len(results)); err != nil {
 				return err
+			}
+
+			if ctx.Err() != nil {
+				return nil
 			}
 
 			return fmt.Errorf("%w: filter %s: %w", errSearchWasted, item.ID, err)
