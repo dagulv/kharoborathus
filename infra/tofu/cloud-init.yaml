@@ -27,8 +27,15 @@ runcmd:
   - ufw allow 443/tcp
   - ufw --force enable
   - systemctl enable --now docker
-  - curl -fsSL https://sh.haloy.dev/install-haloyd.sh | VERSION=v0.1.0-beta.73 API_DOMAIN=${haloy_api_domain} sh
-  # The token lives in root-only /etc/haloy. A copy lets the deploy user read it over SSH.
-  - install -m 600 -o deploy /dev/null /home/deploy/haloy-token
-  - /usr/local/bin/haloyd config get api-token --raw > /home/deploy/haloy-token
   - systemctl restart ssh
+  # runcmd ignores failures, and a piped install hides them, so the Haloy steps run under set -e and check the token.
+  # The token lives in root-only /etc/haloy. A copy lets the deploy user read it over SSH.
+  - - sh
+    - -c
+    - |
+      set -eu
+      curl -fsSL https://sh.haloy.dev/install-haloyd.sh -o /tmp/install-haloyd.sh
+      VERSION=v0.1.0-beta.73 API_DOMAIN=${haloy_api_domain} sh /tmp/install-haloyd.sh
+      install -m 600 -o deploy /dev/null /home/deploy/haloy-token
+      /usr/local/bin/haloyd config get api-token --raw > /home/deploy/haloy-token
+      test -s /home/deploy/haloy-token
