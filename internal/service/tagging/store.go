@@ -313,6 +313,8 @@ func (s *Store) ListRecentPosts(ctx context.Context, days, limit int) ([]Post, e
 		WHERE p.created_at > now() - make_interval(days => $1)
 			AND s.status IN ('active', 'dormant')
 			AND s.enabled
+			-- Discovered posts passed the gate, so they would skew the broadness sample.
+			AND NOT EXISTS (SELECT 1 FROM post_links pl WHERE pl.from_post_id = p.id AND pl.relation = 'discovered')
 		ORDER BY p.created_at DESC
 		LIMIT $2
 		`, days, limit)
@@ -408,7 +410,8 @@ func (s *Store) DropProposals(ctx context.Context, key string) error {
 
 func (s *Store) RecomputeRates(ctx context.Context, windowDays int, maxRate float64, minPosts int) (int64, error) {
 	// Only posts classified after the tag existed count, otherwise new tags look rare and wrongly gate.
-	// Untrusted posts all passed the gate, so counting them would make gate tags look broad.
+	// Untrusted and discovered posts all passed the gate, so counting them would make gate tags look broad.
+	// Discovered posts stay excluded after their source is promoted.
 	tag, err := s.db.Exec(ctx, `
 		WITH rates AS (
 			SELECT
@@ -423,6 +426,7 @@ func (s *Store) RecomputeRates(ctx context.Context, windowDays int, maxRate floa
 				AND p.created_at > now() - make_interval(days => $1)
 				AND s.status IN ('active', 'dormant')
 				AND s.enabled
+				AND NOT EXISTS (SELECT 1 FROM post_links pl WHERE pl.from_post_id = p.id AND pl.relation = 'discovered')
 			GROUP BY t.key
 		)
 		UPDATE tags t
