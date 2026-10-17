@@ -188,3 +188,19 @@ func (s *Store) Revive(ctx context.Context, id string) error {
 
 	return nil
 }
+
+func (s *Store) MarkDormant(ctx context.Context, windowDays int) (int64, error) {
+	tag, err := s.db.Exec(ctx, `
+		UPDATE sources s
+		SET status = 'dormant', status_changed_at = now()
+		WHERE s.status = 'active'
+			AND s.enabled
+			AND s.deleted_at IS NULL
+			AND greatest(s.status_changed_at, (SELECT max(p.created_at) FROM posts p WHERE p.source_id = s.id)) < now() - make_interval(days => $1)
+		`, windowDays)
+	if err != nil {
+		return 0, fmt.Errorf("err mark dormant sources: %w", err)
+	}
+
+	return tag.RowsAffected(), nil
+}

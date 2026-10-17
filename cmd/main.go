@@ -105,6 +105,10 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
+		return source.RunLifecycle(ctx, &sourceStore, &switchStore, l.WithGroup("lifecycle"))
+	})
+
+	g.Go(func() error {
 		return tagging.Run(ctx, &taggingStore, &switchStore, tagGenerator, tagger, l.WithGroup("tagging"))
 	})
 
