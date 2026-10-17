@@ -24,7 +24,8 @@ func (s *Store) ListTags(ctx context.Context) ([]robot.Tag, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT
 			t.key,
-			COALESCE(array_agg(tt.term ORDER BY tt.lang, tt.term) FILTER (WHERE tt.term IS NOT NULL), '{}')
+			COALESCE(array_agg(tt.term ORDER BY tt.lang, tt.term) FILTER (WHERE tt.term IS NOT NULL), '{}'),
+			t.gate
 		FROM tags t
 		LEFT JOIN tag_terms tt ON tt.key = t.key
 		WHERE t.enabled AND t.status = 'active'
@@ -36,7 +37,7 @@ func (s *Store) ListTags(ctx context.Context) ([]robot.Tag, error) {
 	}
 
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (tag robot.Tag, err error) {
-		err = row.Scan(&tag.Key, &tag.Terms)
+		err = row.Scan(&tag.Key, &tag.Terms, &tag.Gate)
 		return
 	})
 }

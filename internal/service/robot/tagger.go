@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"maps"
 	"strings"
 	"text/template"
 
@@ -26,6 +27,7 @@ var tagQuestion = template.Must(template.New("tag.md").
 type Tag struct {
 	Key   string
 	Terms []string
+	Gate  bool
 }
 
 type Tagger struct {
@@ -37,39 +39,70 @@ func NewTagger(classifier adapter.Classifier) *Tagger {
 }
 
 func (t *Tagger) Tags(ctx context.Context, title, markdown string, tags []Tag) ([]string, error) {
+	scores, _, err := t.classify(ctx, title, markdown, tags, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return matched(tags, scores), nil
+}
+
+// Extra questions ride in the first batch, so they cost no extra request.
+func (t *Tagger) classify(ctx context.Context, title, markdown string, tags []Tag, extra map[string]adapter.NoulQuestion) (scores, extraScores map[string]float64, err error) {
 	if r := []rune(markdown); len(r) > maxTagState {
 		markdown = string(r[:maxTagState])
 	}
 
 	state := map[string]string{"title": title, "article": markdown}
+	scores = make(map[string]float64, len(tags))
 
-	var keys []string
-
-	for start := 0; start < len(tags); start += tagsPerRequest {
+	for start := 0; start == 0 || start < len(tags); start += tagsPerRequest {
 		batch := tags[start:min(start+tagsPerRequest, len(tags))]
-		questions := make(map[string]adapter.NoulQuestion, len(batch))
+		questions := make(map[string]adapter.NoulQuestion, len(batch)+len(extra))
 
 		for i, tag := range batch {
 			var b strings.Builder
 
 			if err := tagQuestion.Execute(&b, tag); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			questions[fmt.Sprintf("tag_%d", i)] = adapter.NoulQuestion{Instructions: b.String()}
 		}
 
+		if start == 0 {
+			maps.Copy(questions, extra)
+		}
+
+		if len(questions) == 0 {
+			break
+		}
+
 		answers, err := t.classifier.Noul(ctx, state, questions)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		for i, tag := range batch {
-			if answers[fmt.Sprintf("tag_%d", i)] >= tagThreshold {
-				keys = append(keys, tag.Key)
-			}
+			scores[tag.Key] = answers[fmt.Sprintf("tag_%d", i)]
+		}
+
+		if start == 0 {
+			extraScores = answers
 		}
 	}
 
-	return keys, nil
+	return scores, extraScores, nil
+}
+
+func matched(tags []Tag, scores map[string]float64) []string {
+	var keys []string
+
+	for _, tag := range tags {
+		if scores[tag.Key] >= tagThreshold {
+			keys = append(keys, tag.Key)
+		}
+	}
+
+	return keys
 }
