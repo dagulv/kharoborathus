@@ -69,7 +69,9 @@ CREATE TABLE IF NOT EXISTS sources (
   flagged_at TIMESTAMPTZ,
   reviewed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  deleted_at TIMESTAMPTZ
+  deleted_at TIMESTAMPTZ,
+  -- Trust checks read only enabled, so a deleted source must never stay enabled.
+  CHECK (deleted_at IS NULL OR NOT enabled)
 );
 
 CREATE INDEX IF NOT EXISTS sources_url_idx ON sources (url);
