@@ -45,7 +45,7 @@ func (s *Store) ListTags(ctx context.Context) ([]robot.Tag, error) {
 func (s *Store) ListUntaggedPosts(ctx context.Context, limit int) iter.Seq2[Post, error] {
 	return func(yield func(Post, error) bool) {
 		rows, err := s.db.Query(ctx, `
-			SELECT p.id, p.source_id, p.lang, p.title, p.content, s.target_tags, s.enabled AND s.status IN ('active', 'dormant')
+			SELECT p.id, p.lang, p.title, p.content, s.target_tags, s.enabled AND s.status IN ('active', 'dormant')
 			FROM posts p
 			JOIN sources s ON s.id = p.source_id
 			WHERE NOT EXISTS (SELECT 1 FROM tag_checked c WHERE c.post_id = p.id)
@@ -61,7 +61,7 @@ func (s *Store) ListUntaggedPosts(ctx context.Context, limit int) iter.Seq2[Post
 		for rows.Next() {
 			var post Post
 
-			if err := rows.Scan(&post.ID, &post.SourceID, &post.Lang, &post.Title, &post.Content, &post.TargetTags, &post.Trusted); err != nil {
+			if err := rows.Scan(&post.ID, &post.Lang, &post.Title, &post.Content, &post.TargetTags, &post.Trusted); err != nil {
 				yield(Post{}, err)
 				return
 			}
@@ -169,7 +169,7 @@ func (s *Store) Vocabulary(ctx context.Context) (Vocabulary, error) {
 	return v, nil
 }
 
-func (s *Store) AddProposals(ctx context.Context, postID, sourceID string, terms []Term) error {
+func (s *Store) AddProposals(ctx context.Context, postID string, terms []Term) error {
 	if len(terms) == 0 {
 		return nil
 	}
@@ -177,10 +177,10 @@ func (s *Store) AddProposals(ctx context.Context, postID, sourceID string, terms
 	keys, langs, words := termColumns(terms)
 
 	if _, err := s.db.Exec(ctx, `
-		INSERT INTO tag_proposals (key, lang, term, post_id, source_id)
-		SELECT k, l, t, $4, $5 FROM unnest($1::text[], $2::text[], $3::text[]) AS u(k, l, t)
+		INSERT INTO tag_proposals (key, lang, term, post_id)
+		SELECT k, l, t, $4 FROM unnest($1::text[], $2::text[], $3::text[]) AS u(k, l, t)
 		ON CONFLICT (key, post_id) DO NOTHING
-		`, keys, langs, words, postID, sourceID); err != nil {
+		`, keys, langs, words, postID); err != nil {
 		return fmt.Errorf("err insert tag proposals: %w", err)
 	}
 
@@ -289,7 +289,7 @@ func (s *Store) Similar(ctx context.Context, terms []Term) ([]robot.Tag, error) 
 
 func (s *Store) GetPosts(ctx context.Context, ids []string) ([]Post, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, source_id, lang, title, content
+		SELECT id, lang, title, content
 		FROM posts
 		WHERE id = ANY($1::text[]::uuid[])
 		`, ids)
@@ -307,7 +307,7 @@ func (s *Store) GetPosts(ctx context.Context, ids []string) ([]Post, error) {
 
 func (s *Store) ListRecentPosts(ctx context.Context, days, limit int) ([]Post, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT p.id, p.source_id, p.lang, p.title, p.content
+		SELECT p.id, p.lang, p.title, p.content
 		FROM posts p
 		JOIN sources s ON s.id = p.source_id
 		WHERE p.created_at > now() - make_interval(days => $1)
@@ -331,7 +331,7 @@ func (s *Store) ListRecentPosts(ctx context.Context, days, limit int) ([]Post, e
 }
 
 func scanPost(row pgx.CollectableRow) (p Post, err error) {
-	err = row.Scan(&p.ID, &p.SourceID, &p.Lang, &p.Title, &p.Content)
+	err = row.Scan(&p.ID, &p.Lang, &p.Title, &p.Content)
 	return
 }
 

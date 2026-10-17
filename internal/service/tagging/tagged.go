@@ -113,7 +113,7 @@ func generateTags(ctx context.Context, s *Store, g *robot.TagGenerator, v Vocabu
 		return fmt.Errorf("err reactivate: %w", err)
 	}
 
-	if err := s.AddProposals(ctx, post.ID, post.SourceID, r.proposals); err != nil {
+	if err := s.AddProposals(ctx, post.ID, r.proposals); err != nil {
 		return fmt.Errorf("err add proposals: %w", err)
 	}
 

@@ -59,7 +59,6 @@ CREATE TABLE IF NOT EXISTS tag_proposals (
   lang TEXT NOT NULL,
   term TEXT NOT NULL,
   post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-  source_id UUID NOT NULL REFERENCES sources (id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (key, post_id)
 );

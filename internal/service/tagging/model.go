@@ -9,7 +9,6 @@ const (
 
 type Post struct {
 	ID         string
-	SourceID   string
 	Lang       string
 	Title      string
 	Content    string
