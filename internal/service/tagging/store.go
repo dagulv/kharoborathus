@@ -303,10 +303,12 @@ func (s *Store) GetPosts(ctx context.Context, ids []string) ([]Post, error) {
 
 func (s *Store) ListRecentPosts(ctx context.Context, days, limit int) ([]Post, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, source_id, lang, title, content
-		FROM posts
-		WHERE created_at > now() - make_interval(days => $1)
-		ORDER BY created_at DESC
+		SELECT p.id, p.source_id, p.lang, p.title, p.content
+		FROM posts p
+		JOIN sources s ON s.id = p.source_id
+		WHERE p.created_at > now() - make_interval(days => $1)
+			AND s.status IN ('active', 'dormant')
+		ORDER BY p.created_at DESC
 		LIMIT $2
 		`, days, limit)
 	if err != nil {
@@ -401,6 +403,7 @@ func (s *Store) DropProposals(ctx context.Context, key string) error {
 
 func (s *Store) RecomputeRates(ctx context.Context, windowDays int, maxRate float64, minPosts int) (int64, error) {
 	// Only posts classified after the tag existed count, otherwise new tags look rare and wrongly gate.
+	// Untrusted posts all passed the gate, so counting them would make gate tags look broad.
 	tag, err := s.db.Exec(ctx, `
 		WITH rates AS (
 			SELECT
@@ -410,7 +413,10 @@ func (s *Store) RecomputeRates(ctx context.Context, windowDays int, maxRate floa
 			FROM tags t
 			JOIN tag_checked c ON c.checked_at >= t.created_at
 			JOIN posts p ON p.id = c.post_id
-			WHERE t.status = 'active' AND p.created_at > now() - make_interval(days => $1)
+			JOIN sources s ON s.id = p.source_id
+			WHERE t.status = 'active'
+				AND p.created_at > now() - make_interval(days => $1)
+				AND s.status IN ('active', 'dormant')
 			GROUP BY t.key
 		)
 		UPDATE tags t
