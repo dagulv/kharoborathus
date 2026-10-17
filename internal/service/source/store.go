@@ -204,3 +204,66 @@ func (s *Store) MarkDormant(ctx context.Context, windowDays int) (int64, error) 
 
 	return tag.RowsAffected(), nil
 }
+
+type Promotable struct {
+	ID  string
+	URL string
+}
+
+func (s *Store) PromotedLastWeek(ctx context.Context) (n int, err error) {
+	if err = s.db.QueryRow(ctx, `SELECT count(*) FROM sources WHERE promoted_at > now() - interval '7 days'`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("err count promotions: %w", err)
+	}
+
+	return n, nil
+}
+
+func (s *Store) ListPromotable(ctx context.Context, minAccepted, minDays int, minRate float64, limit int) ([]Promotable, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT s.id, s.url
+		FROM sources s
+		JOIN LATERAL (
+			SELECT
+				count(*) FILTER (WHERE q.status = 'accepted') AS accepted,
+				count(DISTINCT q.checked_at::date) FILTER (WHERE q.status = 'accepted') AS days,
+				count(*) FILTER (WHERE q.status IN ('accepted', 'rejected')) AS decided
+			FROM link_queue q
+			WHERE q.domain_id = s.domain_id AND q.checked_at >= s.status_changed_at
+		) e ON true
+		WHERE s.status = 'proposed'
+			AND s.enabled
+			AND s.deleted_at IS NULL
+			AND e.accepted >= $1
+			AND e.days >= $2
+			AND e.accepted >= $3 * e.decided
+		ORDER BY s.created_at
+		LIMIT $4
+		`, minAccepted, minDays, minRate, limit)
+	if err != nil {
+		return nil, fmt.Errorf("err query promotable sources: %w", err)
+	}
+
+	sources, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (p Promotable, err error) {
+		err = row.Scan(&p.ID, &p.URL)
+		return
+	})
+	if err != nil {
+		return nil, fmt.Errorf("err scan promotable sources: %w", err)
+	}
+
+	return sources, nil
+}
+
+func (s *Store) Promote(ctx context.Context, id, adapterName, url string) error {
+	// reviewed_at makes the shadow gate judge the source on posts after promotion only.
+	if _, err := s.db.Exec(ctx, `
+		UPDATE sources
+		SET status = 'active', adapter = $2, url = $3, status_changed_at = now(), promoted_at = now(),
+			flagged_at = NULL, reviewed_at = now(), fetch_failures = 0
+		WHERE id = $1 AND status = 'proposed'
+		`, id, adapterName, url); err != nil {
+		return fmt.Errorf("err promote source: %w", err)
+	}
+
+	return nil
+}
