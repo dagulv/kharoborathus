@@ -39,7 +39,7 @@ Rules:
 - `result_count` holds the Brave result count of a paid call. It stays NULL when an item is marked searched without a call, so usage counts only paid calls.
 - Newest items first. When the cap holds back a backlog, older items age out of the window.
 - `search_lang` only for `sv` and `en`.
-- 429, 5xx and network errors stop the tick and leave the item. 400 and 422 mark it searched without a call. Other statuses stop the tick.
+- 429, 5xx and network errors stop the tick and leave the item. 400 and 422 mark it searched without a call. A 200 whose body cannot be read counts as a paid search with no results and pauses the worker. Other statuses stop the tick.
 - The tick follows the LLM schedule. If the filter fails after a search, the results are dropped, the item still counts as a paid search, and the worker pauses 30 minutes so an outage cannot drain the budget.
 - No searches while `discovered_ingest` is off or the classifier is mocked, since nothing would fetch the results.
 - No searches while 200 or more `via = 'search'` links are pending inside the window, one day of ingest at its cap.

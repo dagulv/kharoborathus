@@ -114,6 +114,14 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, se Searcher
 			continue
 		}
 
+		if errors.Is(err, errSearchUnreadable) {
+			if _, err := s.QueueResults(ctx, item, nil, 0); err != nil {
+				return err
+			}
+
+			return fmt.Errorf("%w: search %s: %w", errSearchWasted, item.ID, err)
+		}
+
 		if err != nil {
 			return fmt.Errorf("err search %s: %w", item.ID, err)
 		}

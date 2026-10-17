@@ -115,3 +115,13 @@ func TestBraveErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestBraveUnreadable(t *testing.T) {
+	b := testBrave(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"web": {"results": [{"url": 1}]}}`))
+	})
+
+	if _, err := b.Search(context.Background(), Query{Q: "x"}); !errors.Is(err, errSearchUnreadable) {
+		t.Errorf("got %v", err)
+	}
+}

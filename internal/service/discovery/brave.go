@@ -26,6 +26,9 @@ const (
 
 var errSearchRejected = errors.New("discovery: search rejected")
 
+// Brave answered and billed, but the body could not be read.
+var errSearchUnreadable = errors.New("discovery: search unreadable")
+
 type Query struct {
 	Q    string
 	Lang string
@@ -110,7 +113,7 @@ func (b brave) Search(ctx context.Context, q Query) ([]robot.SearchResult, error
 	var body braveResponse
 
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
-		return nil, fmt.Errorf("err decode brave response: %w", err)
+		return nil, fmt.Errorf("%w: err decode brave response: %w", errSearchUnreadable, err)
 	}
 
 	var out []robot.SearchResult
