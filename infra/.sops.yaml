@@ -1,0 +1,19 @@
+creation_rules:
+  - path_regex: ^secrets/(dev|prod)/.*\.yaml$
+    encrypted_regex: ^(data|stringData)$
+    age: age1jmly5a93t2qkv7atpsa6yvylleprgejerpy6dsv96dymuhaerc6qc3zdv3
+
+# Paths are relative to this config file. vault requires a cluster, but nothing here deploys to one.
+vaults:
+  dev:
+    sealed: secrets/dev/vault.sealed
+    open: secrets/dev/vault.open
+    cluster: none
+    bitwarden:
+      item: ffb5c836-b520-4fb8-af2c-b4e600fbe555
+  prod:
+    sealed: secrets/prod/vault.sealed
+    open: secrets/prod/vault.open
+    cluster: none
+    bitwarden:
+      item: ffb5c836-b520-4fb8-af2c-b4e600fbe555
