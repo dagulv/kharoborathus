@@ -10,6 +10,7 @@ import (
 const (
 	ShadowGate       = "shadow_gate"
 	DiscoveredIngest = "discovered_ingest"
+	SearchDiscovery  = "search_discovery"
 )
 
 type Store struct {

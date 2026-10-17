@@ -12,15 +12,6 @@ import (
 
 const eventWindowDays = 7
 
-const queueColumns = `
-	id,
-	post_id,
-	entity,
-	action,
-	query,
-	searched_at,
-	created_at`
-
 type Store struct {
 	db *database.Database
 }
@@ -143,37 +134,83 @@ func (s *Store) Actions(ctx context.Context) (gateKeys []string, aliases map[str
 	return gateKeys, aliases, nil
 }
 
-func (s *Store) ListQueue(ctx context.Context, limit int) iter.Seq2[DiscoverItem, error] {
-	return func(yield func(DiscoverItem, error) bool) {
-		rows, err := s.db.Query(ctx, `
-			SELECT `+queueColumns+`
-			FROM discover_queue
-			WHERE searched_at IS NULL
-			ORDER BY created_at
-			LIMIT $1
-			`, limit)
-		if err != nil {
-			yield(DiscoverItem{}, err)
-			return
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			item, err := scanQueueItem(rows)
-			if err != nil {
-				yield(DiscoverItem{}, err)
-				return
-			}
-
-			if !yield(item, nil) {
-				return
-			}
-		}
-
-		if err := rows.Err(); err != nil {
-			yield(DiscoverItem{}, err)
-		}
+func (s *Store) ListQueue(ctx context.Context, windowDays, limit int) ([]SearchItem, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT q.id, q.post_id, q.entity, q.action, q.query, p.lang, d.base_url
+		FROM discover_queue q
+		JOIN posts p ON p.id = q.post_id
+		JOIN sources s ON s.id = p.source_id
+		JOIN domains d ON d.id = p.domain_id
+		JOIN tags t ON t.key = q.action AND t.enabled AND t.status = 'active' AND t.gate
+		WHERE q.searched_at IS NULL
+			AND s.status IN ('active', 'dormant')
+			AND q.created_at > now() - make_interval(days => $1)
+		ORDER BY q.created_at DESC
+		LIMIT $2
+		`, windowDays, limit)
+	if err != nil {
+		return nil, fmt.Errorf("err query search queue: %w", err)
 	}
+
+	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (i SearchItem, err error) {
+		err = row.Scan(&i.ID, &i.PostID, &i.Entity, &i.Action, &i.Query, &i.Lang, &i.BaseURL)
+		return
+	})
+	if err != nil {
+		return nil, fmt.Errorf("err scan search queue: %w", err)
+	}
+
+	return items, nil
+}
+
+func (s *Store) Searched(ctx context.Context, entity, action string, windowDays int) (found bool, err error) {
+	if err = s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM discover_queue
+			WHERE lower(entity) = lower($1)
+				AND lower(action) = lower($2)
+				AND searched_at > now() - make_interval(days => $3)
+		)
+		`, entity, action, windowDays).Scan(&found); err != nil {
+		return false, fmt.Errorf("err check searched event: %w", err)
+	}
+
+	return found, nil
+}
+
+func (s *Store) SearchesLastDay(ctx context.Context) (n int, err error) {
+	if err = s.db.QueryRow(ctx, `
+		SELECT count(*) FROM discover_queue
+		WHERE searched_at > now() - interval '1 day' AND result_count IS NOT NULL
+		`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("err count searches: %w", err)
+	}
+
+	return n, nil
+}
+
+func (s *Store) QueueResults(ctx context.Context, item SearchItem, urls []string, resultCount int) (queued int64, err error) {
+	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO link_queue (url, via, from_post_id, discover_item_id)
+			SELECT u, 'search', $2, $3 FROM unnest($1::text[]) AS u
+			WHERE NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = u)
+			ON CONFLICT (url) DO NOTHING
+			`, urls, item.PostID, item.ID)
+		if err != nil {
+			return fmt.Errorf("err queue search results: %w", err)
+		}
+
+		queued = tag.RowsAffected()
+
+		if _, err := tx.Exec(ctx, `UPDATE discover_queue SET searched_at = now(), result_count = $2 WHERE id = $1`, item.ID, resultCount); err != nil {
+			return fmt.Errorf("err mark searched: %w", err)
+		}
+
+		return nil
+	})
+
+	return
 }
 
 func (s *Store) MarkSearched(ctx context.Context, id string) error {
@@ -187,18 +224,4 @@ func (s *Store) MarkSearched(ctx context.Context, id string) error {
 	}
 
 	return nil
-}
-
-func scanQueueItem(row pgx.Row) (item DiscoverItem, err error) {
-	err = row.Scan(
-		&item.ID,
-		&item.PostID,
-		&item.Entity,
-		&item.Action,
-		&item.Query,
-		&item.SearchedAt,
-		&item.CreatedAt,
-	)
-
-	return
 }

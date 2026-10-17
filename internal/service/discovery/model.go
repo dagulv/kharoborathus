@@ -16,3 +16,13 @@ type Post struct {
 	ID      string
 	Content string
 }
+
+type SearchItem struct {
+	ID      string
+	PostID  string
+	Entity  string
+	Action  string
+	Query   string
+	Lang    string
+	BaseURL string
+}

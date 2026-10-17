@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS discover_queue (
   action TEXT NOT NULL,
   query TEXT NOT NULL,
   searched_at TIMESTAMPTZ,
+  result_count INT, -- Brave results, NULL when marked searched without a call
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (post_id, query)
 );
@@ -220,4 +221,4 @@ CREATE TABLE IF NOT EXISTS switches (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-INSERT INTO switches (key) VALUES ('shadow_gate'), ('discovered_ingest') ON CONFLICT (key) DO NOTHING;
+INSERT INTO switches (key) VALUES ('shadow_gate'), ('discovered_ingest'), ('search_discovery') ON CONFLICT (key) DO NOTHING;
