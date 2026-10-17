@@ -18,7 +18,7 @@ config=$root/.sops.yaml
 fetch_key() {
 	# Locks again however this subshell exits.
 	trap 'bw lock >/dev/null 2>&1' EXIT
-	local password session
+	local password session item
 	read -rsp "Bitwarden master password for vault $vault: " password </dev/tty
 	echo >&2
 	# Env, not argv, so ps never shows the password or the session.
@@ -27,8 +27,16 @@ fetch_key() {
 		echo "Bitwarden unlock failed, likely a wrong master password" >&2
 		exit 1
 	fi
-	if ! BW_SESSION=$session bw get item "$1" --nointeraction | jq -er '.fields[] | select(.name == "AGE-SECRET-KEY") | .value'; then
-		echo "no AGE-SECRET-KEY field readable on Bitwarden item $1" >&2
+	# bw's local copy may predate the item, so sync once before giving up.
+	if ! item=$(BW_SESSION=$session bw get item "$1" --nointeraction 2>/dev/null); then
+		BW_SESSION=$session bw sync --nointeraction >/dev/null
+		if ! item=$(BW_SESSION=$session bw get item "$1" --nointeraction); then
+			echo "Bitwarden item $1 not found, even after a sync" >&2
+			exit 1
+		fi
+	fi
+	if ! jq -er '.fields[] | select(.name == "AGE-SECRET-KEY") | .value' <<<"$item"; then
+		echo "Bitwarden item $1 has no AGE-SECRET-KEY field" >&2
 		exit 1
 	fi
 }
