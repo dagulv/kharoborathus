@@ -34,6 +34,8 @@ runcmd:
     - -c
     - |
       set -eu
+      # haloyd requests its API certificate once at startup and then only every 12 hours, so DNS must resolve first.
+      for i in $(seq 1 480); do getent ahostsv4 ${haloy_api_domain} >/dev/null && break; sleep 15; done
       curl -fsSL https://sh.haloy.dev/install-haloyd.sh -o /tmp/install-haloyd.sh
       VERSION=v0.1.0-beta.73 API_DOMAIN=${haloy_api_domain} sh /tmp/install-haloyd.sh
       install -m 600 -o deploy /dev/null /home/deploy/haloy-token

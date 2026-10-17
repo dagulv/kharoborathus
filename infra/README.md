@@ -67,7 +67,7 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
 
    Keep `terraform.tfstate`: it is encrypted with the passphrase and gitignored, so back it up yourself.
 
-5. Point three A records at `infra/secrets.sh prod tofu -chdir=infra/tofu output -raw ipv4`: `kharoborathus.dagulv.me`, `api.kharoborathus.dagulv.me` and `haloy.kharoborathus.dagulv.me`. Haloy requests the certificates from Let's Encrypt, which fails until the records resolve, so wait for them before step 6.
+5. Point three A records at `infra/secrets.sh prod tofu -chdir=infra/tofu output -raw ipv4`: `kharoborathus.dagulv.me`, `api.kharoborathus.dagulv.me` and `haloy.kharoborathus.dagulv.me`. Haloy requests the certificates from Let's Encrypt, which fails until the records resolve. Cloud-init waits up to two hours for the Haloy record before it installs haloyd.
 
 6. Wait for cloud-init, then register the server:
 
@@ -75,6 +75,8 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
    ssh deploy@<ip> cloud-init status --wait
    haloy server add haloy.kharoborathus.dagulv.me "$(ssh deploy@<ip> cat haloy-token)"
    ```
+
+   If cloud-init timed out on DNS, haloyd retries its certificate only every 12 hours. Restart it once the records resolve: `ssh deploy@<ip> sudo systemctl restart haloyd`.
 
 7. Copy the safe values, then seal the prod vault's `app.yaml`:
 
