@@ -24,6 +24,7 @@ type Term struct {
 type TagState struct {
 	Enabled bool
 	Status  string
+	Gate    bool
 }
 
 type Vocabulary struct {
