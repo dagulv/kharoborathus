@@ -59,8 +59,7 @@ func app(ctx context.Context) (err error) {
 
 	llm, err := adapter.NewDeepSeek(env, l.WithGroup("deepseek"))
 	if err != nil {
-		l.Error("llm disabled", "err", err)
-		return
+		return fmt.Errorf("err create llm: %w", err)
 	}
 
 	trim := source.NewTrim(&domainStore, llm, l.WithGroup("trim"))
