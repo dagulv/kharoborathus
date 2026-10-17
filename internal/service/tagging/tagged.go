@@ -84,7 +84,8 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 			return nil
 		case err != nil:
 			l.Warn("classify tags", "post", post.ID, "err", err)
-		case shadow:
+		// Only trusted sources are judged, so a disabled source collects no results to be flagged on once re-enabled.
+		case shadow && post.Trusted:
 			gatePassed = shadowGate(v, post.TargetTags, keys)
 		}
 
