@@ -17,6 +17,7 @@ type Environment struct {
 	PostgresDb       string `env:"POSTGRES_DB" envDefault:"postgres"`
 	PostgresConn     string `env:"POSTGRES_CONNECTION_STRING,expand" envDefault:"postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}/${POSTGRES_NAME}?sslmode=disable"`
 	HttpHost         string `env:"HTTP_HOST" envDefault:"0.0.0.0:3001"`
+	InternalHttpHost string `env:"INTERNAL_HTTP_HOST" envDefault:"0.0.0.0:3002"`
 	HttpCors         string `env:"HTTP_CORS" envDefault:"*"`
 	DeepseekAPIKey   string `env:"DEEPSEEK_API_KEY" envDefault:""`
 	TypesafeAPIKey   string `env:"TYPESAFE_API_KEY" envDefault:""`

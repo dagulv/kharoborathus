@@ -8,5 +8,5 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kharoborathus ./cm
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/kharoborathus /kharoborathus
-EXPOSE 3001
+EXPOSE 3001 3002
 ENTRYPOINT ["/kharoborathus"]

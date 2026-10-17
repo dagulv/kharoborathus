@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -83,22 +84,27 @@ func app(ctx context.Context) (err error) {
 
 	mux := http.NewServeMux()
 	feed.Routes(mux, feedStore, l.WithGroup("feed"))
-	source.Routes(mux, &sourceStore, syncs, l.WithGroup("source"))
 
-	server := &http.Server{
-		Addr:    env.HttpHost,
-		Handler: mux,
+	// The proxy publishes only the public port, so sync stays reachable from the admin alone.
+	internalMux := http.NewServeMux()
+	source.Routes(internalMux, &sourceStore, syncs, l.WithGroup("source"))
+
+	servers := []*http.Server{
+		{Addr: env.HttpHost, Handler: mux},
+		{Addr: env.InternalHttpHost, Handler: internalMux},
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
 
-	g.Go(func() error {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
+	for _, server := range servers {
+		g.Go(func() error {
+			if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("err serve %s: %w", server.Addr, err)
+			}
 
-		return nil
-	})
+			return nil
+		})
+	}
 
 	g.Go(func() error {
 		return source.Run(ctx, &sourceStore, syncs, trim, summarizer, schedule.Always, l.WithGroup("sourced"))
@@ -157,7 +163,14 @@ func app(ctx context.Context) (err error) {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 
-		return server.Shutdown(shutdownCtx)
+		var errs []error
+		for _, server := range servers {
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				errs = append(errs, fmt.Errorf("err shutdown %s: %w", server.Addr, err))
+			}
+		}
+
+		return errors.Join(errs...)
 	})
 
 	if err = g.Wait(); err != nil && !errors.Is(err, context.Canceled) {

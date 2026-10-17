@@ -7,7 +7,7 @@ export const variables = defineEnvVars({
 		description: 'Postgres connection string, shared with the Go app'
 	},
 	API_URL: {
-		schema: (value) => (value || 'http://localhost:3001').replace(/\/+$/, ''),
-		description: 'Base URL of the Go app HTTP server'
+		schema: (value) => (value || 'http://localhost:3002').replace(/\/+$/, ''),
+		description: 'Base URL of the Go app internal HTTP server'
 	}
 });
