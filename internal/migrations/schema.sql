@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS posts (
   authors TEXT[] NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   content_hash BYTEA NOT NULL,
-  --simhash BIGINT NOT NULL,
+  simhash BIGINT, -- NULL when the content has no words
   ts tsvector GENERATED ALWAYS AS (
     CASE lang
       WHEN 'sv' THEN setweight(to_tsvector('ts_swedish', title), 'A') || setweight(

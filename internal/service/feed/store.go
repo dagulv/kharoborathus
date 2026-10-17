@@ -13,6 +13,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const (
+	duplicateWindowDays  = 7
+	maxDuplicateDistance = 3
+)
+
 const feedColumns = `
 	id,
 	source_id,
@@ -115,20 +120,54 @@ func (s *Store) FeedExists(ctx context.Context, url string) (exists bool, err er
 	return
 }
 
-func (s *Store) CreateFeed(ctx context.Context, feed Feed) (Feed, error) {
+func (s *Store) CreateFeed(ctx context.Context, feed Feed) (out Feed, err error) {
 	if feed.PostedAt.IsZero() {
 		feed.PostedAt = time.Now()
 	}
 
 	hash := sha256.Sum256([]byte(feed.Content))
 
-	return scanFeed(s.db.QueryRow(ctx, `
-		INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, content, tags, authors, posted_at, content_hash)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), COALESCE($9::text[], '{}'), $10, $11)
-		ON CONFLICT (url) DO NOTHING
-		RETURNING `+feedColumns,
-		feed.SourceID, feed.DomainID, feed.URL, feed.Lang, feed.Title, feed.ShortContent, feed.Content, feed.Tags, feed.Authors, feed.PostedAt, hash[:],
-	))
+	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		out, err = scanFeed(tx.QueryRow(ctx, `
+			INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, content, tags, authors, posted_at, content_hash, simhash)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), COALESCE($9::text[], '{}'), $10, $11, $12)
+			ON CONFLICT (url) DO NOTHING
+			RETURNING `+feedColumns,
+			feed.SourceID, feed.DomainID, feed.URL, feed.Lang, feed.Title, feed.ShortContent, feed.Content, feed.Tags, feed.Authors, feed.PostedAt, hash[:], textSimhash(feed.Content),
+		))
+		if err != nil {
+			return err
+		}
+
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO post_links (from_post_id, to_post_id, relation, metadata)
+			SELECT n.id, o.id, 'duplicate_of', jsonb_build_object('distance', bit_count((o.simhash # n.simhash)::bit(64)))
+			FROM posts n
+			JOIN posts o ON o.created_at < n.created_at AND o.created_at > n.created_at - $2 * interval '1 day'
+			WHERE n.id = $1
+				AND bit_count((o.simhash # n.simhash)::bit(64)) <= $3
+			ORDER BY o.created_at
+			LIMIT 1
+			`, out.ID, duplicateWindowDays, maxDuplicateDistance); err != nil {
+			return fmt.Errorf("err link duplicate: %w", err)
+		}
+
+		return nil
+	})
+
+	return
+}
+
+// Stored as the uint64 bit pattern, so half of all hashes are negative. Only bits are compared.
+func textSimhash(content string) *int64 {
+	h, ok := simhash(content)
+	if !ok {
+		return nil
+	}
+
+	v := int64(h)
+
+	return &v
 }
 
 func (s *Store) UpdateFeed(ctx context.Context, feed Feed) (Feed, error) {
@@ -140,10 +179,11 @@ func (s *Store) UpdateFeed(ctx context.Context, feed Feed) (Feed, error) {
 			title = $2,
 			short_content = $3,
 			content = $4,
-			content_hash = $5
+			content_hash = $5,
+			simhash = $6
 		WHERE id = $1
 		RETURNING `+feedColumns,
-		feed.ID, feed.Title, feed.ShortContent, feed.Content, hash[:],
+		feed.ID, feed.Title, feed.ShortContent, feed.Content, hash[:], textSimhash(feed.Content),
 	))
 }
 
