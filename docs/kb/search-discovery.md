@@ -27,7 +27,7 @@ A search runs only for events whose `action` is the key of a tag with `enabled`,
    - come from trusted posts,
    - have an `action` that is a gate tag key at search time, since `gate` is recomputed daily,
    - were created inside the dedupe window. Older non-matching items are left alone instead of clogging the queue.
-5. Dedupe: skip the query and `MarkSearched` when the same lowercased `entity` and `action` were searched inside the dedupe window. `discover_queue` is only unique per post, so many posts about one event would each search it.
+5. Dedupe: skip the query and `MarkSearched` when the same lowercased `entity` and `action` had a paid search inside the dedupe window. Rows marked without a call do not count, or the window would keep sliding. `discover_queue` is only unique per post, so many posts about one event would each search it.
 6. Call Brave Web Search through a `Searcher` interface. One call returns both web and news results.
 7. An LLM sees each result's `title`, `description`, `extra_snippets`, `page_age` and hostname plus the event's `entity` and `action`. It keeps only results about that event, from any kind of source.
 8. Insert kept URLs into `link_queue` with `via = 'search'` and `discover_item_id`. Brave snippets are dropped after filtering, so only URLs are stored.

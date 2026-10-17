@@ -164,6 +164,7 @@ func (s *Store) ListQueue(ctx context.Context, windowDays, limit int) ([]SearchI
 	return items, nil
 }
 
+// Only paid searches count, or rows marked by dedupe would keep the window sliding forever.
 func (s *Store) Searched(ctx context.Context, entity, action string, windowDays int) (found bool, err error) {
 	if err = s.db.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -171,6 +172,7 @@ func (s *Store) Searched(ctx context.Context, entity, action string, windowDays 
 			WHERE lower(entity) = lower($1)
 				AND lower(action) = lower($2)
 				AND searched_at > now() - make_interval(days => $3)
+				AND result_count IS NOT NULL
 		)
 		`, entity, action, windowDays).Scan(&found); err != nil {
 		return false, fmt.Errorf("err check searched event: %w", err)
