@@ -75,6 +75,8 @@ func app(ctx context.Context) (err error) {
 	tagGenerator := robot.NewTagGenerator(llm)
 	discoverer := robot.NewDiscoverer(llm)
 	tagMerger := robot.NewTagMerger(classifier)
+	resultFilter := robot.NewResultFilter(llm)
+	searcher, searchErr := discovery.NewBrave(env)
 	ingester := ingest.NewIngester(&ingestStore, &switchStore, &taggingStore, &feedStore, &domainStore, trim, tagger, summarizer, l.WithGroup("ingest"))
 
 	syncs := make(chan source.Source, source.SyncQueue)
@@ -116,6 +118,15 @@ func app(ctx context.Context) (err error) {
 
 	g.Go(func() error {
 		return discovery.Run(ctx, &discoveryStore, discoverer, llm.Schedule(), l.WithGroup("discovery"))
+	})
+
+	g.Go(func() error {
+		if searchErr != nil {
+			l.Warn("search discovery off", "err", searchErr)
+			return nil
+		}
+
+		return discovery.RunSearch(ctx, &discoveryStore, &switchStore, searcher, resultFilter, llm.Schedule(), l.WithGroup("search"))
 	})
 
 	g.Go(func() error {
