@@ -1,6 +1,6 @@
 # Source lifecycle
 
-**Status:** designed
+**Status:** propose done, rest designed
 **Related:** [trust-model](trust-model.md), [discovered-ingest](discovered-ingest.md), [classifier-gate](classifier-gate.md), [tag-lifecycle](tag-lifecycle.md)
 
 ## Summary
@@ -9,14 +9,7 @@ Sources move through `proposed`, `active` and `dormant`, like tags. Discovered d
 
 ## Current state
 
-Nothing yet. Sources are only added in admin, and the `active` boolean is a manual on and off switch.
-
-Code reading `active` today, to switch to `enabled`:
-
-- [model.go](../../internal/service/source/model.go): `Source.Active`, `Filter.Active`.
-- [store.go](../../internal/service/source/store.go): select, filter, insert and update.
-- [sourced.go](../../internal/service/source/sourced.go): `activeSources`.
-- Admin: `admin.remote.ts`, `types.ts`, `sources/+page.svelte`, `sources/new/+page.svelte`, `+page.svelte` stats.
+`status` and `origin` exist on sources. [Discovered ingest](discovered-ingest.md) creates proposed sources, and the source worker scrapes only `enabled` sources with `status = 'active'`. Promotion, demotion, dormancy and probe wait for phase 6 of [rollout](rollout.md), together with `status_changed_at` and `fetch_failures`.
 
 ## Design
 

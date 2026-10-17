@@ -10,7 +10,7 @@ Every relation between two posts is a row in `post_links`. This page owns which 
 ## Current state
 
 - `duplicate_of` is written by `CreateFeed` in [feed/store.go](../../internal/service/feed/store.go), `same_event` by `CompleteDiscovery` in [discovery/store.go](../../internal/service/discovery/store.go).
-- `discovered` waits for phase 4 of [rollout](rollout.md).
+- `discovered` is written by `Accept` in [ingest/store.go](../../internal/service/ingest/store.go).
 - The feed does not read `post_links` yet.
 
 ## Design

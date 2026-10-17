@@ -1,6 +1,6 @@
 # Link extraction
 
-**Status:** designed
+**Status:** done
 **Related:** [discovered-ingest](discovered-ingest.md), [trust-model](trust-model.md)
 
 ## Summary
@@ -9,7 +9,7 @@ A Go job pulls outbound links from trusted post bodies into `link_queue`. No AI 
 
 ## Current state
 
-Nothing yet. Post content is markdown with absolute links, because the markdown step runs with `converter.WithDomain` in [sourced.go](../../internal/service/source/sourced.go).
+[extract.go](../../internal/service/ingest/extract.go) scans trusted posts every minute and queues their links. It runs whether or not `discovered_ingest` is on. Parsing and filters live in [links.go](../../internal/service/ingest/links.go). Post content is markdown with absolute links, because the markdown step runs with `converter.WithDomain` in [sourced.go](../../internal/service/source/sourced.go).
 
 ## Design
 
@@ -23,6 +23,12 @@ Nothing yet. Post content is markdown with absolute links, because the markdown 
    - It is not http or https.
 5. Insert the rest into `link_queue` with `via = 'link'` and `from_post_id`.
 6. Mark the post scanned.
+
+Rules:
+
+- Only posts created inside the 7-day pending window are scanned. Older posts would queue stale links with a fresh `created_at`.
+- Image links are not links. A linked image `[![alt](img)](href)` is skipped too.
+- Own domain compares hosts, lowercased, without `www.` and scheme.
 
 ## Schema changes
 

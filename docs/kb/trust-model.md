@@ -1,6 +1,6 @@
 # Trust model
 
-**Status:** designed
+**Status:** done
 **Related:** [classifier-gate](classifier-gate.md), [tag-lifecycle](tag-lifecycle.md), [source-lifecycle](source-lifecycle.md)
 
 ## Summary
@@ -9,7 +9,7 @@ Trust belongs to sources. A source with `status = 'active'` or `'dormant'` is tr
 
 ## Current state
 
-No tiers exist. Every post comes from a manual source, and every post can create tags.
+`sources.origin` and `sources.status` exist. Only `active` sources are scraped, and manual sync of other sources returns 409. Link extraction reads trusted posts only. Tag rates and the broadness sample count trusted posts only. Discovered posts are marked `tag_checked` on insert, so they never propose tags.
 
 ## Design
 
@@ -29,9 +29,7 @@ Rules:
 
 ## Schema changes
 
-```sql
-ALTER TABLE sources ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'manual'; -- manual | discovered
-```
+`origin` is in [schema.sql](../../internal/migrations/schema.sql).
 
 Source `status` is defined in [source-lifecycle](source-lifecycle.md).
 

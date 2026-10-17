@@ -1,6 +1,6 @@
 # Discovered ingest
 
-**Status:** designed
+**Status:** done
 **Related:** [link-extraction](link-extraction.md), [search-discovery](search-discovery.md), [classifier-gate](classifier-gate.md), [source-lifecycle](source-lifecycle.md), [post-linking](post-linking.md)
 
 ## Summary
@@ -9,12 +9,7 @@ A new `ingest` service turns queued URLs into posts. It reuses the source pipeli
 
 ## Current state
 
-Nothing yet. Reusable pieces:
-
-- `FetchHTML` in [fetch.go](../../internal/service/source/adapter/fetch.go).
-- `Trim.Apply` in [trim.go](../../internal/service/source/trim.go). Domains without a rule fall back to `trimGeneric`, and discovered pages count as samples toward a rule.
-- Markdown conversion and `Summarizer` from [sourced.go](../../internal/service/source/sourced.go).
-- `Tagger` from [tagger.go](../../internal/service/robot/tagger.go).
+[ingest.go](../../internal/service/ingest/ingest.go) runs every minute while `discovered_ingest` is on. It reuses `FetchHTML`, `Trim.Apply`, `source.Markdown`, `Summarizer` and the hard gate `Tagger.Gate`. Admin shows `link_queue` status counts on the overview.
 
 ## Design
 
@@ -33,6 +28,20 @@ Chosen over a `queue` adapter in the source pipeline. That adapter would summari
    - Summarize and insert the post.
    - Insert a `discovered` link, see [post linking](post-linking.md).
    - Mark `tag_checked`, since the gate already tagged it.
+
+Rules:
+
+- One link per host per tick, fresh links before retries. The 10-second pacer only separates a host's `robots.txt` fetch from its page fetch.
+- The daily cap is a rolling 24 hours of `checked_at`.
+- `robots.txt` disallow sets `failed` without retries, since it is no gate decision. A missing `robots.txt` allows everything. 5xx, 429 and network errors retry like a failed fetch. Results are cached per host for 24 hours.
+- No enabled, active gate tag means no tick. Otherwise every link would be rejected for good.
+- Classifier unavailable stops the tick and leaves the link untouched.
+- Failed trimmer checks and short content are one check: `Trim.Apply` leaves no content, and the link is rejected with `no content`. A missing title rejects with `no title`.
+- A URL conflict on insert sets `duplicate` with `url exists`.
+- The oldest source includes deleted ones, so a domain whose source you deleted is not proposed again.
+- `source_discovered_by_post` records the referring post once, when the proposed source is created.
+- Language comes from `<html lang>`.
+- Accepted posts do not touch `tags.last_matched_at`.
 
 ## Schema changes
 

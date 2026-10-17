@@ -1,6 +1,6 @@
 # Classifier gate
 
-**Status:** shadow gate done, hard gate designed
+**Status:** done
 **Related:** [trust-model](trust-model.md), [tag-lifecycle](tag-lifecycle.md), [discovered-ingest](discovered-ingest.md)
 
 ## Summary
@@ -9,7 +9,7 @@ The Jev tagging call doubles as a relevance gate. Discovered content must pass i
 
 ## Current state
 
-While the `shadow_gate` switch is on, the tagging worker stores the shadow gate result in `tag_checked.gate_passed`, see [gate.go](../../internal/service/tagging/gate.go). Daily maintenance sets `sources.flagged_at`, and admin lists flagged sources. The hard gate is not built. It ships with [discovered ingest](discovered-ingest.md) in phase 4.
+While the `shadow_gate` switch is on, the tagging worker stores the shadow gate result in `tag_checked.gate_passed`, see [gate.go](../../internal/service/tagging/gate.go). Daily maintenance sets `sources.flagged_at`, and admin lists flagged sources. The hard gate is `Tagger.Gate` in [gate.go](../../internal/service/robot/gate.go), run by [discovered ingest](discovered-ingest.md). The article question rides in the first Jev batch.
 
 ## Design
 

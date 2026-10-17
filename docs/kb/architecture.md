@@ -5,16 +5,18 @@
 
 ## Summary
 
-Kharoborathus collects business and financial news from hand-picked sources, tags it and serves it as a searchable feed. Four workers run side by side from [main.go](../../cmd/main.go).
+Kharoborathus collects business and financial news from hand-picked sources, tags it and serves it as a searchable feed. Workers run side by side from [main.go](../../cmd/main.go).
 
 ## Current state
 
 | Worker | Code | Job |
 |---|---|---|
 | HTTP | [feed/route.go](../../internal/service/feed/route.go), [source/route.go](../../internal/service/source/route.go) | Serves `/feeds` and manual source sync. |
-| Sources | [sourced.go](../../internal/service/source/sourced.go) | Polls enabled sources at their `rate` and turns articles into posts. |
+| Sources | [sourced.go](../../internal/service/source/sourced.go) | Polls enabled, active sources at their `rate` and turns articles into posts. |
 | Tagging | [tagged.go](../../internal/service/tagging/tagged.go) | Generates new tags, classifies posts against all tags and records the shadow gate result while its switch is on. |
 | Discovery | [discovery.go](../../internal/service/discovery/discovery.go) | Extracts searchable events from posts into `discover_queue` and links `same_event` posts. |
+| Links | [extract.go](../../internal/service/ingest/extract.go) | Queues outbound links from trusted posts into `link_queue`. |
+| Ingest | [ingest.go](../../internal/service/ingest/ingest.go) | Fetches, gates and inserts queued links while `discovered_ingest` is on. Proposes sources for new domains. |
 
 Source pipeline per article:
 
@@ -34,8 +36,9 @@ AI providers live in [robot/adapter](../../internal/service/robot/adapter):
 
 Unused parts of the schema:
 
-- `discover_queue` is filled but never read.
-- `source_discovered_by_post` has no writers. `post_links` gets only `duplicate_of` and `same_event`.
+- `discover_queue` is read only for `same_event` links. Nothing searches it yet.
+- `link_queue.discover_item_id` and `via = 'search'` wait for [search discovery](search-discovery.md).
+- `post_links` gets `discovered`, `duplicate_of` and `same_event`.
 
 ## Design
 
