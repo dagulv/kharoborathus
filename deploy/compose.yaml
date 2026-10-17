@@ -1,7 +1,12 @@
 name: kharoborathus
 
+# Rotated logs, so a long-running scraper cannot fill the disk.
+x-logging: &logging
+  driver: local
+
 services:
   db:
+    logging: *logging
     build:
       context: ..
       dockerfile: docker/postgres/Dockerfile
@@ -16,6 +21,7 @@ services:
       retries: 20
 
   api:
+    logging: *logging
     build:
       context: ..
       dockerfile: deploy/api.Dockerfile
@@ -28,6 +34,7 @@ services:
         condition: service_healthy
 
   web:
+    logging: *logging
     build: ../frontend
     restart: unless-stopped
     env_file: production.env
@@ -38,6 +45,7 @@ services:
         condition: service_healthy
 
   caddy:
+    logging: *logging
     build:
       context: .
       dockerfile: caddy.Dockerfile

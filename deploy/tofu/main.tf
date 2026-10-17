@@ -32,4 +32,10 @@ resource "upcloud_server" "app" {
   labels = {
     app = "kharoborathus"
   }
+
+  # Postgres lives on this disk, and user_data and login force a replacement in the provider.
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = [user_data, login]
+  }
 }

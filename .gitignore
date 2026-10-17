@@ -1,5 +1,6 @@
 .env
-deploy/production.env
+deploy/production.env*
+!deploy/production.env.example
 deploy/tofu/.terraform/
 deploy/tofu/*.tfstate*
 deploy/tofu/*.tfplan

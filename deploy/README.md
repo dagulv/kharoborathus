@@ -41,7 +41,8 @@ Runs the stack on one UpCloud server. Design: [docs/kb/infra.md](../docs/kb/infr
 
 ## Later
 
-- Redeploy with `deploy/deploy.sh`. Images are rebuilt on the server.
+- Redeploy with `deploy/deploy.sh`. It reads the IP from the encrypted state, so export `TF_VAR_state_passphrase` first, or set `DEPLOY_HOST=<ip>`. Images are rebuilt on the server.
 - Logs: `DOCKER_HOST=ssh://deploy@<ip> docker compose -f deploy/compose.yaml logs -f api`.
 - `schema.sql` runs only on an empty database volume. Schema changes after the first deploy need migrations.
 - Every switch starts off. Turn them on in the admin under Switches.
+- `tofu apply` never replaces the server: it has `prevent_destroy`, and edits to `cloud-init.yaml` or the SSH key are ignored for the existing server.

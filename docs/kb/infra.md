@@ -31,7 +31,7 @@ Layout:
 
 1. `deploy/tofu` holds the OpenTofu config and the cloud-init template.
 2. `deploy/compose.yaml` holds the production stack. `deploy/Caddyfile` holds routing.
-3. `deploy/api.Dockerfile` and `deploy/web.Dockerfile` build the Go app and the admin. `docker/postgres/Dockerfile` builds the database with the Swedish dictionary and `schema.sql`.
+3. `deploy/api.Dockerfile` and `frontend/Dockerfile` build the Go app and the admin. `docker/postgres/Dockerfile` builds the database with the Swedish dictionary and `schema.sql`.
 4. `deploy/deploy.sh` builds and starts the stack on the server over SSH.
 
 Server:
@@ -41,6 +41,8 @@ Server:
 - A `deploy` user with your SSH key, in the `docker` group. Root login and password login are off.
 - ufw allows SSH, HTTP and HTTPS in and denies the rest. Docker publishes only Caddy's ports 80 and 443, so ufw's known Docker bypass exposes nothing else.
 - Unattended security upgrades are on.
+- The server has `prevent_destroy` and ignores later changes to `user_data` and `login`, since the provider replaces the server for them and Postgres lives on its disk. Changes to `cloud-init.yaml` apply only to new servers.
+- Every container logs through Docker's rotating `local` driver, so logs cannot fill the disk.
 
 Why not the UpCloud firewall: it is stateless on public interfaces. Scraping arbitrary sites would need rules that accept any inbound packet from ports 80 and 443. ufw is stateful.
 
