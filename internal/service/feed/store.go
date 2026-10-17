@@ -141,13 +141,18 @@ func (s *Store) CreateFeed(ctx context.Context, feed Feed) (out Feed, err error)
 
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO post_links (from_post_id, to_post_id, relation, metadata)
-			SELECT n.id, o.id, 'duplicate_of', jsonb_build_object('distance', bit_count((o.simhash # n.simhash)::bit(64)))
+			SELECT n.id, o.id, 'duplicate_of', jsonb_build_object('distance', o.distance)
 			FROM posts n
-			JOIN posts o ON o.created_at < n.created_at AND o.created_at > n.created_at - $2 * interval '1 day'
+			CROSS JOIN LATERAL (
+				SELECT p.id, bit_count((p.simhash # n.simhash)::bit(64)) AS distance
+				FROM posts p
+				WHERE p.created_at < n.created_at
+					AND p.created_at > n.created_at - $2 * interval '1 day'
+					AND bit_count((p.simhash # n.simhash)::bit(64)) <= $3
+				ORDER BY p.created_at
+				LIMIT 1
+			) o
 			WHERE n.id = $1
-				AND bit_count((o.simhash # n.simhash)::bit(64)) <= $3
-			ORDER BY o.created_at
-			LIMIT 1
 			`, out.ID, duplicateWindowDays, maxDuplicateDistance); err != nil {
 			return fmt.Errorf("err link duplicate: %w", err)
 		}
