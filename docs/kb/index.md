@@ -19,7 +19,7 @@ Grow beyond hand-picked sources without losing quality. Scale slowly and prefer 
 | [Discovered ingest](discovered-ingest.md) | designed | `ingest` service turning queued URLs into gated posts. |
 | [Source lifecycle](source-lifecycle.md) | designed | Sources move through proposed, active and dormant, with automatic promotion. |
 | [Post linking](post-linking.md) | designed | Every relation between posts: discovered, duplicate_of and same_event. |
-| [Rollout](rollout.md) | designed | Six phases, migration steps and monitoring. |
+| [Rollout](rollout.md) | designed | Six phases in build order, admin switches for data-dependent features, migration steps and monitoring. |
 
 ## Flow
 

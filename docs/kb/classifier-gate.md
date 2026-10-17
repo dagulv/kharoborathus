@@ -22,10 +22,10 @@ The Jev tagging call doubles as a relevance gate. Discovered content must pass i
 
 **Shadow gate for trusted content**
 
-1. The tagging worker runs as today.
+1. The tagging worker runs as today. The steps below run only while the `shadow_gate` switch is on, see [rollout](rollout.md).
 2. A trusted post passes if it gets any of its source's `target_tags`. If `target_tags` is empty, any gate tag counts.
 3. Store the result. Never reject the post.
-4. A source whose pass rate drops below the floor gets `flagged_at`.
+4. A source with a full pass rate window whose pass rate drops below the floor gets `flagged_at`. A source with fewer gate-checked posts is never flagged, so turning the switch on flags nothing early.
 5. A flagged discovered source is demoted to `proposed`, see [source lifecycle](source-lifecycle.md). A flagged manual source keeps running.
 6. You review flagged sources only, and keep, retarget or disable them.
 

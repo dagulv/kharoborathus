@@ -31,7 +31,7 @@ States:
 The existing `active` boolean is renamed to `enabled` and stays your manual switch. A source is scraped when `enabled = true` and `status = 'active'`. The lifecycle never changes `enabled`.
 
 1. **Propose.** On the first accepted post from a new domain, [discovered ingest](discovered-ingest.md) creates a source with `origin = 'discovered'`, `status = 'proposed'`, `enabled = true` and `url` set to the domain's base URL. `enabled` must be set explicitly, since the column defaults to false.
-2. **Promote.** A daily job checks each proposed source against the `link_queue` rows for its `domain_id`:
+2. **Promote.** A daily job checks each proposed source against the `link_queue` rows for its `domain_id`. It runs only while the `source_promotion` switch is on, see [rollout](rollout.md). Dormancy and probe always run.
    - Enough accepted posts.
    - Spread over enough distinct days, so one news burst cannot promote.
    - A high enough acceptance rate.

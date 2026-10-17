@@ -23,7 +23,7 @@ A search runs only for events whose `action` is the key of a tag with `enabled`,
 1. Event extraction keeps running on every post, since [post linking](post-linking.md) needs events from all posts.
 2. The discovery prompt gets the current gate tag keys, like the tag generator gets existing keys. `action` must be one of them when one fits, otherwise its own one or two lowercase words.
 3. Extracted actions are normalized like tag keys, lowercase with underscores, and remapped through `tag_aliases`.
-4. A search worker reads `ListQueue`, limited to items that:
+4. A search worker runs only while the `search_discovery` switch is on, see [rollout](rollout.md). It reads `ListQueue`, limited to items that:
    - come from trusted posts,
    - have an `action` that is a gate tag key at search time, since `gate` is recomputed daily,
    - were created inside the dedupe window. Older non-matching items are left alone instead of clogging the queue.

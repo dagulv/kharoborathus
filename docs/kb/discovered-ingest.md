@@ -20,7 +20,7 @@ Nothing yet. Reusable pieces:
 
 Chosen over a `queue` adapter in the source pipeline. That adapter would summarize before gating and mix trusted with untrusted posts.
 
-1. Read `pending` rows from `link_queue`, respecting the daily cap and per-domain rate.
+1. Read `pending` rows from `link_queue` created inside the pending window, respecting the daily cap and per-domain rate. Runs only while the `discovered_ingest` switch is on, see [rollout](rollout.md). Older rows stay `pending`, so links queued while the switch was off are not fetched stale.
 2. Check `robots.txt` for the domain.
 3. Fetch, resolve domain and store it in `domain_id`, trim, convert to markdown.
 4. Reject on failed trimmer checks, short content or a missing title.
@@ -66,6 +66,7 @@ CREATE INDEX IF NOT EXISTS link_queue_domain_idx ON link_queue (domain_id, statu
 | Daily fetch cap | 200 URLs | Scale slowly. |
 | Per-domain rate | 1 request per 10 seconds | Politeness. |
 | Max attempts | 3 | Then `failed`. |
+| Pending window | 7 days | Older links are stale news. |
 
 ## Open questions
 
