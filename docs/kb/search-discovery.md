@@ -1,6 +1,6 @@
 # Search discovery
 
-**Status:** designed
+**Status:** done
 **Related:** [discovered-ingest](discovered-ingest.md), [trust-model](trust-model.md)
 
 ## Summary
@@ -9,11 +9,10 @@ Searches the web with the Brave Search API for other sources on events found in 
 
 ## Current state
 
-- [discovery.go](../../internal/service/discovery/discovery.go) asks the LLM for up to five `entity, action, query` events per post and stores them in `discover_queue`.
-- `action` is free text from [discovery.md](../../internal/service/robot/prompts/discovery.md), one or two lowercase words.
-- It runs on every post, not only trusted ones.
-- `ListQueue` and `MarkSearched` exist in [discovery/store.go](../../internal/service/discovery/store.go) but nothing calls them.
-- `discover_queue_event_idx` exists. [Post linking](post-linking.md) reads it to match `same_event` posts.
+- [discovery.go](../../internal/service/discovery/discovery.go) extracts events from every post. The prompt lists the gate tag keys, actions become tag keys and are remapped through `tag_aliases`.
+- [search.go](../../internal/service/discovery/search.go) searches while `search_discovery` is on, through [brave.go](../../internal/service/discovery/brave.go), and filters results with [search_filter.go](../../internal/service/robot/search_filter.go).
+- Admin shows Brave searches in the last 24 hours against the daily cap.
+- `discover_queue_event_idx` serves the dedupe check and [post linking](post-linking.md).
 
 ## Design
 
@@ -33,6 +32,19 @@ A search runs only for events whose `action` is the key of a tag with `enabled`,
 7. An LLM sees each result's `title`, `description`, `extra_snippets`, `page_age` and hostname plus the event's `entity` and `action`. It keeps only results about that event, from any kind of source.
 8. Insert kept URLs into `link_queue` with `via = 'search'` and `discover_item_id`. Brave snippets are dropped after filtering, so only URLs are stored.
 9. `MarkSearched`.
+
+Rules:
+
+- At most 330 searches in a rolling 24 hours, the $50 monthly budget spread over 30 days.
+- `result_count` holds the Brave result count of a paid call. It stays NULL when an item is marked searched without a call, so usage counts only paid calls.
+- Newest items first. When the cap holds back a backlog, older items age out of the window.
+- `search_lang` only for `sv` and `en`.
+- 429, 5xx and network errors stop the tick and leave the item. 400 and 422 mark it searched without a call. Other statuses stop the tick.
+- The tick follows the LLM schedule. If the filter is unavailable after a search, the item is searched again later. Other filter errors keep nothing.
+- No results means no LLM call.
+- Result URLs pass the link extraction filter, without its 10-link cap, and skip URLs already in `posts`.
+- The filter never sees result URLs and answers with result ids.
+- Without `BRAVE_API_KEY` the search worker does not start.
 
 Search engine URLs never enter `link_queue`. Only result URLs do.
 
@@ -59,6 +71,7 @@ Results are read from `web.results` and `news.results` and deduplicated by URL. 
 
 ```sql
 CREATE INDEX IF NOT EXISTS discover_queue_event_idx ON discover_queue (lower(entity), lower(action), searched_at);
+ALTER TABLE discover_queue ADD COLUMN result_count INT;
 ```
 
 ## Defaults
@@ -69,6 +82,8 @@ CREATE INDEX IF NOT EXISTS discover_queue_event_idx ON discover_queue (lower(ent
 | Results per query | 20 per result type | One call, filter cuts the rest. |
 | Freshness | `pw` | Same event, not old coverage. |
 | Monthly budget alert | $50 | About 10k queries at $5 per 1k. |
+| Daily search cap | 330 | $50 a month at $5 per 1k queries over 30 days. |
+| Searches per tick | 5 | Every minute, inside the cap. |
 
 ## Open questions
 

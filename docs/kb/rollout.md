@@ -9,7 +9,7 @@ Ships the design in six phases, in build order. Ingest starts once phase 1 runs.
 
 ## Current state
 
-Phases 1 to 4 are done, with the switches table and admin page. `shadow_gate` and `discovered_ingest` start off. See [architecture](architecture.md) for the system today.
+Phases 1 to 5 are done, with the switches table and admin page. `shadow_gate`, `discovered_ingest` and `search_discovery` start off. See [architecture](architecture.md) for the system today.
 
 ## Design
 
@@ -51,7 +51,7 @@ Migration steps:
 Monitoring:
 
 - Each job logs counters per run through the existing slog handler: processed, accepted, rejected, failed, AI calls.
-- Brave usage per day is counted from `discover_queue.searched_at`.
+- Brave usage per day is counted from `discover_queue.result_count` over the last 24 hours of `searched_at`.
 
 ## Schema changes
 

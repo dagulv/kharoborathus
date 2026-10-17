@@ -14,7 +14,8 @@ Kharoborathus collects business and financial news from hand-picked sources, tag
 | HTTP | [feed/route.go](../../internal/service/feed/route.go), [source/route.go](../../internal/service/source/route.go) | Serves `/feeds` and manual source sync. |
 | Sources | [sourced.go](../../internal/service/source/sourced.go) | Polls enabled, active sources at their `rate` and turns articles into posts. |
 | Tagging | [tagged.go](../../internal/service/tagging/tagged.go) | Generates new tags, classifies posts against all tags and records the shadow gate result while its switch is on. |
-| Discovery | [discovery.go](../../internal/service/discovery/discovery.go) | Extracts searchable events from posts into `discover_queue` and links `same_event` posts. |
+| Discovery | [discovery.go](../../internal/service/discovery/discovery.go) | Extracts events with gate tag keys as actions into `discover_queue` and links `same_event` posts. |
+| Search | [search.go](../../internal/service/discovery/search.go) | Searches Brave for gate tag events from trusted posts and queues filtered results while `search_discovery` is on. |
 | Links | [extract.go](../../internal/service/ingest/extract.go) | Queues outbound links from trusted posts into `link_queue`. |
 | Ingest | [ingest.go](../../internal/service/ingest/ingest.go) | Fetches, gates and inserts queued links while `discovered_ingest` is on. Proposes sources for new domains. |
 
@@ -34,10 +35,10 @@ AI providers live in [robot/adapter](../../internal/service/robot/adapter):
 - DeepSeek is the LLM for rule generation, summaries, tag generation and discovery.
 - Jev is the classifier. It answers yes or no questions as scores from 0 to 1.
 
+Brave Web Search is called from [brave.go](../../internal/service/discovery/brave.go).
+
 Unused parts of the schema:
 
-- `discover_queue` is read only for `same_event` links. Nothing searches it yet.
-- `link_queue.discover_item_id` and `via = 'search'` wait for [search discovery](search-discovery.md).
 - `post_links` gets `discovered`, `duplicate_of` and `same_event`.
 
 ## Design
