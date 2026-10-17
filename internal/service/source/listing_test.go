@@ -24,8 +24,13 @@ func TestFindListing(t *testing.T) {
 }
 
 func TestFindListingOtherHost(t *testing.T) {
-	adapter, url := findListing([]byte(`<html><body>Hej</body></html>`), "https://b.example/", "https://a.example")
-	if adapter != "page" || url != "https://a.example" {
-		t.Errorf("got %s %s", adapter, url)
+	for _, page := range []string{
+		`<html><body>Hej</body></html>`,
+		`<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head></html>`,
+	} {
+		adapter, url := findListing([]byte(page), "https://b.example/", "https://a.example")
+		if adapter != "page" || url != "https://a.example" {
+			t.Errorf("got %s %s", adapter, url)
+		}
 	}
 }

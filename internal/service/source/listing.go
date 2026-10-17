@@ -12,12 +12,18 @@ import (
 func findListing(page []byte, pageURL, sourceURL string) (adapterName, listing string) {
 	adapterName, listing = "page", sourceURL
 
-	// The domain base drops www, but the page linker keeps only links on the listing's own host.
-	if a, err := domain.BaseURL(pageURL); err == nil {
-		if b, err := domain.BaseURL(sourceURL); err == nil && a == b {
-			listing = pageURL
-		}
+	// A homepage redirect to another host must not move the source there, so its feed is ignored too.
+	a, err := domain.BaseURL(pageURL)
+	if err != nil {
+		return
 	}
+
+	if b, err := domain.BaseURL(sourceURL); err != nil || a != b {
+		return
+	}
+
+	// The domain base drops www, but the page linker keeps only links on the listing's own host.
+	listing = pageURL
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
 	if err != nil {
