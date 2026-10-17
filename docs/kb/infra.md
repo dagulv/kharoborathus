@@ -42,6 +42,7 @@ Server:
 - A `deploy` user with your SSH key. Root login and password login are off. Cloud-init copies the Haloy API token to its home.
 - ufw allows SSH, HTTP and HTTPS in and denies the rest. haloy-proxy binds 80 and 443 on the host and no container publishes a port, so ufw's known Docker bypass exposes nothing.
 - Unattended security upgrades are on.
+- Cloud-init installs haloyd v0.1.0-beta.73 from the installer at that release tag and checks the installer and both binaries against pinned SHA-256 hashes. A Haloy upgrade means updating the version and the three hashes together.
 - The server has `prevent_destroy` and ignores later changes to `user_data` and `login`, since the provider replaces the server for them and Postgres lives on its disk. Changes to `cloud-init.yaml` apply only to new servers.
 - Docker's default log driver is the rotating `local` driver, so logs cannot fill the disk.
 
