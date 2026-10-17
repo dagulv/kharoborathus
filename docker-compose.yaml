@@ -3,10 +3,10 @@ services:
   db:
     build:
       context: .
-      dockerfile: docker/postgres/Dockerfile
+      dockerfile: infra/db/Dockerfile
     restart: unless-stopped
     env_file:
-      - .env
+      - docker/postgres/.env
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run through infra/secrets.sh dev, since .env holds no secrets}
     ports:

@@ -4,7 +4,15 @@ Runs the stack on one UpCloud server with Haloy. Design: [docs/kb/infra.md](../d
 
 ## Secrets
 
-Secrets never sit in an env file. They live in two SOPS vaults under `secrets/`, managed with the `vault` tool and encrypted to one age key kept in Bitwarden. `.env` files hold safe values only.
+Secrets never sit in an env file. They live in two SOPS vaults under `secrets/`, managed with the `vault` tool and encrypted to one age key kept in Bitwarden. `.env` files hold safe values only, one per service:
+
+| Service | Dev env | Prod env | Deploy Dockerfile |
+|---|---|---|---|
+| db | `docker/postgres/.env` | `infra/db/.env` | `infra/db/Dockerfile` |
+| api, the Go app | `.env` | `infra/api/.env` | `infra/api/Dockerfile` |
+| web, the admin | `frontend/.env` | `infra/web/.env` | `infra/web/Dockerfile` |
+
+Each has a `.env-sample` or `.env.example` beside it. The dev db also builds from `infra/db/Dockerfile`.
 
 | Vault | File | Keys |
 |---|---|---|
@@ -68,27 +76,26 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
    haloy server add <haloy api domain> "$(ssh deploy@<ip> cat haloy-token)"
    ```
 
-7. Set your domains in `infra/haloy.yaml`. Copy the safe values, then seal the prod vault's `app.yaml`:
+7. Set your domains in `infra/haloy.yaml` and `infra/web/.env`. Copy the safe values, then seal the prod vault's `app.yaml`:
 
    ```bash
-   cp infra/.env.example infra/.env
+   for t in db api web; do cp infra/$t/.env.example infra/$t/.env; done
    ```
 
 8. Deploy the database first, then the rest once its logs say it accepts connections:
 
    ```bash
-   cd infra
-   ./secrets.sh prod haloy deploy -t db
-   haloy logs -t db
-   ./secrets.sh prod haloy deploy --all
+   infra/secrets.sh prod infra/haloy.sh deploy db
+   infra/secrets.sh prod infra/haloy.sh logs db
+   infra/secrets.sh prod infra/haloy.sh deploy api web
    ```
 
-   Run Haloy from `infra/`. It reads the `.env` in the working directory before the one beside `haloy.yaml`, so from the repo root it would pick up dev values.
+   `haloy.sh` runs Haloy once per target from that target's directory. Haloy reads the working directory's `.env`, so each target sees only its own env. Any Haloy command that loads the config resolves every env value, so `logs` and `status` need `secrets.sh` too.
 
 ## Later
 
-- Redeploy from `infra/` with `./secrets.sh prod haloy deploy --all`. Images build locally and upload to the server. `--all` skips the protected `db` target.
-- Logs: `haloy logs -t api`, from `infra/`. `haloy rollback-targets` lists deployment IDs for `haloy rollback <id>`.
+- Redeploy with `infra/secrets.sh prod infra/haloy.sh deploy api web`. Images build locally and upload to the server. Leave `db` out unless its image changed.
+- Logs: `infra/secrets.sh prod infra/haloy.sh logs api`. `rollback-targets` through `haloy.sh` lists deployment IDs for `haloy rollback <id>`.
 - `schema.sql` runs only on an empty database volume. Schema changes after the first deploy need migrations.
 - Every switch starts off. Turn them on in the admin under Switches.
 - `tofu apply` never replaces the server: it has `prevent_destroy`, and edits to `cloud-init.yaml` or the SSH key are ignored for the existing server.

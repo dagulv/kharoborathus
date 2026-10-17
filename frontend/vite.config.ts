@@ -14,8 +14,6 @@ export default defineConfig({
 				experimental: { async: true }
 			},
 			adapter: adapter(),
-			// Share the repo root .env with the Go app
-			env: { dir: '..' },
 			experimental: { remoteFunctions: true, forkPreloads: true }
 		})
 	]

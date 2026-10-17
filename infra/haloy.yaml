@@ -1,6 +1,7 @@
 # Replace the example domains with yours. server is haloy_api_domain from terraform.tfvars.
-# Safe values come from infra/.env, see .env.example. Secrets come from the prod vault:
-# cd infra && ./secrets.sh prod haloy deploy --all
+# Each target reads its safe values from its own <target>/.env, see .env.example there.
+# Secrets come from the prod vault. Run through haloy.sh, which gives every target its own env:
+# infra/secrets.sh prod infra/haloy.sh deploy api web
 server: haloy.news.example.com
 
 targets:
@@ -10,7 +11,7 @@ targets:
       repository: kharoborathus-db
       build_config:
         context: ..
-        dockerfile: docker/postgres/Dockerfile
+        dockerfile: infra/db/Dockerfile
     port: 5432
     volumes:
       - kharoborathus-db:/var/lib/postgresql
@@ -34,7 +35,7 @@ targets:
       repository: kharoborathus-api
       build_config:
         context: ..
-        dockerfile: infra/api.Dockerfile
+        dockerfile: infra/api/Dockerfile
     domains:
       - domain: api.news.example.com
     port: 3001
@@ -58,15 +59,18 @@ targets:
       repository: kharoborathus-web
       build_config:
         context: ../frontend
+        dockerfile: ../infra/web/Dockerfile
     domains:
       - domain: news.example.com
     port: 3000
     health_check_path: /healthz
     env:
       - name: ORIGIN
-        value: https://news.example.com
+        from:
+          env: ORIGIN
       - name: API_URL
-        value: http://api:3002
+        from:
+          env: API_URL
       - name: POSTGRES_CONNECTION_STRING
         from:
           env: POSTGRES_CONNECTION_STRING

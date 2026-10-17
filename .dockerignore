@@ -3,8 +3,7 @@
 .superpowers
 docs
 frontend
-infra/tofu
-infra/secrets
-infra/.env*
+infra
+docker
 .env
 .env-sample
