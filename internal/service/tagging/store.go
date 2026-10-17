@@ -252,8 +252,8 @@ func (s *Store) Similar(ctx context.Context, terms []Term) ([]robot.Tag, error) 
 		SELECT t.key, array_agg(tt.term ORDER BY tt.lang, tt.term)
 		FROM tags t
 		JOIN tag_terms tt ON tt.key = t.key
-		WHERE t.enabled
-			AND EXISTS (
+		-- Disabled tags are included so their synonyms become aliases instead of new live tags.
+		WHERE EXISTS (
 				SELECT 1
 				FROM tag_terms m
 				JOIN unnest($1::text[], $2::text[]) AS c(lang, term) ON c.lang = m.lang
