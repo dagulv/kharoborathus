@@ -23,7 +23,7 @@ While the `shadow_gate` switch is on, the tagging worker stores the shadow gate 
 **Shadow gate for trusted content**
 
 1. The tagging worker runs as today. The steps below run only while the `shadow_gate` switch is on, see [rollout](rollout.md).
-2. A trusted post passes if it gets any of its source's `target_tags`. If `target_tags` is empty, any gate tag counts. Target tags are resolved through `tag_aliases`.
+2. A trusted post passes if it gets any of its source's `target_tags`. If `target_tags` is empty, any gate tag counts. Target tags are normalized like tag keys and resolved through `tag_aliases`. Targets that name no enabled, active tag are ignored, and a source left with none falls back to gate tags.
 3. Store the result. Never reject the post. The result is NULL when the classification failed, or when the source has no target tags and no gate tag exists.
 4. A source with a full pass rate window whose pass rate drops below the floor gets `flagged_at`. A source with fewer gate-checked posts is never flagged, so turning the switch on flags nothing early.
 5. A flagged discovered source is demoted to `proposed`, see [source lifecycle](source-lifecycle.md). A flagged manual source keeps running.

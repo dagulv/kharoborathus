@@ -78,12 +78,16 @@ func (g *TagGenerator) Generate(ctx context.Context, lang, markdown string, exis
 	return cleanTags(answer.Tags), nil
 }
 
+func TagKey(s string) string {
+	return strings.NewReplacer(" ", "_", "-", "_").Replace(strings.ToLower(collapse(s)))
+}
+
 func cleanTags(tags []GeneratedTag) []GeneratedTag {
 	seen := make(map[string]bool)
 	out := make([]GeneratedTag, 0, len(tags))
 
 	for _, t := range tags {
-		t.Key = strings.NewReplacer(" ", "_", "-", "_").Replace(strings.ToLower(collapse(t.Key)))
+		t.Key = TagKey(t.Key)
 		t.Term = strings.ToLower(collapse(t.Term))
 
 		switch {

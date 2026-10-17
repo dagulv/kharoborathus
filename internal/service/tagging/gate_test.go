@@ -5,11 +5,12 @@ import "testing"
 func gateVocabulary() Vocabulary {
 	return Vocabulary{
 		Tags: map[string]TagState{
-			"acquisition": {Enabled: true, Status: statusActive, Gate: true},
-			"investment":  {Enabled: true, Status: statusActive, Gate: true},
-			"earnings":    {Enabled: true, Status: statusActive},
-			"layoffs":     {Enabled: true, Status: statusDormant, Gate: true},
-			"bankruptcy":  {Enabled: false, Status: statusActive, Gate: true},
+			"acquisition":   {Enabled: true, Status: statusActive, Gate: true},
+			"investment":    {Enabled: true, Status: statusActive, Gate: true},
+			"earnings":      {Enabled: true, Status: statusActive},
+			"share_buyback": {Enabled: true, Status: statusActive},
+			"layoffs":       {Enabled: true, Status: statusDormant, Gate: true},
+			"bankruptcy":    {Enabled: false, Status: statusActive, Gate: true},
 		},
 		Aliases: map[string]string{"investments": "investment"},
 	}
@@ -29,6 +30,11 @@ func TestShadowGate(t *testing.T) {
 		{"no targets, disabled gate tag", nil, []string{"bankruptcy"}, false},
 		{"no targets, dormant gate tag", nil, []string{"layoffs"}, false},
 		{"no targets, no tags", nil, nil, false},
+		{"typed target", []string{" Share-Buyback "}, []string{"share_buyback"}, true},
+		{"spaced target", []string{"share  buyback"}, []string{"share_buyback"}, true},
+		{"unknown target falls back to gate tags", []string{"finance"}, []string{"acquisition"}, true},
+		{"unknown target, no gate tag", []string{"finance"}, []string{"earnings"}, false},
+		{"disabled target falls back to gate tags", []string{"bankruptcy"}, []string{"investment"}, true},
 	}
 
 	for _, c := range cases {
@@ -46,7 +52,9 @@ func TestShadowGateWithoutGateTags(t *testing.T) {
 		"bankruptcy": {Enabled: false, Status: statusActive, Gate: true},
 	}}
 
-	if got := shadowGate(v, nil, []string{"earnings"}); got != nil {
-		t.Errorf("got %v, want nil", *got)
+	for _, targets := range [][]string{nil, {"finance"}} {
+		if got := shadowGate(v, targets, []string{"earnings"}); got != nil {
+			t.Errorf("targets %v: got %v, want nil", targets, *got)
+		}
 	}
 }

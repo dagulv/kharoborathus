@@ -1,26 +1,45 @@
 package tagging
 
-import "slices"
+import (
+	"slices"
+
+	"github.com/dagulv/kharoborathus/internal/service/robot"
+)
 
 func shadowGate(v Vocabulary, targets, keys []string) *bool {
-	if len(targets) == 0 {
+	live := func(key string) bool {
+		state := v.Tags[key]
+		return state.Enabled && state.Status == statusActive
+	}
+
+	var resolved []string
+
+	for _, target := range targets {
+		key := robot.TagKey(target)
+		if alias, ok := v.Aliases[key]; ok {
+			key = alias
+		}
+
+		if live(key) {
+			resolved = append(resolved, key)
+		}
+	}
+
+	// Targets naming no live tag fall back to gate tags, so a typo or a disabled tag never reads as drift.
+	if len(resolved) == 0 {
 		for key, state := range v.Tags {
-			if state.Gate && state.Enabled && state.Status == statusActive {
-				targets = append(targets, key)
+			if state.Gate && live(key) {
+				resolved = append(resolved, key)
 			}
 		}
 	}
 
-	if len(targets) == 0 {
+	if len(resolved) == 0 {
 		return nil
 	}
 
-	passed := slices.ContainsFunc(targets, func(target string) bool {
-		if key, ok := v.Aliases[target]; ok {
-			target = key
-		}
-
-		return slices.Contains(keys, target)
+	passed := slices.ContainsFunc(resolved, func(key string) bool {
+		return slices.Contains(keys, key)
 	})
 
 	return &passed
