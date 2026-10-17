@@ -6,10 +6,18 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/dagulv/kharoborathus/internal/service/domain"
 )
 
 func findListing(page []byte, pageURL, sourceURL string) (adapterName, listing string) {
 	adapterName, listing = "page", sourceURL
+
+	// The domain base drops www, but the page linker keeps only links on the listing's own host.
+	if a, err := domain.BaseURL(pageURL); err == nil {
+		if b, err := domain.BaseURL(sourceURL); err == nil && a == b {
+			listing = pageURL
+		}
+	}
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
 	if err != nil {
