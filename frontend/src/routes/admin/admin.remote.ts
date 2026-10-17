@@ -12,11 +12,11 @@ const uuid = v.pipe(v.string(), v.uuid());
 export const getStats = query(async () => {
 	const sql = db();
 	const [row] = await sql<
-		{ sources: number; activeSources: number; posts: number; postsToday: number }[]
+		{ sources: number; enabledSources: number; posts: number; postsToday: number }[]
 	>`
 		SELECT
 			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL) AS sources,
-			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND active) AS active_sources,
+			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND enabled) AS enabled_sources,
 			(SELECT count(*)::int FROM posts) AS posts,
 			(SELECT count(*)::int FROM posts WHERE created_at > now() - interval '24 hours') AS posts_today
 	`;
@@ -36,7 +36,7 @@ export const listSources = query(
 				d.base_url AS domain_url,
 				s.adapter,
 				s.url,
-				s.active,
+				s.enabled,
 				s.rate,
 				s.target_tags,
 				s.metadata,
@@ -145,10 +145,10 @@ export const createSource = form(
 			v.integer(),
 			v.minValue(1, 'Rate must be at least 1')
 		),
-		active: v.optional(v.boolean(), false),
+		enabled: v.optional(v.boolean(), false),
 		targetTags: v.optional(v.pipe(v.string(), v.maxLength(1000)), '')
 	}),
-	async ({ url, adapter, rate, active, targetTags }, issue) => {
+	async ({ url, adapter, rate, enabled, targetTags }, issue) => {
 		const parsed = new URL(url);
 		if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
 			invalid(issue.url('Only http(s) URLs are supported'));
@@ -176,8 +176,8 @@ export const createSource = form(
 			`;
 
 			await tx`
-				INSERT INTO sources (domain_id, adapter, url, active, rate, target_tags)
-				VALUES (${domain.id}, ${adapter}, ${url}, ${active}, ${rate}, ${tags}::text[])
+				INSERT INTO sources (domain_id, adapter, url, enabled, rate, target_tags)
+				VALUES (${domain.id}, ${adapter}, ${url}, ${enabled}, ${rate}, ${tags}::text[])
 			`;
 		});
 

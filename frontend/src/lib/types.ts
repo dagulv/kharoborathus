@@ -4,7 +4,7 @@ export type Source = {
 	domainUrl: string;
 	adapter: string;
 	url: string;
-	active: boolean;
+	enabled: boolean;
 	rate: number;
 	targetTags: string[];
 	metadata: Record<string, string>;

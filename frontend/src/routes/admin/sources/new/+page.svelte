@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { createSource } from '../../admin.remote';
 
-	const { url, adapter, rate, active, targetTags } = createSource.fields;
+	const { url, adapter, rate, enabled, targetTags } = createSource.fields;
 </script>
 
 <svelte:head><title>New source · Admin</title></svelte:head>
@@ -62,8 +62,8 @@
 	</label>
 
 	<label class="flex items-center gap-2">
-		<input {...active.as('checkbox')} />
-		<span class="text-sm">Active</span>
+		<input {...enabled.as('checkbox')} />
+		<span class="text-sm">Enabled</span>
 	</label>
 
 	{#each createSource.fields.issues() ?? [] as issue (issue.message)}
