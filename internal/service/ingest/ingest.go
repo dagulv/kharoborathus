@@ -170,19 +170,25 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 		return res, err
 	}
 
-	page, err := sourceadapter.FetchHTML(ctx, in.client, link.URL)
+	page, finalURL, err := sourceadapter.FetchPage(ctx, in.client, link.URL)
 	if err != nil {
 		return res, err
 	}
 
-	d, err := in.domains.GetOrCreateDomain(ctx, link.URL)
+	// robots.txt and the pacer covered only the original host.
+	if host := hostOf(finalURL); host != hostOf(link.URL) {
+		res.status, res.reason = statusFailed, "redirected to "+host
+		return res, nil
+	}
+
+	d, err := in.domains.GetOrCreateDomain(ctx, finalURL)
 	if err != nil {
 		return res, fmt.Errorf("err get domain: %w", err)
 	}
 
 	res.domainID = d.ID
 
-	f := in.trim.Apply(ctx, d, feed.Feed{URL: link.URL, DomainID: d.ID, Lang: pageLang(page)}, page)
+	f := in.trim.Apply(ctx, d, feed.Feed{URL: finalURL, DomainID: d.ID, Lang: pageLang(page)}, page)
 
 	if f.Content == "" {
 		res.status, res.reason = statusRejected, "no content"
