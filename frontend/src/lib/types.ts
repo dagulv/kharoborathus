@@ -57,3 +57,10 @@ export type TagAlias = {
 	alias: string;
 	key: string;
 };
+
+export type Switch = {
+	key: string;
+	enabled: boolean;
+	updatedAt: Date;
+	readiness: string | null;
+};

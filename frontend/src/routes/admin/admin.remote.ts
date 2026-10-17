@@ -3,7 +3,7 @@ import { error, invalid, redirect } from '@sveltejs/kit';
 import { command, form, query } from '$app/server';
 import { API_URL } from '$app/env/private';
 import { db } from '#lib/server/db.js';
-import type { Post, PostSummary, Source, Tag, TagAlias, TagProposal } from '#lib/types.js';
+import type { Post, PostSummary, Source, Switch, Tag, TagAlias, TagProposal } from '#lib/types.js';
 
 const PAGE_SIZE = 50;
 
@@ -283,3 +283,34 @@ export const mergeTag = command(v.object({ from: tagKey, to: tagKey }), async ({
 
 	await Promise.all([listTags().refresh(), listAliases().refresh()]);
 });
+
+// Readiness per key mirrors the switch table in docs/kb/rollout.md
+export const listSwitches = query(async () => {
+	const sql = db();
+
+	return sql<Switch[]>`
+		SELECT
+			s.key,
+			s.enabled,
+			s.updated_at,
+			NULL::text AS readiness
+		FROM switches s
+		ORDER BY s.key
+	`;
+});
+
+export const setSwitch = command(
+	v.object({ key: v.pipe(v.string(), v.nonEmpty(), v.maxLength(40)), enabled: v.boolean() }),
+	async ({ key, enabled }) => {
+		const sql = db();
+		const [row] = await sql`
+			UPDATE switches SET enabled = ${enabled}, updated_at = now()
+			WHERE key = ${key}
+			RETURNING 1
+		`;
+
+		if (!row) error(404, `Unknown switch ${key}`);
+
+		await listSwitches().refresh();
+	}
+);

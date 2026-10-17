@@ -7,7 +7,8 @@
 		{ href: '/admin', label: 'Overview' },
 		{ href: '/admin/sources', label: 'Sources' },
 		{ href: '/admin/tags', label: 'Tags' },
-		{ href: '/admin/posts', label: 'Posts' }
+		{ href: '/admin/posts', label: 'Posts' },
+		{ href: '/admin/switches', label: 'Switches' }
 	];
 
 	function isActive(href: string) {
