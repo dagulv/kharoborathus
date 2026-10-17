@@ -370,10 +370,11 @@ export const listSwitches = query(async () => {
 							JOIN LATERAL (
 								SELECT
 									count(*) FILTER (WHERE q.status = 'accepted') AS accepted,
-									count(DISTINCT q.checked_at::date) FILTER (WHERE q.status = 'accepted') AS days,
+									count(DISTINCT q.created_at::date) FILTER (WHERE q.status = 'accepted') AS days,
 									count(*) FILTER (WHERE q.status IN ('accepted', 'rejected')) AS decided
 								FROM link_queue q
-								WHERE q.domain_id = s.domain_id AND q.checked_at >= s.status_changed_at
+								WHERE q.domain_id = s.domain_id
+									AND q.checked_at >= CASE WHEN s.promoted_at IS NULL THEN '-infinity' ELSE s.status_changed_at END
 							) e ON true
 							WHERE s.status = 'proposed' AND s.enabled AND s.deleted_at IS NULL
 								AND e.accepted >= 5 AND e.days >= 3 AND e.accepted >= 0.6 * e.decided
