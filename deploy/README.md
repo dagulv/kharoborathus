@@ -10,20 +10,25 @@ Runs the stack on one UpCloud server. Design: [docs/kb/infra.md](../docs/kb/infr
    export UPCLOUD_USERNAME=... UPCLOUD_PASSWORD=... TF_VAR_state_passphrase=...
    ```
 
-2. Create the server:
+2. Put your SSH public key in `terraform.tfvars`. The server ignores later key changes, so a wrong key locks you out:
 
    ```bash
    cd deploy/tofu
    cp terraform.tfvars.example terraform.tfvars
+   ```
+
+3. Create the server:
+
+   ```bash
    tofu init
    tofu apply
    ```
 
-   Put your SSH public key in `terraform.tfvars` first. Keep `terraform.tfstate`: it is encrypted with the passphrase and gitignored, so back it up yourself.
+   Keep `terraform.tfstate`: it is encrypted with the passphrase and gitignored, so back it up yourself.
 
-3. Point the domain's A record at `tofu output -raw ipv4`. Caddy gets the certificate on the first request.
+4. Point the domain's A record at `tofu output -raw ipv4`. Caddy gets the certificate on the first request.
 
-4. Write the app config:
+5. Write the app config:
 
    ```bash
    cp deploy/production.env.example deploy/production.env
@@ -32,7 +37,7 @@ Runs the stack on one UpCloud server. Design: [docs/kb/infra.md](../docs/kb/infr
 
    Put the hash in `ADMIN_PASSWORD_HASH` inside single quotes. Fill in the Postgres password in both places and the API keys.
 
-5. Wait for cloud-init, then deploy:
+6. Wait for cloud-init, then deploy:
 
    ```bash
    ssh deploy@<ip> cloud-init status --wait
