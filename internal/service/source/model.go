@@ -12,7 +12,7 @@ type Source struct {
 	DomainID   string            `json:"domainId"`
 	Adapter    string            `json:"adapter"` // type of source (rss, etc)
 	URL        string            `json:"url"`
-	Active     bool              `json:"active"`
+	Enabled    bool              `json:"enabled"`
 	Rate       int               `json:"rate"`
 	CreatedAt  time.Time         `json:"createdAt"`
 	TargetTags []string          `json:"targetTags"`
@@ -22,5 +22,5 @@ type Source struct {
 type Filter struct {
 	query.Filter
 
-	Active sql.Null[bool] `json:"active"`
+	Enabled sql.Null[bool] `json:"enabled"`
 }

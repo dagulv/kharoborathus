@@ -141,10 +141,10 @@ func continuousSources(ctx context.Context, s *Store, syncs <-chan Source, sched
 				if time.Since(lastInterval) > refreshInterval {
 					lastInterval = time.Now()
 
-					if active, err := activeSources(ctx, s); err != nil {
+					if enabled, err := enabledSources(ctx, s); err != nil {
 						l.Error("unable to get sources", "err", err)
 					} else {
-						sources = active
+						sources = enabled
 					}
 				}
 
@@ -164,7 +164,7 @@ func continuousSources(ctx context.Context, s *Store, syncs <-chan Source, sched
 	return out
 }
 
-func activeSources(ctx context.Context, s *Store) ([]Source, error) {
+func enabledSources(ctx context.Context, s *Store) ([]Source, error) {
 	var sources []Source
 
 	for offset := 0; ; offset += sourcePage {
@@ -172,7 +172,7 @@ func activeSources(ctx context.Context, s *Store) ([]Source, error) {
 			Limit:   strconv.Itoa(sourcePage),
 			Offset:  strconv.Itoa(offset),
 			OrderBy: "id",
-			Active:  sql.Null[bool]{V: true, Valid: true},
+			Enabled: sql.Null[bool]{V: true, Valid: true},
 		}))
 		if err != nil {
 			return nil, err

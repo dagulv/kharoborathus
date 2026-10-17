@@ -17,7 +17,7 @@ const sourceColumns = `
 	domain_id,
 	adapter,
 	url,
-	active,
+	enabled,
 	rate,
 	metadata,
 	target_tags,
@@ -42,9 +42,9 @@ func (s *Store) ListSources(ctx context.Context, filter Filter) iter.Seq2[Source
 		args := []any{filter.GetLimit(), filter.GetOffset()}
 		where := `WHERE deleted_at IS NULL`
 
-		if filter.Active.Valid {
-			args = append(args, filter.Active.V)
-			where += fmt.Sprintf(` AND active = $%d`, len(args))
+		if filter.Enabled.Valid {
+			args = append(args, filter.Enabled.V)
+			where += fmt.Sprintf(` AND enabled = $%d`, len(args))
 		}
 
 		col, dir := filter.GetSort()
@@ -94,10 +94,10 @@ func (s *Store) CreateSource(ctx context.Context, source Source) (out Source, er
 	}
 
 	return scanSource(s.db.QueryRow(ctx, `
-		INSERT INTO sources (domain_id, adapter, url, active, rate, metadata, target_tags)
+		INSERT INTO sources (domain_id, adapter, url, enabled, rate, metadata, target_tags)
 		VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '{}'), COALESCE($7::text[], '{}'))
 		RETURNING `+sourceColumns,
-		source.DomainID, source.Adapter, source.URL, source.Active, source.Rate, source.Metadata, source.TargetTags,
+		source.DomainID, source.Adapter, source.URL, source.Enabled, source.Rate, source.Metadata, source.TargetTags,
 	))
 }
 
@@ -107,13 +107,13 @@ func (s *Store) UpdateSource(ctx context.Context, source Source) (Source, error)
 		SET
 			adapter = $2,
 			url = $3,
-			active = $4,
+			enabled = $4,
 			rate = $5,
 			metadata = COALESCE($6::jsonb, '{}'),
 			target_tags = COALESCE($7::text[], '{}')
 		WHERE id = $1
 		RETURNING `+sourceColumns,
-		source.ID, source.Adapter, source.URL, source.Active, source.Rate, source.Metadata, source.TargetTags,
+		source.ID, source.Adapter, source.URL, source.Enabled, source.Rate, source.Metadata, source.TargetTags,
 	))
 }
 
@@ -136,7 +136,7 @@ func scanSource(row pgx.Row) (source Source, err error) {
 		&source.DomainID,
 		&source.Adapter,
 		&source.URL,
-		&source.Active,
+		&source.Enabled,
 		&source.Rate,
 		&source.Metadata,
 		&source.TargetTags,
