@@ -121,46 +121,72 @@ func (s *Store) FeedExists(ctx context.Context, url string) (exists bool, err er
 }
 
 func (s *Store) CreateFeed(ctx context.Context, feed Feed) (out Feed, err error) {
+	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		out, err = InsertFeed(ctx, tx, feed)
+		return err
+	})
+
+	return
+}
+
+func InsertFeed(ctx context.Context, tx pgx.Tx, feed Feed) (out Feed, err error) {
 	if feed.PostedAt.IsZero() {
 		feed.PostedAt = time.Now()
 	}
 
 	hash := sha256.Sum256([]byte(feed.Content))
 
-	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		out, err = scanFeed(tx.QueryRow(ctx, `
-			INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, content, tags, authors, posted_at, content_hash, simhash)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), COALESCE($9::text[], '{}'), $10, $11, $12)
-			ON CONFLICT (url) DO NOTHING
-			RETURNING `+feedColumns,
-			feed.SourceID, feed.DomainID, feed.URL, feed.Lang, feed.Title, feed.ShortContent, feed.Content, feed.Tags, feed.Authors, feed.PostedAt, hash[:], textSimhash(feed.Content),
-		))
-		if err != nil {
-			return err
-		}
+	out, err = scanFeed(tx.QueryRow(ctx, `
+		INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, content, tags, authors, posted_at, content_hash, simhash)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), COALESCE($9::text[], '{}'), $10, $11, $12)
+		ON CONFLICT (url) DO NOTHING
+		RETURNING `+feedColumns,
+		feed.SourceID, feed.DomainID, feed.URL, feed.Lang, feed.Title, feed.ShortContent, feed.Content, feed.Tags, feed.Authors, feed.PostedAt, hash[:], textSimhash(feed.Content),
+	))
+	if err != nil {
+		return out, err
+	}
 
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO post_links (from_post_id, to_post_id, relation, metadata)
-			SELECT n.id, o.id, 'duplicate_of', jsonb_build_object('distance', o.distance)
-			FROM posts n
-			CROSS JOIN LATERAL (
-				SELECT p.id, bit_count((p.simhash # n.simhash)::bit(64)) AS distance
-				FROM posts p
-				WHERE p.created_at < n.created_at
-					AND p.created_at > n.created_at - $2 * interval '1 day'
-					AND bit_count((p.simhash # n.simhash)::bit(64)) <= $3
-				ORDER BY p.created_at
-				LIMIT 1
-			) o
-			WHERE n.id = $1
-			`, out.ID, duplicateWindowDays, maxDuplicateDistance); err != nil {
-			return fmt.Errorf("err link duplicate: %w", err)
-		}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO post_links (from_post_id, to_post_id, relation, metadata)
+		SELECT n.id, o.id, 'duplicate_of', jsonb_build_object('distance', o.distance)
+		FROM posts n
+		CROSS JOIN LATERAL (
+			SELECT p.id, bit_count((p.simhash # n.simhash)::bit(64)) AS distance
+			FROM posts p
+			WHERE p.created_at < n.created_at
+				AND p.created_at > n.created_at - $2 * interval '1 day'
+				AND bit_count((p.simhash # n.simhash)::bit(64)) <= $3
+			ORDER BY p.created_at
+			LIMIT 1
+		) o
+		WHERE n.id = $1
+		`, out.ID, duplicateWindowDays, maxDuplicateDistance); err != nil {
+		return out, fmt.Errorf("err link duplicate: %w", err)
+	}
 
-		return nil
-	})
+	return out, nil
+}
 
-	return
+func (s *Store) HasDuplicate(ctx context.Context, content string) (bool, error) {
+	hash := textSimhash(content)
+	if hash == nil {
+		return false, nil
+	}
+
+	var exists bool
+
+	if err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM posts
+			WHERE created_at > now() - $2 * interval '1 day'
+				AND bit_count((simhash # $1::bigint)::bit(64)) <= $3
+		)
+		`, *hash, duplicateWindowDays, maxDuplicateDistance).Scan(&exists); err != nil {
+		return false, fmt.Errorf("err check duplicate: %w", err)
+	}
+
+	return exists, nil
 }
 
 // Stored as the uint64 bit pattern, so half of all hashes are negative. Only bits are compared.
