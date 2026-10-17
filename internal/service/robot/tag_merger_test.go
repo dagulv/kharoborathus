@@ -2,59 +2,108 @@ package robot
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 )
 
-type mergeLLM struct {
-	*fakeLLM
-	same bool
-	err  error
+type scoreClassifier struct {
+	requests []map[string]adapter.NoulQuestion
+	state    any
+	scores   map[string]float64
+	err      error
 }
 
-func (f *mergeLLM) Unmarshal(_ context.Context, req adapter.Request, out any) error {
-	f.fakeLLM.req = req
+func (f *scoreClassifier) Noul(_ context.Context, state any, questions map[string]adapter.NoulQuestion) (map[string]float64, error) {
+	f.requests = append(f.requests, questions)
+	f.state = state
 
 	if f.err != nil {
-		return f.err
+		return nil, f.err
 	}
 
-	b, err := json.Marshal(mergeAnswer{Same: f.same})
-	if err != nil {
-		return err
+	out := make(map[string]float64, len(questions))
+
+	for id, q := range questions {
+		out[id] = f.scores[q.Instructions]
 	}
 
-	return json.Unmarshal(b, out)
+	return out, nil
 }
 
-func TestSameTag(t *testing.T) {
-	llm := &mergeLLM{fakeLLM: &fakeLLM{}, same: true}
+var candidateTag = Tag{Key: "investments", Terms: []string{"investments", "investeringar"}}
 
-	same, err := NewTagMerger(llm).Same(context.Background(),
-		Tag{Key: "investments", Terms: []string{"investments", "investeringar"}},
-		Tag{Key: "investment", Terms: []string{"investering", "investment"}},
-	)
+func TestDuplicateTag(t *testing.T) {
+	c := &scoreClassifier{scores: map[string]float64{
+		"Does this tag name the same concept as capital_raise (capital raise, nyemission)?": 0.85,
+		"Does this tag name the same concept as investment (investering, investment)?":      0.95,
+		"Does this tag name the same concept as acquisition (acquisition, förvärv)?":        0.1,
+	}}
+
+	key, err := NewTagMerger(c).Duplicate(context.Background(), candidateTag, []Tag{
+		{Key: "acquisition", Terms: []string{"acquisition", "förvärv"}},
+		{Key: "capital_raise", Terms: []string{"capital raise", "nyemission"}},
+		{Key: "investment", Terms: []string{"investering", "investment"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !same {
-		t.Error("want same")
+	if key != "investment" {
+		t.Errorf("key %q", key)
 	}
 
-	if p := llm.req.Prompt; !strings.Contains(p, "A: investments (investments, investeringar)") || !strings.Contains(p, "B: investment (investering, investment)") {
-		t.Errorf("prompt %q", p)
+	if len(c.requests) != 1 || len(c.requests[0]) != 3 {
+		t.Fatalf("requests %+v", c.requests)
+	}
+
+	for id, q := range c.requests[0] {
+		if q.Criteria == nil || q.Criteria.True == "" || q.Criteria.False == "" {
+			t.Errorf("question %s has no criteria", id)
+		}
+	}
+
+	state, ok := c.state.(map[string]any)
+	if !ok || state["key"] != "investments" {
+		t.Errorf("state %+v", c.state)
 	}
 }
 
-func TestSameTagUnavailable(t *testing.T) {
-	llm := &mergeLLM{fakeLLM: &fakeLLM{}, err: adapter.ErrUnavailable}
+func TestDuplicateTagBelowThreshold(t *testing.T) {
+	c := &scoreClassifier{scores: map[string]float64{
+		"Does this tag name the same concept as investment (investering, investment)?": 0.7,
+	}}
 
-	if _, err := NewTagMerger(llm).Same(context.Background(), Tag{Key: "a"}, Tag{Key: "b"}); !errors.Is(err, adapter.ErrUnavailable) {
+	key, err := NewTagMerger(c).Duplicate(context.Background(), candidateTag, []Tag{
+		{Key: "investment", Terms: []string{"investering", "investment"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if key != "" {
+		t.Errorf("key %q", key)
+	}
+}
+
+func TestDuplicateTagNoExisting(t *testing.T) {
+	c := &scoreClassifier{}
+
+	key, err := NewTagMerger(c).Duplicate(context.Background(), candidateTag, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if key != "" || len(c.requests) != 0 {
+		t.Errorf("key %q, requests %d", key, len(c.requests))
+	}
+}
+
+func TestDuplicateTagUnavailable(t *testing.T) {
+	c := &scoreClassifier{err: adapter.ErrUnavailable}
+
+	if _, err := NewTagMerger(c).Duplicate(context.Background(), candidateTag, []Tag{{Key: "investment"}}); !errors.Is(err, adapter.ErrUnavailable) {
 		t.Errorf("err %v", err)
 	}
 }

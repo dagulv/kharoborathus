@@ -69,7 +69,7 @@ func app(ctx context.Context) (err error) {
 	tagger := robot.NewTagger(classifier)
 	tagGenerator := robot.NewTagGenerator(llm)
 	discoverer := robot.NewDiscoverer(llm)
-	tagMerger := robot.NewTagMerger(llm)
+	tagMerger := robot.NewTagMerger(classifier)
 
 	syncs := make(chan source.Source, source.SyncQueue)
 
@@ -101,7 +101,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return tagging.RunPromotion(ctx, &taggingStore, tagMerger, tagger, llm.Schedule(), l.WithGroup("promotion"))
+		return tagging.RunPromotion(ctx, &taggingStore, tagMerger, tagger, l.WithGroup("promotion"))
 	})
 
 	g.Go(func() error {

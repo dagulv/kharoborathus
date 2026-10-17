@@ -24,8 +24,8 @@ const (
 	gateMaxRate     = 0.2
 )
 
-func RunPromotion(ctx context.Context, s *Store, m *robot.TagMerger, t *robot.Tagger, sched schedule.Schedule, l *slog.Logger) error {
-	for range sched.Tick(ctx, promoteInterval) {
+func RunPromotion(ctx context.Context, s *Store, m *robot.TagMerger, t *robot.Tagger, l *slog.Logger) error {
+	for range schedule.Always.Tick(ctx, promoteInterval) {
 		if err := promoteTags(ctx, s, m, t, l); err != nil {
 			l.Error("promote tags", "err", err)
 		}
@@ -63,16 +63,14 @@ func promoteCandidate(ctx context.Context, s *Store, m *robot.TagMerger, t *robo
 		return fmt.Errorf("err similar tags: %w", err)
 	}
 
-	for _, existing := range similar {
-		same, err := m.Same(ctx, candidate, existing)
-		if err != nil {
-			return fmt.Errorf("err merge check: %w", err)
-		}
+	duplicate, err := m.Duplicate(ctx, candidate, similar)
+	if err != nil {
+		return fmt.Errorf("err merge check: %w", err)
+	}
 
-		if same {
-			l.Info("tag aliased", "alias", c.Key, "key", existing.Key)
-			return s.AddAlias(ctx, c.Key, existing.Key, terms)
-		}
+	if duplicate != "" {
+		l.Info("tag aliased", "alias", c.Key, "key", duplicate)
+		return s.AddAlias(ctx, c.Key, duplicate, terms)
 	}
 
 	supporting, err := s.GetPosts(ctx, c.PostIDs)
