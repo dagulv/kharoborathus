@@ -18,7 +18,8 @@ func findListing(page []byte, pageURL, sourceURL string) (adapterName, listing s
 		return
 	}
 
-	if b, err := domain.BaseURL(sourceURL); err != nil || a != b {
+	// The scheme is ignored, since an http source often lands on its https homepage.
+	if b, err := domain.BaseURL(sourceURL); err != nil || withoutScheme(a) != withoutScheme(b) {
 		return
 	}
 
@@ -54,4 +55,10 @@ func findListing(page []byte, pageURL, sourceURL string) (adapterName, listing s
 	})
 
 	return
+}
+
+func withoutScheme(base string) string {
+	_, host, _ := strings.Cut(base, "://")
+
+	return host
 }

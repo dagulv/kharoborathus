@@ -49,7 +49,7 @@ Rules:
 - Only enabled, not deleted proposed sources are promoted.
 - Promotion clears `flagged_at` and sets `reviewed_at`, so the shadow gate judges the source on its new posts only.
 - A homepage fetch failure skips the source until the next daily run without using the cap.
-- Atom autodiscovery counts as RSS. The first matching `<link>` wins. The page adapter uses the final homepage URL when it is on the same domain, since the linker keeps only links on the listing's host, otherwise the source URL. A homepage that redirects to another domain gives the page adapter on the source URL, and its feed is ignored.
+- Atom autodiscovery counts as RSS. The first matching `<link>` wins. The page adapter uses the final homepage URL when it is on the same domain, ignoring scheme and `www.`, since the linker keeps only links on the listing's host, otherwise the source URL. A homepage that redirects to another domain gives the page adapter on the source URL, and its feed is ignored.
 - Homepage, listing and article fetches go through the private address guard, like ingest, since discovered domains choose where they point.
 - Dormancy measures from the later of the last post and `status_changed_at`. Only enabled sources go dormant.
 - A source goes dormant on a failure once it has 10 consecutive failures and `failing_since` is more than a day old. A short outage of the server's own network then cannot put every source to sleep for a probe interval.

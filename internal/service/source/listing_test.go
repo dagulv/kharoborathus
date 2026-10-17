@@ -34,3 +34,19 @@ func TestFindListingOtherHost(t *testing.T) {
 		}
 	}
 }
+
+func TestFindListingSchemeChange(t *testing.T) {
+	cases := []struct {
+		name, page, adapter, url string
+	}{
+		{"rss", `<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head></html>`, "rss", "https://www.a.example/feed.xml"},
+		{"page", `<html><body>Hej</body></html>`, "page", "https://www.a.example/"},
+	}
+
+	for _, c := range cases {
+		adapter, url := findListing([]byte(c.page), "https://www.a.example/", "http://a.example")
+		if adapter != c.adapter || url != c.url {
+			t.Errorf("%s: got %s %s", c.name, adapter, url)
+		}
+	}
+}
