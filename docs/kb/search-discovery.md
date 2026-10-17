@@ -35,7 +35,7 @@ A search runs only for events whose `action` is the key of a tag with `enabled`,
 
 Rules:
 
-- At most 330 searches in a rolling 24 hours, the $50 monthly budget spread over 30 days.
+- At most 322 searches in a rolling 24 hours, the $50 monthly budget spread over a 31-day month.
 - `result_count` holds the Brave result count of a paid call. It stays NULL when an item is marked searched without a call, so usage counts only paid calls.
 - Newest items first. When the cap holds back a backlog, older items age out of the window.
 - `search_lang` only for `sv` and `en`.
@@ -84,7 +84,7 @@ ALTER TABLE discover_queue ADD COLUMN result_count INT;
 | Results per query | 20 per result type | One call, filter cuts the rest. |
 | Freshness | `pw` | Same event, not old coverage. |
 | Monthly budget alert | $50 | About 10k queries at $5 per 1k. |
-| Daily search cap | 330 | $50 a month at $5 per 1k queries over 30 days. |
+| Daily search cap | 322 | $50 a month at $5 per 1k queries over a 31-day month. |
 | Searches per tick | 5 | Every minute, inside the cap. |
 | Pending search results limit | 200 | One day of ingest at its daily cap. |
 

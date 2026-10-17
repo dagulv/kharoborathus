@@ -7,7 +7,7 @@
 	const LINK_STATUSES = ['pending', 'accepted', 'rejected', 'duplicate', 'failed'];
 
 	// Mirrors dailySearchBudget in internal/service/discovery/search.go
-	const SEARCH_BUDGET = 330;
+	const SEARCH_BUDGET = 322;
 </script>
 
 <svelte:head><title>Admin</title></svelte:head>

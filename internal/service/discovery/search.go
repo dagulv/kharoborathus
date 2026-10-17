@@ -17,8 +17,8 @@ const (
 	searchInterval = time.Minute
 	searchBatch    = 5
 	dedupeWindow   = 7
-	// $50 a month at $5 per 1k queries, spread over 30 days.
-	dailySearchBudget = 330
+	// $50 a month at $5 per 1k queries, spread over a 31-day month.
+	dailySearchBudget = 322
 	// One day of ingest at its daily cap. More would age out before it is fetched.
 	maxPendingResults = 200
 	// Each tick buys a search, so a failing filter must not be retried every minute.
