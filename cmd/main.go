@@ -74,6 +74,7 @@ func app(ctx context.Context) (err error) {
 	tagGenerator := robot.NewTagGenerator(llm)
 	discoverer := robot.NewDiscoverer(llm)
 	tagMerger := robot.NewTagMerger(classifier)
+	ingester := ingest.NewIngester(&ingestStore, &switchStore, &taggingStore, &feedStore, &domainStore, trim, tagger, summarizer, l.WithGroup("ingest"))
 
 	syncs := make(chan source.Source, source.SyncQueue)
 
@@ -118,6 +119,10 @@ func app(ctx context.Context) (err error) {
 
 	g.Go(func() error {
 		return ingest.RunExtraction(ctx, &ingestStore, l.WithGroup("links"))
+	})
+
+	g.Go(func() error {
+		return ingester.Run(ctx)
 	})
 
 	g.Go(func() error {

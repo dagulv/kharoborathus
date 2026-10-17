@@ -7,7 +7,10 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 )
 
-const ShadowGate = "shadow_gate"
+const (
+	ShadowGate       = "shadow_gate"
+	DiscoveredIngest = "discovered_ingest"
+)
 
 type Store struct {
 	db *database.Database

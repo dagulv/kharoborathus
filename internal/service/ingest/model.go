@@ -5,3 +5,17 @@ type ScanPost struct {
 	Content string
 	BaseURL string
 }
+
+const (
+	statusAccepted  = "accepted"
+	statusRejected  = "rejected"
+	statusDuplicate = "duplicate"
+	statusFailed    = "failed"
+)
+
+type Link struct {
+	ID         string
+	URL        string
+	Via        string
+	FromPostID string
+}

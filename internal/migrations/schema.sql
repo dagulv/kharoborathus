@@ -220,4 +220,4 @@ CREATE TABLE IF NOT EXISTS switches (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-INSERT INTO switches (key) VALUES ('shadow_gate') ON CONFLICT (key) DO NOTHING;
+INSERT INTO switches (key) VALUES ('shadow_gate'), ('discovered_ingest') ON CONFLICT (key) DO NOTHING;
