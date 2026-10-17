@@ -8,7 +8,8 @@ packages:
   - unattended-upgrades
 
 write_files:
-  - path: /etc/ssh/sshd_config.d/90-hardening.conf
+  # sshd keeps the first value it reads, so this must sort before cloud-init's 50-cloud-init.conf.
+  - path: /etc/ssh/sshd_config.d/01-hardening.conf
     content: |
       PermitRootLogin no
       PasswordAuthentication no
