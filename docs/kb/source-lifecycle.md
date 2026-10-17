@@ -52,7 +52,7 @@ Rules:
 - Atom autodiscovery counts as RSS. The first matching `<link>` wins. The page adapter uses the final homepage URL when it is on the same domain, since the linker keeps only links on the listing's host, otherwise the source URL.
 - Homepage, listing and article fetches go through the private address guard, like ingest, since discovered domains choose where they point.
 - Dormancy measures from the later of the last post and `status_changed_at`. Only enabled sources go dormant.
-- The tenth consecutive failure makes a source dormant at once.
+- A source goes dormant on a failure once it has 10 consecutive failures and `failing_since` is more than a day old. A short outage of the server's own network then cannot put every source to sleep for a probe interval.
 - The probe schedule lives in memory, so a restart probes every dormant source once. A revived source drops the probe pause at the next refresh.
 - Only a fresh flag demotes, since demotion happens in the update that flags.
 
@@ -61,6 +61,7 @@ Rules:
 ```sql
 ALTER TABLE sources ADD COLUMN status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE sources ADD COLUMN fetch_failures INT NOT NULL DEFAULT 0;
+ALTER TABLE sources ADD COLUMN failing_since TIMESTAMPTZ;
 ALTER TABLE sources ADD COLUMN promoted_at TIMESTAMPTZ;
 ```
 
@@ -76,6 +77,7 @@ Until the first deploy these go straight into `schema.sql`. `fetch_failures` res
 | Max promotions per week | 5 | Scale slowly. |
 | Dormancy window | 30 days | News sources publish often. |
 | Max fetch failures | 10 | Site moved or blocks us. |
+| Min failing time | 1 day | A network blip is no dead site. |
 | Probe interval | 7 days | Cheap check for revival. |
 
 ## Open questions
