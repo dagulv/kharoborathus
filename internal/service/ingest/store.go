@@ -25,6 +25,7 @@ func (s *Store) ListUnscannedPosts(ctx context.Context, windowDays, limit int) (
 		JOIN sources s ON s.id = p.source_id
 		JOIN domains d ON d.id = p.domain_id
 		WHERE s.status IN ('active', 'dormant')
+			AND s.enabled
 			AND p.created_at > now() - make_interval(days => $1)
 			AND NOT EXISTS (SELECT 1 FROM link_checked c WHERE c.post_id = p.id)
 		ORDER BY p.created_at
@@ -144,15 +145,26 @@ func (s *Store) Retry(ctx context.Context, id, domainID, reason string, maxAttem
 	return failed, nil
 }
 
+var errSourceDisabled = errors.New("ingest: source disabled")
+
+// A disabled or deleted source blocks its domain, so you can stop a domain without a code change.
 func (s *Store) Accept(ctx context.Context, link Link, f feed.Feed, scores any) (post feed.Feed, err error) {
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT id FROM sources WHERE domain_id = $1 ORDER BY created_at LIMIT 1`, f.DomainID).Scan(&f.SourceID)
+		allowed := true
+
+		err := tx.QueryRow(ctx, `
+			SELECT id, enabled AND deleted_at IS NULL FROM sources WHERE domain_id = $1 ORDER BY created_at LIMIT 1
+			`, f.DomainID).Scan(&f.SourceID, &allowed)
 		if errors.Is(err, pgx.ErrNoRows) {
 			f.SourceID, err = proposeSource(ctx, tx, f.DomainID, link.FromPostID)
 		}
 
 		if err != nil {
 			return fmt.Errorf("err resolve source: %w", err)
+		}
+
+		if !allowed {
+			return errSourceDisabled
 		}
 
 		post, err = feed.InsertFeed(ctx, tx, f)

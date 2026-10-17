@@ -255,6 +255,11 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 	f.Tags = v.Keys
 
 	_, err = in.store.Accept(ctx, link, f, v)
+	if errors.Is(err, errSourceDisabled) {
+		res.status, res.reason = statusFailed, "source disabled"
+		return res, nil
+	}
+
 	if errors.Is(err, pgx.ErrNoRows) {
 		res.status, res.reason = statusDuplicate, "url exists"
 		return res, nil

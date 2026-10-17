@@ -144,6 +144,7 @@ func (s *Store) ListQueue(ctx context.Context, windowDays, limit int) ([]SearchI
 		JOIN tags t ON t.key = q.action AND t.enabled AND t.status = 'active' AND t.gate
 		WHERE q.searched_at IS NULL
 			AND s.status IN ('active', 'dormant')
+			AND s.enabled
 			AND q.created_at > now() - make_interval(days => $1)
 		ORDER BY q.created_at DESC
 		LIMIT $2

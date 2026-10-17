@@ -5,7 +5,7 @@
 
 ## Summary
 
-Trust belongs to sources. A source with `status = 'active'` or `'dormant'` is trusted, a `proposed` one is not, and posts inherit that. Discovered sources start proposed and earn trust through the [source lifecycle](source-lifecycle.md).
+Trust belongs to sources. An enabled source with `status = 'active'` or `'dormant'` is trusted. A `proposed` or disabled one is not, and posts inherit that. Discovered sources start proposed and earn trust through the [source lifecycle](source-lifecycle.md).
 
 ## Current state
 

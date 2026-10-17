@@ -309,6 +309,7 @@ func (s *Store) ListRecentPosts(ctx context.Context, days, limit int) ([]Post, e
 		JOIN sources s ON s.id = p.source_id
 		WHERE p.created_at > now() - make_interval(days => $1)
 			AND s.status IN ('active', 'dormant')
+			AND s.enabled
 		ORDER BY p.created_at DESC
 		LIMIT $2
 		`, days, limit)
@@ -418,6 +419,7 @@ func (s *Store) RecomputeRates(ctx context.Context, windowDays int, maxRate floa
 			WHERE t.status = 'active'
 				AND p.created_at > now() - make_interval(days => $1)
 				AND s.status IN ('active', 'dormant')
+				AND s.enabled
 			GROUP BY t.key
 		)
 		UPDATE tags t
