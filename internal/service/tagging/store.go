@@ -33,7 +33,7 @@ func (s *Store) ListTags(ctx context.Context) ([]robot.Tag, error) {
 		ORDER BY t.key
 		`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("err query tags: %w", err)
 	}
 
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (tag robot.Tag, err error) {
@@ -105,7 +105,7 @@ func (s *Store) CompleteTagging(ctx context.Context, postID string, keys []strin
 				SET tags = ARRAY(SELECT DISTINCT unnest(tags || $2::text[]))
 				WHERE id = $1
 				`, postID, keys); err != nil {
-				return err
+				return fmt.Errorf("err add post tags: %w", err)
 			}
 
 			if _, err := tx.Exec(ctx, `UPDATE tags SET last_matched_at = now() WHERE key = ANY($1::text[])`, keys); err != nil {
@@ -113,12 +113,14 @@ func (s *Store) CompleteTagging(ctx context.Context, postID string, keys []strin
 			}
 		}
 
-		_, err := tx.Exec(ctx, `
+		if _, err := tx.Exec(ctx, `
 			INSERT INTO tag_checked (post_id, gate_passed) VALUES ($1, $2)
 			ON CONFLICT (post_id) DO NOTHING
-			`, postID, gatePassed)
+			`, postID, gatePassed); err != nil {
+			return fmt.Errorf("err mark tag checked: %w", err)
+		}
 
-		return err
+		return nil
 	})
 }
 

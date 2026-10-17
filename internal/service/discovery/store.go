@@ -72,7 +72,7 @@ func (s *Store) CompleteDiscovery(ctx context.Context, postID string, items []Di
 				SELECT $1, * FROM unnest($2::text[], $3::text[], $4::text[])
 				ON CONFLICT (post_id, query) DO NOTHING
 				`, postID, entities, actions, queries); err != nil {
-				return err
+				return fmt.Errorf("err insert discover items: %w", err)
 			}
 
 			if _, err := tx.Exec(ctx, `
@@ -98,9 +98,11 @@ func (s *Store) CompleteDiscovery(ctx context.Context, postID string, items []Di
 			}
 		}
 
-		_, err := tx.Exec(ctx, `INSERT INTO discover_checked (post_id) VALUES ($1) ON CONFLICT (post_id) DO NOTHING`, postID)
+		if _, err := tx.Exec(ctx, `INSERT INTO discover_checked (post_id) VALUES ($1) ON CONFLICT (post_id) DO NOTHING`, postID); err != nil {
+			return fmt.Errorf("err mark discovered: %w", err)
+		}
 
-		return err
+		return nil
 	})
 }
 
