@@ -82,23 +82,17 @@ func (s *Store) AddTags(ctx context.Context, terms []Term) error {
 
 	keys, langs, words := termColumns(terms)
 
-	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO tags (key)
-			SELECT DISTINCT unnest($1::text[])
-			ON CONFLICT (key) DO NOTHING
-			`, keys); err != nil {
-			return err
-		}
+	// A key merged away since the vocabulary snapshot must not come back, so only existing tags get terms.
+	if _, err := s.db.Exec(ctx, `
+		INSERT INTO tag_terms (key, lang, term)
+		SELECT u.k, u.l, u.t FROM unnest($1::text[], $2::text[], $3::text[]) AS u(k, l, t)
+		WHERE EXISTS (SELECT 1 FROM tags WHERE key = u.k)
+		ON CONFLICT (key, lang, term) DO NOTHING
+		`, keys, langs, words); err != nil {
+		return fmt.Errorf("err insert tag terms: %w", err)
+	}
 
-		_, err := tx.Exec(ctx, `
-			INSERT INTO tag_terms (key, lang, term)
-			SELECT * FROM unnest($1::text[], $2::text[], $3::text[])
-			ON CONFLICT (key, lang, term) DO NOTHING
-			`, keys, langs, words)
-
-		return err
-	})
+	return nil
 }
 
 func (s *Store) CompleteTagging(ctx context.Context, postID string, keys []string) error {
