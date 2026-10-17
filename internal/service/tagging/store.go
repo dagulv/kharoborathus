@@ -402,17 +402,17 @@ func (s *Store) DropProposals(ctx context.Context, key string) error {
 }
 
 func (s *Store) RecomputeRates(ctx context.Context, windowDays int, maxRate float64, minPosts int) (int64, error) {
+	// Only posts classified after the tag existed count, otherwise new tags look rare and wrongly gate.
 	tag, err := s.db.Exec(ctx, `
-		WITH recent AS (
-			SELECT tags FROM posts WHERE created_at > now() - make_interval(days => $1)
-		), rates AS (
+		WITH rates AS (
 			SELECT
 				t.key,
-				(count(*) FILTER (WHERE t.key = ANY (r.tags)))::real / count(*) AS rate,
+				(count(*) FILTER (WHERE t.key = ANY (p.tags)))::real / count(*) AS rate,
 				count(*) AS n
 			FROM tags t
-			CROSS JOIN recent r
-			WHERE t.status = 'active'
+			JOIN tag_checked c ON c.checked_at >= t.created_at
+			JOIN posts p ON p.id = c.post_id
+			WHERE t.status = 'active' AND p.created_at > now() - make_interval(days => $1)
 			GROUP BY t.key
 		)
 		UPDATE tags t
