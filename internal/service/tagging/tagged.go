@@ -3,6 +3,7 @@ package tagging
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -75,32 +76,31 @@ func tagPosts(ctx context.Context, s *Store, g *robot.TagGenerator, t *robot.Tag
 }
 
 func generateTags(ctx context.Context, s *Store, g *robot.TagGenerator, lang string, post Post) error {
-	tags, err := s.ListTags(ctx)
+	v, err := s.Vocabulary(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("err vocabulary: %w", err)
 	}
 
-	existing := make([]string, len(tags))
-	for i, tag := range tags {
-		existing[i] = tag.Key
-	}
-
-	generated, err := g.Generate(ctx, lang, post.Content, existing)
+	generated, err := g.Generate(ctx, lang, post.Content, v.ActiveKeys())
 	if err != nil {
-		return err
+		return fmt.Errorf("err generate tags: %w", err)
 	}
 
-	terms := make([]Term, 0, 2*len(generated))
+	r := route(v, lang, generated)
 
-	for _, tag := range generated {
-		terms = append(terms, Term{Key: tag.Key, Lang: englishLang, Term: strings.ReplaceAll(tag.Key, "_", " ")})
-
-		if lang != "" && lang != englishLang {
-			terms = append(terms, Term{Key: tag.Key, Lang: lang, Term: tag.Term})
-		}
+	if err := s.AddTags(ctx, r.terms); err != nil {
+		return fmt.Errorf("err add terms: %w", err)
 	}
 
-	return s.AddTags(ctx, terms)
+	if err := s.Reactivate(ctx, r.reactivate); err != nil {
+		return fmt.Errorf("err reactivate: %w", err)
+	}
+
+	if err := s.AddProposals(ctx, post.ID, post.SourceID, r.proposals); err != nil {
+		return fmt.Errorf("err add proposals: %w", err)
+	}
+
+	return nil
 }
 
 func normalizeLang(lang string) string {
