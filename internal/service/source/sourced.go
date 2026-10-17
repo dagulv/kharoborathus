@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -388,18 +389,13 @@ func (p pipeline[T]) markdownFeed(ctx context.Context, l *slog.Logger, in <-chan
 		defer close(out)
 
 		for f := range in {
-			if f.ShortContent == "" {
-				f.ShortContent = excerpt(f.Content)
-			}
-
-			if md, err := htmltomarkdown.ConvertString(f.Content, converter.WithDomain(f.URL)); err != nil {
+			md, err := Markdown(f)
+			if err != nil {
 				l.Error("convert to markdown", "source", f.SourceID, "url", f.URL, "err", err)
-			} else {
-				f.Content = md
 			}
 
 			select {
-			case out <- f:
+			case out <- md:
 			case <-ctx.Done():
 				return
 			}
@@ -407,6 +403,21 @@ func (p pipeline[T]) markdownFeed(ctx context.Context, l *slog.Logger, in <-chan
 	}()
 
 	return out
+}
+
+func Markdown(f feed.Feed) (feed.Feed, error) {
+	if f.ShortContent == "" {
+		f.ShortContent = excerpt(f.Content)
+	}
+
+	md, err := htmltomarkdown.ConvertString(f.Content, converter.WithDomain(f.URL))
+	if err != nil {
+		return f, fmt.Errorf("err convert to markdown: %w", err)
+	}
+
+	f.Content = md
+
+	return f, nil
 }
 
 func (p pipeline[T]) summarizeFeed(ctx context.Context, l *slog.Logger, in <-chan feed.Feed) <-chan feed.Feed {
