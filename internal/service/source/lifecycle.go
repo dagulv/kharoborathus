@@ -78,11 +78,14 @@ func promote(ctx context.Context, s *Store, sw *switches.Store, client *http.Cli
 
 		name, listing := findListing(page, final, c.URL)
 
-		if err := s.Promote(ctx, c.ID, name, listing); err != nil {
+		ok, err := s.Promote(ctx, c.ID, name, listing)
+		if err != nil {
 			return promoted, err
 		}
 
-		promoted++
+		if ok {
+			promoted++
+		}
 	}
 
 	return promoted, nil

@@ -260,16 +260,18 @@ func (s *Store) ListPromotable(ctx context.Context, minAccepted, minDays int, mi
 	return sources, nil
 }
 
-func (s *Store) Promote(ctx context.Context, id, adapterName, url string) error {
+// Reports false when the source left proposed since it was listed.
+func (s *Store) Promote(ctx context.Context, id, adapterName, url string) (bool, error) {
 	// reviewed_at makes the shadow gate judge the source on posts after promotion only.
-	if _, err := s.db.Exec(ctx, `
+	tag, err := s.db.Exec(ctx, `
 		UPDATE sources
 		SET status = 'active', adapter = $2, url = $3, status_changed_at = now(), promoted_at = now(),
 			flagged_at = NULL, reviewed_at = now(), fetch_failures = 0
 		WHERE id = $1 AND status = 'proposed'
-		`, id, adapterName, url); err != nil {
-		return fmt.Errorf("err promote source: %w", err)
+		`, id, adapterName, url)
+	if err != nil {
+		return false, fmt.Errorf("err promote source: %w", err)
 	}
 
-	return nil
+	return tag.RowsAffected() > 0, nil
 }
