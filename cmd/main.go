@@ -64,7 +64,8 @@ func app(ctx context.Context) (err error) {
 
 	trim := source.NewTrim(&domainStore, llm, l.WithGroup("trim"))
 	classifier, err := adapter.NewJev(env, l.WithGroup("jev"))
-	if err != nil {
+	mocked := err != nil
+	if mocked {
 		l.Warn("classifier mocked", "err", err)
 		classifier = adapter.NewJevMock(l.WithGroup("jev"))
 	}
@@ -122,6 +123,11 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
+		if mocked {
+			l.Warn("discovered ingest off, the mocked classifier passes almost any page")
+			return nil
+		}
+
 		return ingester.Run(ctx)
 	})
 
