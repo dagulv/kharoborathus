@@ -5,3 +5,6 @@ ARG DICT_URL=https://raw.githubusercontent.com/LibreOffice/dictionaries/44f958e5
 ADD ${DICT_URL}/sv_SE.aff /usr/local/share/postgresql/tsearch_data/sv_se.affix
 ADD ${DICT_URL}/sv_SE.dic /usr/local/share/postgresql/tsearch_data/sv_se.dict
 RUN chmod 644 /usr/local/share/postgresql/tsearch_data/sv_se.*
+
+# Runs only on an empty data directory
+COPY internal/migrations/schema.sql /docker-entrypoint-initdb.d/schema.sql

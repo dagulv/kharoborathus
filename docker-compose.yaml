@@ -1,7 +1,9 @@
 services:
 
   db:
-    build: docker/postgres
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
     restart: unless-stopped
     env_file:
       - .env

@@ -1,0 +1,9 @@
+.git
+.idea
+.superpowers
+docs
+frontend
+deploy/tofu
+deploy/production.env
+.env
+.env-sample
