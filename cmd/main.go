@@ -105,6 +105,10 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
+		return tagging.RunMaintenance(ctx, &taggingStore, l.WithGroup("maintenance"))
+	})
+
+	g.Go(func() error {
 		return discovery.Run(ctx, &discoveryStore, discoverer, llm.Schedule(), l.WithGroup("discovery"))
 	})
 

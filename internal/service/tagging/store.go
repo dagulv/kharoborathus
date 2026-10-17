@@ -400,3 +400,41 @@ func (s *Store) DropProposals(ctx context.Context, key string) error {
 
 	return nil
 }
+
+func (s *Store) RecomputeRates(ctx context.Context, windowDays int, maxRate float64, minPosts int) (int64, error) {
+	tag, err := s.db.Exec(ctx, `
+		WITH recent AS (
+			SELECT tags FROM posts WHERE created_at > now() - make_interval(days => $1)
+		), rates AS (
+			SELECT
+				t.key,
+				(count(*) FILTER (WHERE t.key = ANY (r.tags)))::real / count(*) AS rate,
+				count(*) AS n
+			FROM tags t
+			CROSS JOIN recent r
+			WHERE t.status = 'active'
+			GROUP BY t.key
+		)
+		UPDATE tags t
+		SET match_rate = rates.rate, gate = rates.rate < $2 AND rates.n >= $3
+		FROM rates
+		WHERE rates.key = t.key
+		`, windowDays, maxRate, minPosts)
+	if err != nil {
+		return 0, fmt.Errorf("err recompute tag rates: %w", err)
+	}
+
+	return tag.RowsAffected(), nil
+}
+
+func (s *Store) MarkDormant(ctx context.Context, days int) (int64, error) {
+	tag, err := s.db.Exec(ctx, `
+		UPDATE tags SET status = 'dormant'
+		WHERE status = 'active' AND coalesce(last_matched_at, created_at) < now() - make_interval(days => $1)
+		`, days)
+	if err != nil {
+		return 0, fmt.Errorf("err mark dormant tags: %w", err)
+	}
+
+	return tag.RowsAffected(), nil
+}
