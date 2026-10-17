@@ -293,7 +293,11 @@ export const listSwitches = query(async () => {
 			s.key,
 			s.enabled,
 			s.updated_at,
-			NULL::text AS readiness
+			CASE s.key
+				WHEN 'shadow_gate' THEN (
+					SELECT count(*) FROM tags WHERE enabled AND status = 'active' AND gate
+				) || ' gate tags'
+			END AS readiness
 		FROM switches s
 		ORDER BY s.key
 	`;

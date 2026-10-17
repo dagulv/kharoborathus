@@ -5,7 +5,10 @@
 
 	const fmt = new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short', timeStyle: 'short' });
 
-	const descriptions: Record<string, string> = {};
+	const descriptions: Record<string, string> = {
+		shadow_gate:
+			'Stores the shadow gate result per post and flags drifting sources. Turn on when several gate tags exist.'
+	};
 
 	let failed = $state('');
 

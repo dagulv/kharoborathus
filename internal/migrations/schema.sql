@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS sources (
   rate INT NOT NULL DEFAULT 15,
   metadata JSONB NOT NULL DEFAULT '{}',
   target_tags TEXT[] NOT NULL DEFAULT '{}',
+  flagged_at TIMESTAMPTZ,
+  reviewed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ
 );
@@ -147,6 +149,7 @@ CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts (created_at);
 
 CREATE TABLE IF NOT EXISTS tag_checked (
   post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,
+  gate_passed BOOLEAN, -- NULL when the switch was off or there was nothing to gate against
   checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -186,3 +189,5 @@ CREATE TABLE IF NOT EXISTS switches (
   enabled BOOLEAN NOT NULL DEFAULT false,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+INSERT INTO switches (key) VALUES ('shadow_gate') ON CONFLICT (key) DO NOTHING;
