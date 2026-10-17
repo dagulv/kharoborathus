@@ -126,6 +126,11 @@ func app(ctx context.Context) (err error) {
 			return nil
 		}
 
+		if mocked {
+			l.Warn("search discovery off, discovered ingest cannot run with the mocked classifier")
+			return nil
+		}
+
 		return discovery.RunSearch(ctx, &discoveryStore, &switchStore, searcher, resultFilter, llm.Schedule(), l.WithGroup("search"))
 	})
 

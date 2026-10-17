@@ -189,6 +189,17 @@ func (s *Store) SearchesLastDay(ctx context.Context) (n int, err error) {
 	return n, nil
 }
 
+func (s *Store) PendingResults(ctx context.Context, windowDays int) (n int, err error) {
+	if err = s.db.QueryRow(ctx, `
+		SELECT count(*) FROM link_queue
+		WHERE via = 'search' AND status = 'pending' AND created_at > now() - make_interval(days => $1)
+		`, windowDays).Scan(&n); err != nil {
+		return 0, fmt.Errorf("err count pending search results: %w", err)
+	}
+
+	return n, nil
+}
+
 func (s *Store) QueueResults(ctx context.Context, item SearchItem, urls []string, resultCount int) (queued int64, err error) {
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `

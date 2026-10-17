@@ -20,6 +20,8 @@ const (
 	dedupeWindow   = 7
 	// $50 a month at $5 per 1k queries, spread over 30 days.
 	dailySearchBudget = 330
+	// One day of ingest at its daily cap. More would age out before it is fetched.
+	maxPendingResults = 200
 )
 
 func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f *robot.ResultFilter, sched schedule.Schedule, l *slog.Logger) error {
@@ -35,6 +37,17 @@ func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f
 func searchEvents(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f *robot.ResultFilter, l *slog.Logger) error {
 	on, err := sw.Enabled(ctx, switches.SearchDiscovery)
 	if err != nil || !on {
+		return err
+	}
+
+	// Results are only worth paying for while ingest fetches them.
+	on, err = sw.Enabled(ctx, switches.DiscoveredIngest)
+	if err != nil || !on {
+		return err
+	}
+
+	pending, err := s.PendingResults(ctx, dedupeWindow)
+	if err != nil || pending >= maxPendingResults {
 		return err
 	}
 
@@ -97,7 +110,16 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, se Searcher
 		kept, err := f.Keep(ctx, item.Entity, item.Action, results)
 
 		switch {
-		case errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil:
+		case ctx.Err() != nil:
+			return nil
+		case errors.Is(err, adapter.ErrUnavailable):
+			l.Warn("filter search results unavailable, results dropped", "item", item.ID, "err", err)
+
+			// The search is paid either way, so it must count against the budget.
+			if _, err := s.QueueResults(ctx, item, nil, len(results)); err != nil {
+				return err
+			}
+
 			return nil
 		case err != nil:
 			l.Warn("filter search results", "item", item.ID, "err", err)
