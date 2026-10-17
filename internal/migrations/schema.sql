@@ -149,6 +149,32 @@ CREATE TABLE IF NOT EXISTS discover_checked (
   checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS link_queue (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  url TEXT UNIQUE NOT NULL,
+  via TEXT NOT NULL, -- link | search
+  from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
+  discover_item_id UUID REFERENCES discover_queue (id) ON DELETE SET NULL,
+  domain_id UUID REFERENCES domains (id), -- set on fetch, drives source promotion
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
+  gate_scores JSONB NOT NULL DEFAULT '{}',
+  error TEXT,
+  attempts INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  checked_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS link_queue_pending_idx ON link_queue (created_at)
+WHERE
+  status = 'pending';
+
+CREATE INDEX IF NOT EXISTS link_queue_domain_idx ON link_queue (domain_id, status);
+
+CREATE TABLE IF NOT EXISTS link_checked (
+  post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,
+  checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts (created_at);
 
 CREATE TABLE IF NOT EXISTS tag_checked (

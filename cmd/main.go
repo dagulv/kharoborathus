@@ -17,6 +17,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/service/discovery"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
+	"github.com/dagulv/kharoborathus/internal/service/ingest"
 	"github.com/dagulv/kharoborathus/internal/service/robot"
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/source"
@@ -53,6 +54,7 @@ func app(ctx context.Context) (err error) {
 	discoveryStore := discovery.NewStore(db)
 	taggingStore := tagging.NewStore(db)
 	switchStore := switches.NewStore(db)
+	ingestStore := ingest.NewStore(db)
 
 	llm, err := adapter.NewDeepSeek(env, l.WithGroup("deepseek"))
 	if err != nil {
@@ -112,6 +114,10 @@ func app(ctx context.Context) (err error) {
 
 	g.Go(func() error {
 		return discovery.Run(ctx, &discoveryStore, discoverer, llm.Schedule(), l.WithGroup("discovery"))
+	})
+
+	g.Go(func() error {
+		return ingest.RunExtraction(ctx, &ingestStore, l.WithGroup("links"))
 	})
 
 	g.Go(func() error {
