@@ -23,14 +23,16 @@ Tools:
 | OpenTofu with the `UpCloudLtd/upcloud` provider | Creates the server and its backups | Infra as code, as asked. |
 | cloud-init | Installs Docker, a firewall, haloyd and a `deploy` user on first boot | Ships with the Ubuntu template, so no extra tool is needed. |
 | Haloy v0.1.0-beta.73 | Builds, ships and runs the three services. Its proxy serves HTTPS | One config file replaces kustomize overlays, with zero-downtime deploys, rollbacks and certificates and no registry. |
+| SOPS with age, through the `vault` tool | Encrypts secrets in git | Same flow as the other infra repos. The age key lives in Bitwarden, never on disk. |
 
 Kustomize, kubectl and kubectx are left out. Kustomize only renders Kubernetes manifests, and this setup has no cluster.
 
 Layout:
 
 1. `infra/tofu` holds the OpenTofu config and the cloud-init template.
-2. `infra/haloy.yaml` holds the production stack and its domains. `infra/.env` holds its secrets.
-3. `infra/api.Dockerfile` and `frontend/Dockerfile` build the Go app and the admin. `docker/postgres/Dockerfile` builds the database with the Swedish dictionary and `schema.sql`.
+2. `infra/haloy.yaml` holds the production stack and its domains. `infra/.env` holds its safe values.
+3. `infra/.sops.yaml` and `infra/secrets/{dev,prod}/vault.sealed` hold the encrypted secrets. `infra/secrets.sh` runs a command with one vault's secrets in its environment.
+4. `infra/api.Dockerfile` and `frontend/Dockerfile` build the Go app and the admin. `docker/postgres/Dockerfile` builds the database with the Swedish dictionary and `schema.sql`.
 
 Server:
 
@@ -60,7 +62,7 @@ Deploy:
 
 1. `tofu apply` in `infra/tofu` creates the server. You point the site, API and Haloy API domains at its IPv4 output.
 2. `haloy server add` registers the server with the token cloud-init left in the deploy user's home.
-3. `haloy deploy` builds the images locally and uploads them to haloyd, so no registry is needed. The `db` target is protected and deploys only by name.
+3. `haloy deploy`, run from `infra/` under `secrets.sh prod`, builds the images locally and uploads them to haloyd, so no registry is needed. The `db` target is protected and deploys only by name. Haloy reads the working directory's `.env` before the one beside its config, so a run from the repo root would deploy dev values.
 4. Postgres runs `schema.sql` on its first start with an empty volume. Later schema changes need migrations, see [rollout](rollout.md).
 
 Build notes:
@@ -70,9 +72,12 @@ Build notes:
 
 Secrets:
 
-- UpCloud credentials come from `UPCLOUD_USERNAME` and `UPCLOUD_PASSWORD`. They never enter the config.
-- The OpenTofu state is encrypted with a passphrase from `TF_VAR_state_passphrase`. It stays local and gitignored.
-- App secrets live in `infra/.env`, which is gitignored. Haloy reads it on your machine and passes each value `haloy.yaml` names to its container.
+- No secret sits in an env file. Env files hold safe values: user names, database names, hosts and ports.
+- Secrets live in the `dev` and `prod` SOPS vaults, one Kubernetes `Secret` manifest per file, since that is the format `vault` manages. Only `data` and `stringData` are encrypted. Both vaults share one age key, kept in a Bitwarden custom field `AGE-SECRET-KEY`. `vault` requires a cluster name, so they name `none`.
+- `secrets.sh` unlocks Bitwarden with the master password, decrypts every file of one vault in memory and exports its `stringData` keys, then locks Bitwarden and runs the command. The password and session go through env, never argv. A set `SOPS_AGE_KEY` skips Bitwarden.
+- The Go app and Vite both let the process env win over `.env`, and both expand `${POSTGRES_PASSWORD}` in a `.env` value from it. The dev Postgres container reads `POSTGRES_PASSWORD` from the process env too.
+- UpCloud credentials: `UPCLOUD_USERNAME` is a safe value you export. `UPCLOUD_PASSWORD` and `TF_VAR_state_passphrase` live in the prod vault's `tofu.yaml`. The OpenTofu state stays local, encrypted and gitignored.
+- Haloy passes each value `haloy.yaml` names to its container. The rest of the prod vault never leaves your machine.
 - The Haloy API token lives in `~/.config/haloy` locally and in `/etc/haloy` on the server.
 
 ## Schema changes

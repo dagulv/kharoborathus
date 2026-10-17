@@ -1,5 +1,6 @@
 # Replace the example domains with yours. server is haloy_api_domain from terraform.tfvars.
-# Secrets come from infra/.env, see .env.example.
+# Safe values come from infra/.env, see .env.example. Secrets come from the prod vault:
+# cd infra && ./secrets.sh prod haloy deploy --all
 server: haloy.news.example.com
 
 targets:

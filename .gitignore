@@ -3,3 +3,4 @@ infra/tofu/.terraform/
 infra/tofu/*.tfstate*
 infra/tofu/*.tfplan
 infra/tofu/terraform.tfvars
+infra/secrets/*/vault.open/

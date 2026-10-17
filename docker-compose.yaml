@@ -7,6 +7,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run through infra/secrets.sh dev, since .env holds no secrets}
     ports:
       - 127.0.0.1:5432:5432
     volumes:

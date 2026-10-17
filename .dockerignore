@@ -4,6 +4,7 @@
 docs
 frontend
 infra/tofu
+infra/secrets
 infra/.env*
 .env
 .env-sample
