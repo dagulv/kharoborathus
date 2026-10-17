@@ -30,7 +30,7 @@ Kustomize, kubectl and kubectx are left out. Kustomize only renders Kubernetes m
 Layout:
 
 1. `deploy/tofu` holds the OpenTofu config and the cloud-init template.
-2. `deploy/compose.yaml` holds the production stack. `deploy/Caddyfile` holds routing.
+2. `deploy/compose.yaml` holds the production stack as project `kharoborathus-prod`, so a run without `DOCKER_HOST` cannot touch the dev `kharoborathus` project and its database. `deploy/Caddyfile` holds routing.
 3. `deploy/api.Dockerfile` and `frontend/Dockerfile` build the Go app and the admin. `docker/postgres/Dockerfile` builds the database with the Swedish dictionary and `schema.sql`.
 4. `deploy/deploy.sh` builds and starts the stack on the server over SSH.
 

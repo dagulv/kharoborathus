@@ -1,4 +1,4 @@
-name: kharoborathus
+name: kharoborathus-prod
 
 # Rotated logs, so a long-running scraper cannot fill the disk.
 x-logging: &logging
