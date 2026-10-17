@@ -13,6 +13,7 @@ Searches the web with the Brave Search API for other sources on events found in 
 - `action` is free text from [discovery.md](../../internal/service/robot/prompts/discovery.md), one or two lowercase words.
 - It runs on every post, not only trusted ones.
 - `ListQueue` and `MarkSearched` exist in [discovery/store.go](../../internal/service/discovery/store.go) but nothing calls them.
+- `discover_queue_event_idx` exists. [Post linking](post-linking.md) reads it to match `same_event` posts.
 
 ## Design
 

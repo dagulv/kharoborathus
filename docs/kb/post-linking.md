@@ -1,6 +1,6 @@
 # Post linking
 
-**Status:** designed
+**Status:** done
 **Related:** [search-discovery](search-discovery.md), [discovered-ingest](discovered-ingest.md), [link-extraction](link-extraction.md)
 
 ## Summary
@@ -9,10 +9,9 @@ Every relation between two posts is a row in `post_links`. This page owns which 
 
 ## Current state
 
-- `post_links (from_post_id, to_post_id, relation, metadata)` exists with relations planned in a comment, but has no writers.
-- `posts.content_hash` only catches byte-identical content.
-- `--simhash BIGINT` is commented out in [schema.sql](../../internal/migrations/schema.sql).
-- [discovery.go](../../internal/service/discovery/discovery.go) already extracts `entity` and `action` per post.
+- `duplicate_of` is written by `CreateFeed` in [feed/store.go](../../internal/service/feed/store.go), `same_event` by `CompleteDiscovery` in [discovery/store.go](../../internal/service/discovery/store.go).
+- `discovered` waits for phase 4 of [rollout](rollout.md).
+- The feed does not read `post_links` yet.
 
 ## Design
 
@@ -29,6 +28,7 @@ Rules:
 - Links point from the newer post to the older one. The older post anchors a group, so `to_post_id` with a relation gives the whole group.
 - A pair can have several relations. A search hit is often both `discovered` and `same_event`.
 - `follows_up` and `translation_of` from the schema comment stay unused until needed.
+- Newer and older mean insert order, `created_at`. The window is measured back from the new post's `created_at`. `posted_at` comes from feeds, can be missing or wrong, and would move existing anchors.
 
 ### Same text: `duplicate_of`
 
@@ -38,6 +38,8 @@ Catches wire copies, for example a TT article republished on several sites.
 2. Compare against posts from the window with `bit_count((simhash # $1)::bit(64))`.
 3. Within the distance limit, link the new post to the earliest match.
 4. Trusted duplicates are still inserted. Discovered duplicates are rejected in [discovered ingest](discovered-ingest.md) with `status = 'duplicate'`, since they add nothing.
+
+Plain text is the markdown `content` with link targets removed, so `[text](url)` keeps `text`. Words are lowercased runs of letters and digits. Fewer than 3 words form one shingle. Content without words stores no simhash and never links, otherwise every image-only post would match every other. The uint64 hash is stored as its bit pattern in a signed `BIGINT`, so negative values are normal.
 
 ### Same event: `same_event`
 
@@ -51,11 +53,14 @@ Unchanged for now. Grouped or flat presentation is a later frontend decision.
 
 ## Schema changes
 
+Both are in [schema.sql](../../internal/migrations/schema.sql):
+
 ```sql
-ALTER TABLE posts ADD COLUMN IF NOT EXISTS simhash BIGINT;
+simhash BIGINT, -- on posts
+CREATE INDEX IF NOT EXISTS discover_queue_event_idx ON discover_queue (lower(entity), lower(action), searched_at);
 ```
 
-`discover_queue_event_idx` from [search-discovery](search-discovery.md) serves the event lookup.
+`discover_queue_event_idx` is defined in [search-discovery](search-discovery.md) and shipped with this phase, since the event lookup reads it first.
 
 ## Defaults
 

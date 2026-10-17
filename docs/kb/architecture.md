@@ -14,7 +14,7 @@ Kharoborathus collects business and financial news from hand-picked sources, tag
 | HTTP | [feed/route.go](../../internal/service/feed/route.go), [source/route.go](../../internal/service/source/route.go) | Serves `/feeds` and manual source sync. |
 | Sources | [sourced.go](../../internal/service/source/sourced.go) | Polls enabled sources at their `rate` and turns articles into posts. |
 | Tagging | [tagged.go](../../internal/service/tagging/tagged.go) | Generates new tags, classifies posts against all tags and records the shadow gate result while its switch is on. |
-| Discovery | [discovery.go](../../internal/service/discovery/discovery.go) | Extracts searchable events from posts into `discover_queue`. |
+| Discovery | [discovery.go](../../internal/service/discovery/discovery.go) | Extracts searchable events from posts into `discover_queue` and links `same_event` posts. |
 
 Source pipeline per article:
 
@@ -25,7 +25,7 @@ Source pipeline per article:
 5. Trim with the domain's LLM-generated rule. Without a rule, `trimGeneric` picks the densest node.
 6. Convert to markdown.
 7. Summarize with the LLM.
-8. Insert into `posts`.
+8. Insert into `posts` with a simhash and link `duplicate_of`.
 
 AI providers live in [robot/adapter](../../internal/service/robot/adapter):
 
@@ -35,7 +35,7 @@ AI providers live in [robot/adapter](../../internal/service/robot/adapter):
 Unused parts of the schema:
 
 - `discover_queue` is filled but never read.
-- `source_discovered_by_post` and `post_links` have no writers.
+- `source_discovered_by_post` has no writers. `post_links` gets only `duplicate_of` and `same_event`.
 
 ## Design
 

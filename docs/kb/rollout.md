@@ -9,7 +9,7 @@ Ships the design in six phases, in build order. Ingest starts once phase 1 runs.
 
 ## Current state
 
-Phases 1 and 2 are done, with the switches table and admin page. `shadow_gate` starts off. See [architecture](architecture.md) for the system today.
+Phases 1 to 3 are done, with the switches table and admin page. `shadow_gate` starts off. See [architecture](architecture.md) for the system today.
 
 ## Design
 
@@ -47,7 +47,6 @@ Migration steps:
 - **Phase 1:** every source is manual, so every post is trusted. Trust checks arrive in phase 4 together with `origin` and source `status`, which existing sources get from column defaults.
 - **Every phase:** until the first deploy, schema changes go straight into `schema.sql` and databases are recreated from it.
 - **Phases 2, 4, 5 and 6:** `schema.sql` inserts the phase's switch row with `ON CONFLICT DO NOTHING`, so a rerun never resets your choice.
-- **Phase 3:** a one-time job backfills `simhash` and `same_event` links for posts inside the event window.
 
 Monitoring:
 
