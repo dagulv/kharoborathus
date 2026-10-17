@@ -74,7 +74,10 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
    ```bash
    ssh deploy@<ip> cloud-init status --wait
    haloy server add haloy.kharoborathus.dagulv.me "$(ssh deploy@<ip> cat haloy-token)"
+   ssh deploy@<ip> rm haloy-token
    ```
+
+   Haloy takes the token only as an argument, so it shows briefly in your local process list. The copy on the server is deleted once it is registered.
 
    If cloud-init timed out on DNS, haloyd retries its certificate only every 12 hours. Restart it once the records resolve: `ssh deploy@<ip> sudo systemctl restart haloyd`.
 
