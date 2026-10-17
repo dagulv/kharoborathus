@@ -63,6 +63,12 @@ type braveResult struct {
 	} `json:"meta_url"`
 }
 
+type braveError struct {
+	Error struct {
+		Code string `json:"code"`
+	} `json:"error"`
+}
+
 type braveResponse struct {
 	Web struct {
 		Results []braveResult `json:"results"`
@@ -104,6 +110,16 @@ func (b brave) Search(ctx context.Context, q Query) ([]robot.SearchResult, error
 	case res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= http.StatusInternalServerError:
 		return nil, fmt.Errorf("%w: brave %s", adapter.ErrUnavailable, res.Status)
 	case res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusUnprocessableEntity:
+		var e braveError
+
+		// An empty code just means a rejected query.
+		_ = json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&e)
+
+		// Brave answers a bad key with 422 too, which must stop the worker instead of burning the queue item by item.
+		if e.Error.Code == "SUBSCRIPTION_TOKEN_INVALID" {
+			return nil, fmt.Errorf("brave %s: %s", res.Status, e.Error.Code)
+		}
+
 		return nil, fmt.Errorf("%w: brave %s", errSearchRejected, res.Status)
 	case res.StatusCode != http.StatusOK:
 		msg, _ := io.ReadAll(io.LimitReader(res.Body, 512))

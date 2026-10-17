@@ -125,3 +125,15 @@ func TestBraveUnreadable(t *testing.T) {
 		t.Errorf("got %v", err)
 	}
 }
+
+func TestBraveInvalidToken(t *testing.T) {
+	b := testBrave(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte(`{"type":"ErrorResponse","error":{"status":422,"code":"SUBSCRIPTION_TOKEN_INVALID","detail":"The provided subscription token is invalid."}}`))
+	})
+
+	_, err := b.Search(context.Background(), Query{Q: "x"})
+	if err == nil || errors.Is(err, errSearchRejected) {
+		t.Errorf("got %v", err)
+	}
+}
