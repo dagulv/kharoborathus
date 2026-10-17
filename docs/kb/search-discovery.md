@@ -39,8 +39,8 @@ Rules:
 - `result_count` holds the Brave result count of a paid call. It stays NULL when an item is marked searched without a call, so usage counts only paid calls.
 - Newest items first. When the cap holds back a backlog, older items age out of the window.
 - `search_lang` only for `sv` and `en`.
-- 429, 5xx and network errors stop the tick and leave the item. 400 and 422 mark it searched without a call, except a 422 with `SUBSCRIPTION_TOKEN_INVALID`, which stops the tick like other statuses. A 200 whose body cannot be read counts as a paid search with no results and pauses the worker. Other statuses stop the tick.
-- The tick follows the LLM schedule and checks it again before each search, so no search is bought just before peak hours. If the filter or the queue insert fails after a search, the results are dropped, the item still counts as a paid search, and the worker pauses 30 minutes so an outage cannot drain the budget. A paid search interrupted by shutdown also counts.
+- 429, 5xx and network errors stop the tick and leave the item. 400 and 422 mark it searched without a call, except a 422 with `SUBSCRIPTION_TOKEN_INVALID`, which stops the tick like other statuses. A 200 whose body cannot be read counts as a paid search with no results and pauses the worker the same way. Other statuses stop the tick.
+- The tick follows the LLM schedule and checks it again before each search, so no search is bought just before peak hours. If the filter or the queue insert fails after a search, the results are dropped, the item still counts as a paid search, and the worker pauses so an outage cannot drain the budget. The pause starts at 30 minutes and doubles up to a day while failures repeat. A paid search interrupted by shutdown also counts.
 - No searches while `discovered_ingest` is off or the classifier is mocked, since nothing would fetch the results.
 - No searches while 200 or more `via = 'search'` links are pending inside the window, one day of ingest at its cap.
 - No results means no LLM call.

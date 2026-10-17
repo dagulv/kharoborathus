@@ -22,13 +22,16 @@ const (
 	// One day of ingest at its daily cap. More would age out before it is fetched.
 	maxPendingResults = 200
 	// Each tick buys a search, so a failing filter must not be retried every minute.
-	wastedPause = 30 * time.Minute
+	// The pause doubles while searches keep failing, so a long outage costs a few searches a day.
+	wastedPause    = 30 * time.Minute
+	maxWastedPause = 24 * time.Hour
 )
 
 var errSearchWasted = errors.New("discovery: paid search wasted")
 
 func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f *robot.ResultFilter, sched schedule.Schedule, l *slog.Logger) error {
 	var pausedUntil time.Time
+	var pause time.Duration
 
 	for range sched.Tick(ctx, searchInterval) {
 		if time.Now().Before(pausedUntil) {
@@ -37,11 +40,14 @@ func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f
 
 		err := searchEvents(ctx, s, sw, sched, se, f, l)
 		if errors.Is(err, errSearchWasted) {
-			l.Warn("search paused", "for", wastedPause, "err", err)
-			pausedUntil = time.Now().Add(wastedPause)
+			pause = nextPause(pause)
+			pausedUntil = time.Now().Add(pause)
+			l.Warn("search paused", "for", pause, "err", err)
 
 			continue
 		}
+
+		pause = 0
 
 		if err != nil {
 			l.Error("search events", "err", err)
@@ -147,6 +153,14 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, sched sched
 	}
 
 	return nil
+}
+
+func nextPause(prev time.Duration) time.Duration {
+	if prev == 0 {
+		return wastedPause
+	}
+
+	return min(prev*2, maxWastedPause)
 }
 
 // Brave billed the search, so it counts against the budget even when its results are lost or the worker is shutting down.
