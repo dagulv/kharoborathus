@@ -17,9 +17,9 @@ Grow beyond hand-picked sources without losing quality. Scale slowly and prefer 
 | [Link extraction](link-extraction.md) | done | Go job queueing outbound links from trusted posts. |
 | [Search discovery](search-discovery.md) | done | Brave Web Search for events whose action is a gate tag, across news, press releases and other sources. |
 | [Discovered ingest](discovered-ingest.md) | done | `ingest` service turning queued URLs into gated posts. |
-| [Source lifecycle](source-lifecycle.md) | propose done | Sources move through proposed, active and dormant, with automatic promotion. |
+| [Source lifecycle](source-lifecycle.md) | done | Sources move through proposed, active and dormant, with automatic promotion. |
 | [Post linking](post-linking.md) | done | Every relation between posts: discovered, duplicate_of and same_event. |
-| [Rollout](rollout.md) | designed | Six phases in build order, admin switches for data-dependent features, migration steps and monitoring. |
+| [Rollout](rollout.md) | done | Six phases in build order, admin switches for data-dependent features, migration steps and monitoring. |
 
 ## Flow
 

@@ -12,12 +12,13 @@ Kharoborathus collects business and financial news from hand-picked sources, tag
 | Worker | Code | Job |
 |---|---|---|
 | HTTP | [feed/route.go](../../internal/service/feed/route.go), [source/route.go](../../internal/service/source/route.go) | Serves `/feeds` and manual source sync. |
-| Sources | [sourced.go](../../internal/service/source/sourced.go) | Polls enabled, active sources at their `rate` and turns articles into posts. |
+| Sources | [sourced.go](../../internal/service/source/sourced.go) | Polls enabled, active sources at their `rate` and dormant ones weekly, and turns articles into posts. |
 | Tagging | [tagged.go](../../internal/service/tagging/tagged.go) | Generates new tags, classifies posts against all tags and records the shadow gate result while its switch is on. |
 | Discovery | [discovery.go](../../internal/service/discovery/discovery.go) | Extracts events with gate tag keys as actions into `discover_queue` and links `same_event` posts. |
 | Search | [search.go](../../internal/service/discovery/search.go) | Searches Brave for gate tag events from trusted posts and queues filtered results while `search_discovery` is on. |
 | Links | [extract.go](../../internal/service/ingest/extract.go) | Queues outbound links from trusted posts into `link_queue`. |
 | Ingest | [ingest.go](../../internal/service/ingest/ingest.go) | Fetches, gates and inserts queued links while `discovered_ingest` is on. Proposes sources for new domains. |
+| Lifecycle | [lifecycle.go](../../internal/service/source/lifecycle.go) | Daily: puts silent sources to sleep and promotes proposed sources while `source_promotion` is on. |
 
 Source pipeline per article:
 

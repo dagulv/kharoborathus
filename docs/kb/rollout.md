@@ -1,6 +1,6 @@
 # Rollout
 
-**Status:** designed
+**Status:** done
 **Related:** [index](index.md)
 
 ## Summary
@@ -9,7 +9,7 @@ Ships the design in six phases, in build order. Ingest starts once phase 1 runs.
 
 ## Current state
 
-Phases 1 to 5 are done, with the switches table and admin page. `shadow_gate`, `discovered_ingest` and `search_discovery` start off. See [architecture](architecture.md) for the system today.
+All six phases are done, with the switches table and admin page. Every switch starts off. See [architecture](architecture.md) for the system today.
 
 ## Design
 

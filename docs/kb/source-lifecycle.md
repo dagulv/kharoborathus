@@ -1,6 +1,6 @@
 # Source lifecycle
 
-**Status:** propose done, rest designed
+**Status:** done
 **Related:** [trust-model](trust-model.md), [discovered-ingest](discovered-ingest.md), [classifier-gate](classifier-gate.md), [tag-lifecycle](tag-lifecycle.md)
 
 ## Summary
@@ -9,7 +9,11 @@ Sources move through `proposed`, `active` and `dormant`, like tags. Discovered d
 
 ## Current state
 
-`status` and `origin` exist on sources. [Discovered ingest](discovered-ingest.md) creates proposed sources, and the source worker scrapes only `enabled` sources with `status = 'active'`. Promotion, demotion, dormancy and probe wait for phase 6 of [rollout](rollout.md), together with `status_changed_at` and `fetch_failures`.
+- [Discovered ingest](discovered-ingest.md) creates proposed sources. The source worker scrapes enabled `active` sources at their `rate` and enabled `dormant` sources once per probe interval, see [sourced.go](../../internal/service/source/sourced.go).
+- Every listing fetch updates `fetch_failures` through `RecordFetch`. A new post from a dormant source revives it through `Revive`.
+- [lifecycle.go](../../internal/service/source/lifecycle.go) runs daily: dormancy always, promotion while `source_promotion` is on. [listing.go](../../internal/service/source/listing.go) finds a feed on the homepage.
+- `FlagSources` in [tagging/store.go](../../internal/service/tagging/store.go) demotes active discovered sources in the update that flags them.
+- Admin shows promotion readiness on the Switches page and source status on the Sources page.
 
 ## Design
 
@@ -36,19 +40,29 @@ The existing `active` boolean is renamed to `enabled` and stays your manual swit
 6. **Dormancy.** An active source goes dormant after no new posts inside the dormancy window, or after repeated consecutive fetch failures.
 7. **Probe.** A dormant source is scraped once per probe interval. New posts move it back to `active`.
 
+Rules:
+
+- Promotion evidence counts only `link_queue` rows checked since `status_changed_at`, so a demoted source cannot be promoted again on old evidence.
+- The acceptance rate is accepted over accepted plus rejected. Distinct days are calendar days of `checked_at` of accepted rows.
+- `promoted_at` records promotions, so the weekly cap ignores probe revivals.
+- Only enabled, not deleted proposed sources are promoted.
+- Promotion clears `flagged_at` and sets `reviewed_at`, so the shadow gate judges the source on its new posts only.
+- A homepage fetch failure skips the source until the next daily run without using the cap.
+- Atom autodiscovery counts as RSS. The first matching `<link>` wins. The page adapter keeps the source URL.
+- Dormancy measures from the later of the last post and `status_changed_at`. Only enabled sources go dormant.
+- The tenth consecutive failure makes a source dormant at once.
+- The probe schedule lives in memory, so a restart probes every dormant source once.
+- Only a fresh flag demotes, since demotion happens in the update that flags.
+
 ## Schema changes
 
 ```sql
-ALTER TABLE sources RENAME COLUMN active TO enabled;
-ALTER INDEX sources_active_idx RENAME TO sources_enabled_idx;
-ALTER TABLE sources ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'; -- proposed | active | dormant
-ALTER TABLE sources ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now();
-ALTER TABLE sources ADD COLUMN IF NOT EXISTS fetch_failures INT NOT NULL DEFAULT 0;
+ALTER TABLE sources ADD COLUMN status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE sources ADD COLUMN fetch_failures INT NOT NULL DEFAULT 0;
+ALTER TABLE sources ADD COLUMN promoted_at TIMESTAMPTZ;
 ```
 
-`schema.sql` is an init script for fresh databases and is not rerunnable. Existing databases get changes from numbered files in `internal/migrations`, written to be safe to run twice. The rename is wrapped in a `DO` block that checks `information_schema.columns` for `active` first. `schema.sql` is also updated to say `enabled`.
-
-`fetch_failures` resets on a successful fetch. `origin` is defined in [trust-model](trust-model.md). `flagged_at` is defined in [classifier-gate](classifier-gate.md).
+Until the first deploy these go straight into `schema.sql`. `fetch_failures` resets on a successful fetch. `origin` is defined in [trust-model](trust-model.md). `flagged_at` is defined in [classifier-gate](classifier-gate.md).
 
 ## Defaults
 
