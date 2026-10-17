@@ -336,6 +336,7 @@ export const reviewSource = command(
 );
 
 // Readiness per key mirrors the switch table in docs/kb/rollout.md
+// source_promotion thresholds mirror internal/service/source/lifecycle.go
 export const listSwitches = query(async () => {
 	const sql = db();
 
@@ -360,6 +361,24 @@ export const listSwitches = query(async () => {
 						|| ' of ' || count(*) || ' gate decisions in 7 days'
 					FROM link_queue
 					WHERE status IN ('accepted', 'rejected') AND checked_at > now() - interval '7 days'
+				)
+				WHEN 'source_promotion' THEN (
+					SELECT coalesce(extract(day FROM now() - min(created_at))::int, 0) || ' days of link queue history, '
+						|| (
+							SELECT count(*)
+							FROM sources s
+							JOIN LATERAL (
+								SELECT
+									count(*) FILTER (WHERE q.status = 'accepted') AS accepted,
+									count(DISTINCT q.checked_at::date) FILTER (WHERE q.status = 'accepted') AS days,
+									count(*) FILTER (WHERE q.status IN ('accepted', 'rejected')) AS decided
+								FROM link_queue q
+								WHERE q.domain_id = s.domain_id AND q.checked_at >= s.status_changed_at
+							) e ON true
+							WHERE s.status = 'proposed' AND s.enabled AND s.deleted_at IS NULL
+								AND e.accepted >= 5 AND e.days >= 3 AND e.accepted >= 0.6 * e.decided
+						) || ' proposed sources qualify'
+					FROM link_queue
 				)
 			END AS readiness
 		FROM switches s
