@@ -18,6 +18,8 @@ const sourceColumns = `
 	adapter,
 	url,
 	enabled,
+	status,
+	origin,
 	rate,
 	metadata,
 	target_tags,
@@ -45,6 +47,11 @@ func (s *Store) ListSources(ctx context.Context, filter Filter) iter.Seq2[Source
 		if filter.Enabled.Valid {
 			args = append(args, filter.Enabled.V)
 			where += fmt.Sprintf(` AND enabled = $%d`, len(args))
+		}
+
+		if filter.Status.Valid {
+			args = append(args, filter.Status.V)
+			where += fmt.Sprintf(` AND status = $%d`, len(args))
 		}
 
 		col, dir := filter.GetSort()
@@ -137,6 +144,8 @@ func scanSource(row pgx.Row) (source Source, err error) {
 		&source.Adapter,
 		&source.URL,
 		&source.Enabled,
+		&source.Status,
+		&source.Origin,
 		&source.Rate,
 		&source.Metadata,
 		&source.TargetTags,

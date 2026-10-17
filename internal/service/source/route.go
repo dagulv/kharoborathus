@@ -32,6 +32,11 @@ func syncSource(s *Store, syncs chan<- Source, l *slog.Logger) http.HandlerFunc 
 			return
 		}
 
+		if source.Status != StatusActive {
+			http.Error(w, "source not active", http.StatusConflict)
+			return
+		}
+
 		select {
 		case syncs <- source:
 			w.WriteHeader(http.StatusAccepted)

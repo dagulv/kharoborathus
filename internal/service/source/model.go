@@ -7,12 +7,16 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/query"
 )
 
+const StatusActive = "active"
+
 type Source struct {
 	ID         string            `json:"id"`
 	DomainID   string            `json:"domainId"`
 	Adapter    string            `json:"adapter"` // type of source (rss, etc)
 	URL        string            `json:"url"`
 	Enabled    bool              `json:"enabled"`
+	Status     string            `json:"status"` // proposed | active | dormant
+	Origin     string            `json:"origin"` // manual | discovered
 	Rate       int               `json:"rate"`
 	CreatedAt  time.Time         `json:"createdAt"`
 	TargetTags []string          `json:"targetTags"`
@@ -22,5 +26,6 @@ type Source struct {
 type Filter struct {
 	query.Filter
 
-	Enabled sql.Null[bool] `json:"enabled"`
+	Enabled sql.Null[bool]   `json:"enabled"`
+	Status  sql.Null[string] `json:"status"`
 }

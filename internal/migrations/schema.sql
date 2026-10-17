@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS sources (
   rate INT NOT NULL DEFAULT 15,
   metadata JSONB NOT NULL DEFAULT '{}',
   target_tags TEXT[] NOT NULL DEFAULT '{}',
+  origin TEXT NOT NULL DEFAULT 'manual', -- manual | discovered
+  status TEXT NOT NULL DEFAULT 'active', -- proposed | active | dormant
   flagged_at TIMESTAMPTZ,
   reviewed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

@@ -173,6 +173,7 @@ func enabledSources(ctx context.Context, s *Store) ([]Source, error) {
 			Offset:  strconv.Itoa(offset),
 			OrderBy: "id",
 			Enabled: sql.Null[bool]{V: true, Valid: true},
+			Status:  sql.Null[string]{V: StatusActive, Valid: true},
 		}))
 		if err != nil {
 			return nil, err
