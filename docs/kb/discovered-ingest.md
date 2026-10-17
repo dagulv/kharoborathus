@@ -35,7 +35,11 @@ Rules:
 - The daily cap is a rolling 24 hours of `checked_at`.
 - `robots.txt` disallow sets `failed` without retries, since it is no gate decision. A missing `robots.txt` allows everything. 5xx, 429 and network errors retry like a failed fetch. Results are cached per host for 24 hours.
 - No enabled, active gate tag means no tick. Otherwise every link would be rejected for good.
-- Classifier unavailable stops the tick and leaves the link untouched.
+- Classifier unavailable stops the tick and leaves the link untouched. Any other gate error charges the link one attempt and stops the tick.
+- Private, loopback and link-local addresses are refused and set `failed`.
+- A redirect to another host sets `failed`, since `robots.txt` and the pacer covered only the original host. Same-host redirects store the final URL.
+- Pages with an extracted date older than the pending window are rejected as `stale`. Undated pages pass.
+- Ingest does not run while the classifier is mocked, since the mock passes almost any page.
 - Failed trimmer checks and short content are one check: `Trim.Apply` leaves no content, and the link is rejected with `no content`. A missing title rejects with `no title`.
 - A URL conflict on insert sets `duplicate` with `url exists`.
 - The oldest source includes deleted ones, so a domain whose source you deleted is not proposed again.
