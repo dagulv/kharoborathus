@@ -1,5 +1,5 @@
 .env
-deploy/tofu/.terraform/
-deploy/tofu/*.tfstate*
-deploy/tofu/*.tfplan
-deploy/tofu/terraform.tfvars
+infra/tofu/.terraform/
+infra/tofu/*.tfstate*
+infra/tofu/*.tfplan
+infra/tofu/terraform.tfvars

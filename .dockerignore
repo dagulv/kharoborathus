@@ -3,7 +3,7 @@
 .superpowers
 docs
 frontend
-deploy/tofu
-deploy/.env*
+infra/tofu
+infra/.env*
 .env
 .env-sample

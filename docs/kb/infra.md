@@ -9,9 +9,9 @@ Runs the whole stack on one UpCloud VPS. OpenTofu creates the server and cloud-i
 
 ## Current state
 
-- [deploy/tofu](../../deploy/tofu) creates the server. It has not been applied or run through `tofu validate` yet.
-- [deploy/haloy.yaml](../../deploy/haloy.yaml) runs the stack. It passes `haloy validate-config` but has not been deployed. The admin's auth hook answered 401 without credentials and 200 on `/healthz` in a local run.
-- [deploy/README.md](../../deploy/README.md) lists the first-time steps.
+- [infra/tofu](../../infra/tofu) creates the server. It has not been applied or run through `tofu validate` yet.
+- [infra/haloy.yaml](../../infra/haloy.yaml) runs the stack. It passes `haloy validate-config` but has not been deployed. The admin's auth hook answered 401 without credentials and 200 on `/healthz` in a local run.
+- [infra/README.md](../../infra/README.md) lists the first-time steps.
 - [docker-compose.yaml](../../docker-compose.yaml) runs the dev database, now with `schema.sql` baked into the image.
 
 ## Design
@@ -28,9 +28,9 @@ Kustomize, kubectl and kubectx are left out. Kustomize only renders Kubernetes m
 
 Layout:
 
-1. `deploy/tofu` holds the OpenTofu config and the cloud-init template.
-2. `deploy/haloy.yaml` holds the production stack and its domains. `deploy/.env` holds its secrets.
-3. `deploy/api.Dockerfile` and `frontend/Dockerfile` build the Go app and the admin. `docker/postgres/Dockerfile` builds the database with the Swedish dictionary and `schema.sql`.
+1. `infra/tofu` holds the OpenTofu config and the cloud-init template.
+2. `infra/haloy.yaml` holds the production stack and its domains. `infra/.env` holds its secrets.
+3. `infra/api.Dockerfile` and `frontend/Dockerfile` build the Go app and the admin. `docker/postgres/Dockerfile` builds the database with the Swedish dictionary and `schema.sql`.
 
 Server:
 
@@ -58,7 +58,7 @@ Haloy's proxy routes by hostname only. It has no path rules, no auth and no comp
 
 Deploy:
 
-1. `tofu apply` in `deploy/tofu` creates the server. You point the site, API and Haloy API domains at its IPv4 output.
+1. `tofu apply` in `infra/tofu` creates the server. You point the site, API and Haloy API domains at its IPv4 output.
 2. `haloy server add` registers the server with the token cloud-init left in the deploy user's home.
 3. `haloy deploy` builds the images locally and uploads them to haloyd, so no registry is needed. The `db` target is protected and deploys only by name.
 4. Postgres runs `schema.sql` on its first start with an empty volume. Later schema changes need migrations, see [rollout](rollout.md).
@@ -72,7 +72,7 @@ Secrets:
 
 - UpCloud credentials come from `UPCLOUD_USERNAME` and `UPCLOUD_PASSWORD`. They never enter the config.
 - The OpenTofu state is encrypted with a passphrase from `TF_VAR_state_passphrase`. It stays local and gitignored.
-- App secrets live in `deploy/.env`, which is gitignored. Haloy reads it on your machine and passes each value `haloy.yaml` names to its container.
+- App secrets live in `infra/.env`, which is gitignored. Haloy reads it on your machine and passes each value `haloy.yaml` names to its container.
 - The Haloy API token lives in `~/.config/haloy` locally and in `/etc/haloy` on the server.
 
 ## Schema changes

@@ -19,7 +19,7 @@ Runs the stack on one UpCloud server with Haloy. Design: [docs/kb/infra.md](../d
 3. Put your SSH public key and the Haloy API domain in `terraform.tfvars`. The server ignores later changes to either, so a wrong key locks you out:
 
    ```bash
-   cd deploy/tofu
+   cd infra/tofu
    cp terraform.tfvars.example terraform.tfvars
    ```
 
@@ -41,10 +41,10 @@ Runs the stack on one UpCloud server with Haloy. Design: [docs/kb/infra.md](../d
    haloy server add <haloy api domain> "$(ssh deploy@<ip> cat haloy-token)"
    ```
 
-7. Set your domains in `deploy/haloy.yaml`, then write the app config:
+7. Set your domains in `infra/haloy.yaml`, then write the app config:
 
    ```bash
-   cp deploy/.env.example deploy/.env
+   cp infra/.env.example infra/.env
    ```
 
    Fill in the admin password, the Postgres password in both places and the API keys.
@@ -52,15 +52,15 @@ Runs the stack on one UpCloud server with Haloy. Design: [docs/kb/infra.md](../d
 8. Deploy the database first, then the rest once its logs say it accepts connections:
 
    ```bash
-   haloy deploy -c deploy/haloy.yaml -t db
-   haloy logs -c deploy/haloy.yaml -t db
-   haloy deploy -c deploy/haloy.yaml --all
+   haloy deploy -c infra/haloy.yaml -t db
+   haloy logs -c infra/haloy.yaml -t db
+   haloy deploy -c infra/haloy.yaml --all
    ```
 
 ## Later
 
-- Redeploy with `haloy deploy -c deploy/haloy.yaml --all`. Images build locally and upload to the server. `--all` skips the protected `db` target.
-- Logs: `haloy logs -c deploy/haloy.yaml -t api`. `haloy rollback-targets` lists deployment IDs for `haloy rollback <id>`.
+- Redeploy with `haloy deploy -c infra/haloy.yaml --all`. Images build locally and upload to the server. `--all` skips the protected `db` target.
+- Logs: `haloy logs -c infra/haloy.yaml -t api`. `haloy rollback-targets` lists deployment IDs for `haloy rollback <id>`.
 - `schema.sql` runs only on an empty database volume. Schema changes after the first deploy need migrations.
 - Every switch starts off. Turn them on in the admin under Switches.
 - `tofu apply` never replaces the server: it has `prevent_destroy`, and edits to `cloud-init.yaml` or the SSH key are ignored for the existing server.

@@ -1,5 +1,5 @@
 # Replace the example domains with yours. server is haloy_api_domain from terraform.tfvars.
-# Secrets come from deploy/.env, see .env.example.
+# Secrets come from infra/.env, see .env.example.
 server: haloy.news.example.com
 
 targets:
@@ -33,7 +33,7 @@ targets:
       repository: kharoborathus-api
       build_config:
         context: ..
-        dockerfile: deploy/api.Dockerfile
+        dockerfile: infra/api.Dockerfile
     domains:
       - domain: api.news.example.com
     port: 3001
