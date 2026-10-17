@@ -20,7 +20,15 @@ WITH
   swedish_dict,
   swedish_stem;
 
-CREATE TABLE IF NOT EXISTS tags (key TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS tags (
+  key TEXT PRIMARY KEY,
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  status TEXT NOT NULL DEFAULT 'active', -- active | dormant
+  gate BOOLEAN NOT NULL DEFAULT false,
+  match_rate REAL,
+  last_matched_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS tag_terms (
   key TEXT NOT NULL REFERENCES tags (key) ON DELETE CASCADE,
@@ -48,7 +56,7 @@ CREATE TABLE IF NOT EXISTS sources (
   domain_id UUID NOT NULL REFERENCES domains (id),
   adapter TEXT NOT NULL,
   url TEXT NOT NULL,
-  active BOOLEAN NOT NULL DEFAULT false,
+  enabled BOOLEAN NOT NULL DEFAULT false,
   rate INT NOT NULL DEFAULT 15,
   metadata JSONB NOT NULL DEFAULT '{}',
   target_tags TEXT[] NOT NULL DEFAULT '{}',
@@ -58,7 +66,7 @@ CREATE TABLE IF NOT EXISTS sources (
 
 CREATE INDEX IF NOT EXISTS sources_url_idx ON sources (url);
 
-CREATE INDEX IF NOT EXISTS sources_active_idx ON sources (active);
+CREATE INDEX IF NOT EXISTS sources_enabled_idx ON sources (enabled);
 
 CREATE TABLE IF NOT EXISTS posts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -155,3 +163,20 @@ CREATE TABLE post_links (
 CREATE INDEX post_links_to_idx ON post_links (to_post_id, relation);
 
 CREATE INDEX post_links_relation_idx ON post_links (relation);
+
+CREATE TABLE IF NOT EXISTS tag_proposals (
+  key TEXT NOT NULL,
+  lang TEXT NOT NULL,
+  term TEXT NOT NULL,
+  post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
+  source_id UUID NOT NULL REFERENCES sources (id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (key, post_id)
+);
+
+CREATE INDEX IF NOT EXISTS tag_proposals_created_at_idx ON tag_proposals (created_at);
+
+CREATE TABLE IF NOT EXISTS tag_aliases (
+  alias TEXT PRIMARY KEY,
+  key TEXT NOT NULL REFERENCES tags (key) ON DELETE CASCADE
+);
