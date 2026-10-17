@@ -79,3 +79,11 @@ func TestFilterLinks(t *testing.T) {
 		t.Errorf("got %v", got)
 	}
 }
+
+func TestFilterLinksTooLong(t *testing.T) {
+	long := "https://news.example/a?" + strings.Repeat("x", 3000)
+
+	if got := FilterLinks([]string{long, "https://news.example/b"}, "https://own.example"); !slices.Equal(got, []string{"https://news.example/b"}) {
+		t.Errorf("got %v", got)
+	}
+}

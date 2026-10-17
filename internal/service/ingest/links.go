@@ -7,7 +7,11 @@ import (
 	"strings"
 )
 
-const maxLinksPerPost = 10
+const (
+	maxLinksPerPost = 10
+	// Longer URLs break the unique btree indexes on link_queue.url and posts.url.
+	maxLinkLength = 2000
+)
 
 var markdownLink = regexp.MustCompile(`(!?)\[[^\[\]]*\]\(<?([^\s()<>]+)>?(?:\s+"[^"]*")?\)`)
 
@@ -80,7 +84,12 @@ func normalizeLink(raw string) (string, bool) {
 		u.RawQuery = q.Encode()
 	}
 
-	return u.String(), true
+	link := u.String()
+	if len(link) > maxLinkLength {
+		return "", false
+	}
+
+	return link, true
 }
 
 func hostOf(rawURL string) string {

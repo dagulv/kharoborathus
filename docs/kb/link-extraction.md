@@ -15,7 +15,7 @@ A Go job pulls outbound links from trusted post bodies into `link_queue`. No AI 
 
 1. Select trusted posts not yet scanned.
 2. Parse markdown links from `posts.content`.
-3. Normalize: strip `utm_*` parameters and fragments.
+3. Normalize: strip `utm_*` parameters and fragments. Drop URLs longer than 2000 bytes, which would break the unique URL indexes.
 4. Skip a link when:
    - Its URL is already in `posts` or `link_queue`.
    - It points to the post's own domain, which is mostly navigation.
