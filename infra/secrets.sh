@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# Runs a command with one vault's secrets in its environment: infra/secrets.sh <dev|prod> <command...>
+# Runs a command with one vault's secrets in its environment: infra/secrets.sh <dev|prod>[:<file>] <command...>
+# A file name such as prod:tofu limits it to that file's secrets, so tofu never sees app secrets and Haloy never sees cloud credentials.
 # Decrypts in memory with the vault's age key from Bitwarden, as the vault tool does. A set SOPS_AGE_KEY skips Bitwarden.
 set -euo pipefail
 # fetch_key runs in a command substitution, which drops errexit without this.
 shopt -s nullglob inherit_errexit
 
-if [[ $# -lt 2 || ! $1 =~ ^[a-z]+$ ]]; then
-	echo "usage: $0 <vault> <command...>" >&2
+if [[ $# -lt 2 || ! $1 =~ ^[a-z]+(:[a-z]+)?$ ]]; then
+	echo "usage: $0 <vault>[:<file>] <command...>" >&2
 	exit 2
 fi
 
-vault=$1
+vault=${1%%:*}
+name=*
+if [[ $1 == *:* ]]; then
+	name=${1#*:}
+fi
 shift
 root=$(cd "$(dirname "$0")" && pwd)
 config=$root/.sops.yaml
@@ -51,9 +56,9 @@ if [[ -z $key ]]; then
 	key=$(fetch_key "$(yq -e ".vaults.$vault.bitwarden.item" "$config")")
 fi
 
-files=("$root/$sealed"/*/*.yaml)
+files=("$root/$sealed"/*/$name.yaml)
 if [[ ${#files[@]} -eq 0 ]]; then
-	echo "vault $vault has no sealed secrets" >&2
+	echo "vault $vault has no sealed secrets matching $name" >&2
 	exit 1
 fi
 

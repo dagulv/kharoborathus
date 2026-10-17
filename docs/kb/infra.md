@@ -63,7 +63,7 @@ Deploy:
 
 1. `tofu apply` in `infra/tofu` creates the server. You point the site, API and Haloy API domains at its IPv4 output.
 2. `haloy server add` registers the server with the token cloud-init left in the deploy user's home.
-3. `secrets.sh prod haloy.sh deploy <target>...` builds the images locally and uploads them to haloyd, so no registry is needed. The `db` target is protected and deploys only by name.
+3. `secrets.sh prod:app haloy.sh deploy <target>...` builds the images locally and uploads them to haloyd, so no registry is needed. The `db` target is protected and deploys only by name.
 4. Haloy has no per-target env file. It reads the working directory's `.env`, and a `.env.<target>` only for targets named with `-t`, all into one process env. So `haloy.sh` runs Haloy once per target from `infra/<target>/`, and each target resolves only its own env. Every Haloy command that loads the config resolves all its env values, including `logs` and `status`.
 5. Postgres runs `schema.sql` on its first start with an empty volume. Later schema changes need migrations, see [rollout](rollout.md).
 
@@ -76,7 +76,7 @@ Secrets:
 
 - No secret sits in an env file. Each service's env file holds its safe values: user names, database names, hosts and ports.
 - Secrets live in the `dev` and `prod` SOPS vaults, one Kubernetes `Secret` manifest per file, since that is the format `vault` manages. Only `data` and `stringData` are encrypted. Both vaults share one age key, kept in a Bitwarden custom field `AGE-SECRET-KEY`. `vault` requires a cluster name, so they name `none`.
-- `secrets.sh` unlocks Bitwarden with the master password, decrypts every file of one vault in memory and exports its `stringData` keys, then locks Bitwarden and runs the command. The password and session go through env, never argv. A set `SOPS_AGE_KEY` skips Bitwarden.
+- `secrets.sh` unlocks Bitwarden with the master password, decrypts every file of one vault, or the one file named after a colon, in memory and exports its `stringData` keys, then locks Bitwarden and runs the command. The password and session go through env, never argv. A set `SOPS_AGE_KEY` skips Bitwarden and is unset before the command runs.
 - The Go app and Vite both let the process env win over their `.env`, and both expand `${POSTGRES_PASSWORD}` in a `.env` value from it. The dev Postgres container reads `POSTGRES_PASSWORD` from the process env too.
 - UpCloud credentials: `UPCLOUD_USERNAME` is a safe value you export. `UPCLOUD_PASSWORD` and `TF_VAR_state_passphrase` live in the prod vault's `tofu.yaml`. The OpenTofu state stays local, encrypted and gitignored.
 - Haloy passes each value `haloy.yaml` names to its container. The rest of the prod vault never leaves your machine.
