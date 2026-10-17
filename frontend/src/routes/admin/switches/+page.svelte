@@ -11,7 +11,7 @@
 		discovered_ingest:
 			'Fetches queued links, gates them and adds accepted pages as posts with proposed sources. Link extraction fills the queue either way.',
 		search_discovery:
-			'Searches Brave for events from trusted posts whose action is a gate tag and queues relevant results for ingest. Needs discovered_ingest on. Event extraction runs either way. At most 330 searches a day.',
+			'Searches Brave for events from trusted posts whose action is a gate tag and queues relevant results for ingest. Needs discovered_ingest on, BRAVE_API_KEY set and the real classifier, or nothing runs. Pauses while 200 search links wait for ingest, and for 30 minutes after a failed result filter. Event extraction runs either way. At most 330 searches a day.',
 		source_promotion:
 			'Promotes proposed sources with at least 5 accepted posts on 3 days and a 60% acceptance rate, at most 5 a week. Dormancy and probe run either way.'
 	};
