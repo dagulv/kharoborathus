@@ -159,6 +159,7 @@ func continuousSources(ctx context.Context, s *Store, syncs <-chan Source, sched
 						l.Error("unable to get sources", "err", err)
 					} else {
 						sources = enabled
+						clipPauses(paused, sources, time.Now())
 					}
 				}
 
@@ -176,6 +177,17 @@ func continuousSources(ctx context.Context, s *Store, syncs <-chan Source, sched
 	}()
 
 	return out
+}
+
+// A revived source must not keep the week-long pause of the probe that revived it.
+func clipPauses(paused map[string]time.Time, sources []Source, now time.Time) {
+	for _, source := range sources {
+		limit := now.Add(time.Duration(source.Rate) * time.Minute)
+
+		if pause, ok := paused[source.ID]; ok && pause.After(limit) {
+			paused[source.ID] = limit
+		}
+	}
 }
 
 func enabledSources(ctx context.Context, s *Store) ([]Source, error) {
