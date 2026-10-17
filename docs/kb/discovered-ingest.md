@@ -23,7 +23,7 @@ Chosen over a `queue` adapter in the source pipeline. That adapter would summari
 6. Run the [gate](classifier-gate.md). Store scores in `gate_scores`.
 7. On reject, set `status = 'rejected'`. Only scores are kept. Raw content waits for the S3 TODO in the README.
 8. On accept:
-   - Use the domain's oldest existing source, whatever its status. Otherwise create a `proposed` one, see [source lifecycle](source-lifecycle.md). The post still had to pass the gate either way.
+   - Use the domain's oldest enabled source, whatever its status, or else its oldest source. Otherwise create a `proposed` one, see [source lifecycle](source-lifecycle.md). The post still had to pass the gate either way.
    - Record `source_discovered_by_post` for the first post that led there.
    - Summarize and insert the post.
    - Insert a `discovered` link, see [post linking](post-linking.md).
@@ -42,7 +42,7 @@ Rules:
 - Ingest does not run while the classifier is mocked, since the mock passes almost any page.
 - Failed trimmer checks and short content are one check: `Trim.Apply` leaves no content, and the link is rejected with `no content`. A missing title rejects with `no title`.
 - A URL conflict on insert sets `duplicate` with `url exists`.
-- The oldest source includes deleted ones, so a domain whose source you deleted is not proposed again. When that source is disabled or deleted, the link fails with `source disabled` and nothing is inserted, so disabling a source blocks its domain. The check runs right after the domain lookup, before trim, the gate or the summary, and again inside the insert transaction.
+- Deleted sources count, so a domain whose source you deleted is not proposed again. When every source of the domain is disabled or deleted, the link fails with `source disabled` and nothing is inserted, so disabling a source blocks its domain. The check runs right after the domain lookup, before trim, the gate or the summary, and again inside the insert transaction.
 - `source_discovered_by_post` records the referring post once, when the proposed source is created.
 - Language comes from `<html lang>`.
 - Accepted posts do not touch `tags.last_matched_at`.

@@ -147,8 +147,12 @@ func (s *Store) Retry(ctx context.Context, id, domainID, reason string, maxAttem
 
 var errSourceDisabled = errors.New("ingest: source disabled")
 
-// A disabled or deleted source blocks its domain, so you can stop a domain without a code change.
-const oldestSourceSQL = `SELECT id, enabled AND deleted_at IS NULL FROM sources WHERE domain_id = $1 ORDER BY created_at LIMIT 1`
+// A domain whose sources are all disabled or deleted is blocked, so you can stop a domain without a code change.
+// An enabled source wins over older disabled ones, so a manual feed can replace a disabled discovered source.
+const oldestSourceSQL = `
+	SELECT id, enabled AND deleted_at IS NULL FROM sources WHERE domain_id = $1
+	ORDER BY enabled AND deleted_at IS NULL DESC, created_at
+	LIMIT 1`
 
 func (s *Store) DomainAllowed(ctx context.Context, domainID string) (bool, error) {
 	var id string
