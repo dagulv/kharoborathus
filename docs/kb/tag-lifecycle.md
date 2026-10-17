@@ -42,7 +42,7 @@ States: `proposed`, `active`, `dormant`. A merged synonym becomes an `alias`.
    - `ListTags` returns only enabled `active` tags, so dormant and disabled tags cost nothing.
    - `CompleteTagging` updates `last_matched_at`.
    - A tag with no match inside the dormancy window goes dormant. A new proposal reactivates it and resets `last_matched_at`, so it is not put back to sleep the next day.
-7. **Manual merge.** Admin can merge one active tag into another. That is the case where posts are rewritten with `array_replace`, along with `sources.target_tags`.
+7. **Manual merge.** Admin can merge any tag, whatever its status or switch, into another existing tag, so a dormant duplicate can be folded in too. That is the case where posts are rewritten with `array_replace`, along with `sources.target_tags`.
 
 ## Schema changes
 
