@@ -20,11 +20,12 @@ Kharoborathus collects business and financial news from hand-picked sources, tag
 | Search          | [search.go](../../internal/service/discovery/search.go)                                                          | Searches Brave for gate tag events from trusted posts and queues filtered results while `search_discovery` is on.                                        |
 | Links           | [extract.go](../../internal/service/ingest/extract.go)                                                           | Queues outbound links from trusted posts into `link_events`.                                                                                             |
 | Ingest          | [ingest.go](../../internal/service/ingest/ingest.go)                                                             | Fetches, gates and inserts queued links while `discovered_ingest` is on. Proposes sources for new domains.                                               |
+| Summaries       | [summaries.go](../../internal/service/source/summaries.go)                                                       | Summarizes [backfilled](backfill.md) posts off peak.                                                                                                     |
 | Lifecycle       | [lifecycle.go](../../internal/service/source/lifecycle.go)                                                       | Daily: puts silent sources to sleep and promotes proposed sources while `source_promotion` is on.                                                        |
 
 Source pipeline per article:
 
-1. Adapter fetches the listing. `rss` reads the feed. `page` applies an LLM-generated CSS link rule.
+1. Adapter fetches the listing. `rss` reads the feed. `page` applies an LLM-generated CSS link rule. `wordpress` reads the REST API on a [backfill](backfill.md).
 2. Skip URLs already in `posts`.
 3. Fetch the article.
 4. Resolve its domain.
