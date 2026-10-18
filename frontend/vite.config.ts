@@ -2,7 +2,7 @@ import tailwindcss from '@tailwindcss/vite';
 import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
-import { loadDevEnv } from './load-env';
+import { loadDevEnv } from './load-env.ts';
 
 export default defineConfig(({ mode }) => {
 	loadDevEnv(mode);
