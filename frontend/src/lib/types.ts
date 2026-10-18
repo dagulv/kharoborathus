@@ -77,6 +77,11 @@ export type ListingCandidate = {
 	latest?: string;
 };
 
+export type SourceCheck = {
+	candidates: ListingCandidate[];
+	wordpress?: { posts: string; total: number };
+};
+
 export type LogSummary = {
 	id: string;
 	type: string;
@@ -105,5 +110,6 @@ export const LOG_TYPES = [
 	'trim',
 	'ingest',
 	'robots',
-	'homepage'
+	'homepage',
+	'wordpress'
 ] as const;

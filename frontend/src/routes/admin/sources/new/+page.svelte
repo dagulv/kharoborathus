@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { checkSource, createSource } from '../../admin.remote';
-	import type { ListingCandidate } from '#lib/types.js';
+	import type { ListingCandidate, SourceCheck } from '#lib/types.js';
 
 	const { url, listing, rate, targetTags } = createSource.fields;
 
 	let candidates = $state<ListingCandidate[] | null>(null);
+	let wordpress = $state<SourceCheck['wordpress']>();
 	let checkedURL = $state('');
 	let checking = $state(false);
 	let checkError = $state('');
@@ -24,7 +25,7 @@
 		candidates = null;
 
 		try {
-			candidates = await checkSource(value);
+			({ candidates, wordpress } = await checkSource(value));
 			checkedURL = value;
 			listing.set(key(candidates[0]));
 		} catch (err) {
@@ -99,6 +100,12 @@
 				<span class="block text-sm text-red-600">{issue.message}</span>
 			{/each}
 		</fieldset>
+		{#if wordpress}
+			<p class="text-sm text-zinc-600">
+				WordPress site. All {wordpress.total} posts are backfilled through its REST API once the source
+				is scraped.
+			</p>
+		{/if}
 	{/if}
 
 	<label class="block">

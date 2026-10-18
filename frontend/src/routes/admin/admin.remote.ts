@@ -5,12 +5,12 @@ import { API_URL } from '$app/env/private';
 import { db } from '#lib/server/db.js';
 import { LOG_TYPES } from '#lib/types.js';
 import type {
-	ListingCandidate,
 	Log,
 	LogSummary,
 	Post,
 	PostSummary,
 	Source,
+	SourceCheck,
 	Switch,
 	Tag,
 	TagAlias,
@@ -193,9 +193,7 @@ export const checkSource = command(httpURL, async (url) => {
 
 	if (!res.ok) error(422, `Could not fetch ${url}: ${(await res.text()).trim()}`);
 
-	const { candidates } = (await res.json()) as { candidates: ListingCandidate[] };
-
-	return candidates;
+	return (await res.json()) as SourceCheck;
 });
 
 // Mirrors domain.BaseURL in the Go app
