@@ -69,13 +69,18 @@ func fromFile() (m map[string]string, err error) {
 
 	m = make(map[string]string)
 
-	// The deploy's safe values, beside the root .env. Read first so the root .env overrides them in dev.
-	api, err := os.Open(filepath.Join(filepath.Dir(f.Name()), "infra", "api", ".env"))
-	if err == nil {
-		defer api.Close()
+	// The deploy's safe values beside the root .env, each overriding the one before. The root .env overrides them in dev.
+	for _, name := range []string{"infra/db/.env", "infra/api/.env"} {
+		shared, err := os.Open(filepath.Join(filepath.Dir(f.Name()), name))
+		if err != nil {
+			continue
+		}
 
-		if err = parse(api, m); err != nil {
-			return nil, fmt.Errorf("err read infra/api/.env: %w", err)
+		err = parse(shared, m)
+		shared.Close()
+
+		if err != nil {
+			return nil, fmt.Errorf("err read %s: %w", name, err)
 		}
 	}
 

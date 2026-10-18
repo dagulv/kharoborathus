@@ -4,11 +4,13 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
-	// kit reads one env dir, so infra/web/.env, the deploy's safe values, goes in through the process env.
+	// kit reads one env dir, so the deploy's safe values go in through the process env, web's over db's.
 	// Only keys the root .env and the shell lack, so dev overrides like API_URL win. Prod reads only the process env.
 	const root = loadEnv(mode, '..', '');
-	for (const [key, value] of Object.entries(loadEnv(mode, '../infra/web', ''))) {
-		if (!(key in root)) process.env[key] = value;
+	for (const dir of ['../infra/web', '../infra/db']) {
+		for (const [key, value] of Object.entries(loadEnv(mode, dir, ''))) {
+			if (!(key in root) && process.env[key] === undefined) process.env[key] = value;
+		}
 	}
 
 	return {

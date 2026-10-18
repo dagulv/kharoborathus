@@ -31,16 +31,21 @@ func TestLoadProcessEnvOverridesFile(t *testing.T) {
 	}
 }
 
-func TestLoadRootFileOverridesAPIFile(t *testing.T) {
+func TestLoadFilePrecedence(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "infra", "api"), 0o700); err != nil {
-		t.Fatal(err)
+	files := map[string]string{
+		"infra/db/.env":  "POSTGRES_USER=from-db\nPOSTGRES_DB=from-db\nPOSTGRES_PASSWORD=from-db\n",
+		"infra/api/.env": "POSTGRES_DB=from-api\nPOSTGRES_PASSWORD=from-api\n",
+		".env":           "POSTGRES_PASSWORD=from-root\n",
 	}
-	if err := os.WriteFile(filepath.Join(dir, "infra", "api", ".env"), []byte("POSTGRES_USER=from-api\nPOSTGRES_DB=from-api\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("POSTGRES_DB=from-root\n"), 0o600); err != nil {
-		t.Fatal(err)
+	for name, body := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Chdir(dir)
 
@@ -49,11 +54,14 @@ func TestLoadRootFileOverridesAPIFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if e.PostgresUser != "from-api" {
-		t.Errorf("PostgresUser = %q, want from-api", e.PostgresUser)
+	if e.PostgresUser != "from-db" {
+		t.Errorf("PostgresUser = %q, want from-db", e.PostgresUser)
 	}
-	if e.PostgresDb != "from-root" {
-		t.Errorf("PostgresDb = %q, want from-root", e.PostgresDb)
+	if e.PostgresDb != "from-api" {
+		t.Errorf("PostgresDb = %q, want from-api", e.PostgresDb)
+	}
+	if e.PostgresPassword != "from-root" {
+		t.Errorf("PostgresPassword = %q, want from-root", e.PostgresPassword)
 	}
 }
 

@@ -9,8 +9,8 @@ Prod secrets never sit in an env file. They live in two SOPS vaults under `secre
 | Service | Dev env | Prod env | Deploy Dockerfile |
 |---|---|---|---|
 | db | `infra/db/.env`, password from the root `.env` | `infra/db/.env` | `infra/db/Dockerfile` |
-| api, the Go app | The root `.env` over `infra/api/.env` | `infra/api/.env` | `infra/api/Dockerfile` |
-| web, the admin | The root `.env` over `infra/web/.env` | `infra/web/.env` | `infra/web/Dockerfile` |
+| api, the Go app | The root `.env` over `infra/api/.env` over `infra/db/.env` | `infra/api/.env` | `infra/api/Dockerfile` |
+| web, the admin | The root `.env` over `infra/web/.env` over `infra/db/.env` | `infra/web/.env` | `infra/web/Dockerfile` |
 
 Each has a `.env-sample` or `.env.example` beside it. The dev db also builds from `infra/db/Dockerfile`.
 
