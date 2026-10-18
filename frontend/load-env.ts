@@ -1,5 +1,8 @@
 import { loadEnv } from 'vite';
 
+// The deploy's API_URL names the api container, which dev never runs, so dev keeps the localhost default.
+const deployOnly = new Set(['API_URL']);
+
 // Shared by vite.config.ts and scripts/, which run outside kit's env handling.
 export function loadDevEnv(mode: string) {
 	// kit reads one env dir, so the deploy's safe values go in through the process env, web's over db's.
@@ -7,7 +10,9 @@ export function loadDevEnv(mode: string) {
 	const root = loadEnv(mode, '..', '');
 	for (const dir of ['../infra/web', '../infra/db']) {
 		for (const [key, value] of Object.entries(loadEnv(mode, dir, ''))) {
-			if (!(key in root) && process.env[key] === undefined) process.env[key] = value;
+			if (!(key in root) && process.env[key] === undefined && !deployOnly.has(key)) {
+				process.env[key] = value;
+			}
 		}
 	}
 
