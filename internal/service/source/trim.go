@@ -48,6 +48,7 @@ type Trim struct {
 	listings      map[string][]trimmer.Sample
 	listedAt      map[string]time.Time
 	linksFailedAt map[string]time.Time
+	triedOne      map[string]bool
 }
 
 func NewTrim(domains *domain.Store, llm adapter.LLM, l *slog.Logger) *Trim {
@@ -65,6 +66,7 @@ func NewTrim(domains *domain.Store, llm adapter.LLM, l *slog.Logger) *Trim {
 		listings:      make(map[string][]trimmer.Sample),
 		listedAt:      make(map[string]time.Time),
 		linksFailedAt: make(map[string]time.Time),
+		triedOne:      make(map[string]bool),
 	}
 }
 

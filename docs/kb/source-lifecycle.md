@@ -34,7 +34,7 @@ The existing `active` boolean is renamed to `enabled` and stays your manual swit
    - A high enough acceptance rate.
 3. **Find a listing** on promotion. Fetch the homepage.
    - RSS autodiscovery: a `<link rel="alternate" type="application/rss+xml">` tag gives `adapter = 'rss'` and the feed URL.
-   - Otherwise `adapter = 'page'` with the homepage URL. The existing linker generates a link rule after its listing samples.
+   - Otherwise `adapter = 'page'` with the homepage URL. The linker first tries a link rule from the first listing fetch, so a new source gets posts at once. If that fails it generates one from three listing samples, 30 minutes apart.
 4. **Cap.** At most a few promotions per week, oldest qualifying first.
 5. **Demote.** When the [shadow gate](classifier-gate.md) flags an active or dormant discovered source, set `status = 'proposed'`. Dormant counts too, since gate results can land after a source goes dormant and it is still trusted. It must earn promotion again and shows in admin. A flagged manual source stays active for your review.
 6. **Dormancy.** An active source goes dormant after no new posts inside the dormancy window, or after repeated consecutive fetch failures.
