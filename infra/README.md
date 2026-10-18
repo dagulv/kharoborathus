@@ -16,7 +16,7 @@ Each has a `.env-sample` or `.env.example` beside it. The dev db also builds fro
 
 | Vault | File | Keys |
 |---|---|---|
-| dev | `kharoborathus/app.yaml` | `POSTGRES_PASSWORD`, `ADMIN_TOKEN`, `DEEPSEEK_API_KEY`, `TYPESAFE_API_KEY`, `BRAVE_API_KEY` |
+| dev | `kharoborathus/app.yaml` | `POSTGRES_PASSWORD`, `DEEPSEEK_API_KEY`, `TYPESAFE_API_KEY`, `BRAVE_API_KEY` |
 | prod | `kharoborathus/app.yaml` | The dev keys plus `POSTGRES_CONNECTION_STRING` |
 | prod | `kharoborathus/tofu.yaml` | `UPCLOUD_TOKEN`, `TF_VAR_state_passphrase` |
 
@@ -89,7 +89,7 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
    for t in db api web; do cp infra/$t/.env.example infra/$t/.env; done
    ```
 
-   Generate `POSTGRES_PASSWORD` with `openssl rand -hex 32` and put the same value in `POSTGRES_CONNECTION_STRING`. Characters like `/`, `@` or `$` break the URL or get expanded. Generate `ADMIN_TOKEN` the same way: the login has no rate limit or lockout, so only its length stops guessing.
+   Generate `POSTGRES_PASSWORD` with `openssl rand -hex 32` and put the same value in `POSTGRES_CONNECTION_STRING`. Characters like `/`, `@` or `$` break the URL or get expanded.
 
 8. Deploy the database first, then the rest once its logs say it accepts connections:
 
@@ -106,5 +106,6 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
 - Redeploy with `infra/secrets.sh prod:app infra/haloy.sh deploy api web`. Images build locally and upload to the server. Leave `db` out unless its image changed.
 - Logs: `infra/secrets.sh prod:app infra/haloy.sh logs api`. `infra/secrets.sh prod:app infra/haloy.sh rollback-targets api` lists deployment IDs, and `infra/secrets.sh prod:app infra/haloy.sh rollback api -- <id>` rolls back to one.
 - `schema.sql` runs only on an empty database volume. Schema changes after the first deploy need migrations.
+- Add an admin user with `POSTGRES_CONNECTION_STRING=<conn> pnpm user:add <email>` from `frontend`. It prints a generated password: the login has no rate limit or lockout, so only its length stops guessing.
 - Every switch starts off. Turn them on in the admin under Switches.
 - `tofu apply` never replaces the server: it has `prevent_destroy`, and edits to `cloud-init.yaml` or the SSH key are ignored for the existing server.
