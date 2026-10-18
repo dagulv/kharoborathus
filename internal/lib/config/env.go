@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +38,7 @@ func Load(useFile ...bool) (e *Environment, err error) {
 		m, _ = fromFile()
 	}
 
-	// Secrets never sit in .env. infra/secrets.sh puts them in the process env.
+	// The process env wins, so infra/secrets.sh overrides both files.
 	if m != nil {
 		for _, kv := range os.Environ() {
 			k, v, _ := strings.Cut(kv, "=")
@@ -66,7 +68,26 @@ func fromFile() (m map[string]string, err error) {
 	defer f.Close()
 
 	m = make(map[string]string)
-	lines := bufio.NewScanner(f)
+
+	// The deploy's safe values, beside the root .env. Read first so the root .env overrides them in dev.
+	api, err := os.Open(filepath.Join(filepath.Dir(f.Name()), "infra", "api", ".env"))
+	if err == nil {
+		defer api.Close()
+
+		if err = parse(api, m); err != nil {
+			return nil, fmt.Errorf("err read infra/api/.env: %w", err)
+		}
+	}
+
+	if err = parse(f, m); err != nil {
+		return nil, fmt.Errorf("err read .env: %w", err)
+	}
+
+	return m, nil
+}
+
+func parse(r io.Reader, m map[string]string) error {
+	lines := bufio.NewScanner(r)
 
 	for lines.Scan() {
 		rec := bytes.SplitN(lines.Bytes(), []byte{'='}, 2)
@@ -76,7 +97,7 @@ func fromFile() (m map[string]string, err error) {
 		}
 	}
 
-	return m, lines.Err()
+	return lines.Err()
 }
 
 func findFile() (f *os.File, err error) {
