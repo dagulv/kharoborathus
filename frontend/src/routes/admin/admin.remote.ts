@@ -181,10 +181,9 @@ export const createSource = form(
 			v.integer(),
 			v.minValue(1, 'Rate must be at least 1')
 		),
-		enabled: v.optional(v.boolean(), false),
 		targetTags: v.optional(v.pipe(v.string(), v.maxLength(1000)), '')
 	}),
-	async ({ url, adapter, rate, enabled, targetTags }, issue) => {
+	async ({ url, adapter, rate, targetTags }, issue) => {
 		const parsed = new URL(url);
 		if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
 			invalid(issue.url('Only http(s) URLs are supported'));
@@ -213,7 +212,7 @@ export const createSource = form(
 
 			await tx`
 				INSERT INTO sources (domain_id, adapter, url, enabled, rate, target_tags)
-				VALUES (${domain.id}, ${adapter}, ${url}, ${enabled}, ${rate}, ${tags}::text[])
+				VALUES (${domain.id}, ${adapter}, ${url}, true, ${rate}, ${tags}::text[])
 			`;
 		});
 

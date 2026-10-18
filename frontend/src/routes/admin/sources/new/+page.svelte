@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { createSource } from '../../admin.remote';
 
-	const { url, adapter, rate, enabled, targetTags } = createSource.fields;
+	const { url, adapter, rate, targetTags } = createSource.fields;
 </script>
 
 <svelte:head><title>New source · Admin</title></svelte:head>
@@ -60,11 +60,6 @@
 			class="mt-1 w-full rounded border border-zinc-300 px-2 py-1.5 text-sm"
 		/>
 		<span class="mt-1 block text-xs text-zinc-500">Comma separated</span>
-	</label>
-
-	<label class="flex items-center gap-2">
-		<input {...enabled.as('checkbox')} />
-		<span class="text-sm">Enabled</span>
 	</label>
 
 	{#each createSource.fields.issues() ?? [] as issue (issue.message)}
