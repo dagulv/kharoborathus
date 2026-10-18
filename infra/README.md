@@ -92,11 +92,15 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
 
    Generate `POSTGRES_PASSWORD` with `openssl rand -hex 32` and put the same value in `POSTGRES_CONNECTION_STRING`. Characters like `/`, `@` or `$` break the URL or get expanded.
 
-8. Deploy the database first, then the rest once its logs say it accepts connections. The database starts empty and `api` needs the schema, so migrate in between. Prod has no migrate step yet: it is planned as a CI job.
+8. In the GitHub repo, create the `production` environment with two secrets: `HALOY_API_TOKEN` from `ssh deploy@<ip> sudo haloyd config get api-token --raw`, and the prod `POSTGRES_PASSWORD`.
+
+9. Deploy the database first. Once its logs say it accepts connections, run the `migrate` workflow, then deploy the rest:
 
    ```bash
    infra/secrets.sh prod:app infra/haloy.sh deploy db
    infra/secrets.sh prod:app infra/haloy.sh logs db
+   gh workflow run migrate.yml --ref main
+   gh run watch
    infra/secrets.sh prod:app infra/haloy.sh deploy api web
    ```
 
@@ -107,6 +111,7 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
 - Redeploy with `infra/secrets.sh prod:app infra/haloy.sh deploy api web`. Images build locally and upload to the server. Leave `db` out unless its image changed.
 - Logs: `infra/secrets.sh prod:app infra/haloy.sh logs api`. `infra/secrets.sh prod:app infra/haloy.sh rollback-targets api` lists deployment IDs, and `infra/secrets.sh prod:app infra/haloy.sh rollback api -- <id>` rolls back to one.
 - Schema changes go in a new numbered file in `internal/migrations`. Never edit a file that has been applied. `go run ./cmd migrate` applies pending files with tern and records the version in `schema_version`. Tern runs each file through Go's `text/template`, so `{{` in SQL breaks it.
+- A push to `main` that touches `internal/migrations` runs the [migrate workflow](../.github/workflows/migrate.yml) against prod, through `haloy tunnel` to the db. The running api still has the old code, so a migration must work with it. Deploy `api web` once the run passes. Rerun it by hand with `gh workflow run migrate.yml --ref main`.
 - A dev volume created before the migrations existed has the schema but no `schema_version`, so `migrate` fails on it. Recreate it once with `docker compose down -v`.
 - Add an admin user with `POSTGRES_CONNECTION_STRING=<conn> pnpm user:add <email>` from `frontend`. It prints a generated password: the login has no rate limit or lockout, so only its length stops guessing.
 - Every switch starts off. Turn them on in the admin under Switches.

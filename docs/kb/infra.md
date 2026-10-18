@@ -66,7 +66,7 @@ Deploy:
 2. `haloy server add` registers the server with the token cloud-init left in the deploy user's home.
 3. `secrets.sh prod:app haloy.sh deploy <target>...` builds the images locally and uploads them to haloyd, so no registry is needed. The `db` target is protected and deploys only by name.
 4. Haloy has no per-target env file. It reads the working directory's `.env`, and a `.env.<target>` only for targets named with `-t`, all into one process env. So `haloy.sh` runs Haloy once per target from `infra/<target>/`, and each target resolves only its own env. Haloy passes a container only the values `haloy.yaml` names, so `haloy.sh deploy` refuses a target whose `.env` holds a key that `haloy.yaml` does not pass. Every Haloy command that loads the config resolves all its env values, including `logs` and `status`. Haloy also loads `infra/.env` and `.env.local` from the working directory, `infra/` and `~/.config/haloy`, and `.env.local` overrides the vault. `.gitignore` keeps every `.env.*` except `.env.example` out of git, and none of those files should exist here.
-5. The database starts empty. `kharoborathus migrate` applies the numbered files in `internal/migrations` with tern. Prod has no migrate step yet: it is planned as a CI job, see [rollout](rollout.md).
+5. The database starts empty. `kharoborathus migrate` applies the numbered files in `internal/migrations` with tern. In prod the [migrate workflow](../../.github/workflows/migrate.yml) runs it on every push to `main` that touches `internal/migrations`. It reaches the db through `haloy tunnel` over the haloyd API, so it needs no SSH and no published port.
 
 Build notes:
 
