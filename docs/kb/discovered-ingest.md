@@ -9,13 +9,13 @@ A new `ingest` service turns queued URLs into posts. It reuses the source pipeli
 
 ## Current state
 
-[ingest.go](../../internal/service/ingest/ingest.go) runs every minute while `discovered_ingest` is on. It reuses `FetchHTML`, `Trim.Apply`, `source.Markdown`, `Summarizer` and the hard gate `Tagger.Gate`. Admin shows `link_queue` status counts on the overview.
+[ingest.go](../../internal/service/ingest/ingest.go) runs every minute while `discovered_ingest` is on. It reuses `FetchHTML`, `Trim.Apply`, `source.Markdown`, `Summarizer` and the hard gate `Tagger.Gate`. Admin shows `link_events` status counts on the overview.
 
 ## Design
 
 Chosen over a `queue` adapter in the source pipeline. That adapter would summarize before gating and mix trusted with untrusted posts.
 
-1. Read `pending` rows from `link_queue` created inside the pending window, respecting the daily cap and per-domain rate. Runs only while the `discovered_ingest` switch is on, see [rollout](rollout.md). Older rows stay `pending`, so links queued while the switch was off are not fetched stale.
+1. Read `pending` rows from `link_events` created inside the pending window, respecting the daily cap and per-domain rate. Runs only while the `discovered_ingest` switch is on, see [rollout](rollout.md). Older rows stay `pending`, so links queued while the switch was off are not fetched stale.
 2. Check `robots.txt` for the domain.
 3. Fetch, resolve domain and store it in `domain_id`, trim, convert to markdown.
 4. Reject on failed trimmer checks, short content or a missing title.
@@ -51,12 +51,12 @@ Rules:
 ## Schema changes
 
 ```sql
-CREATE TABLE IF NOT EXISTS link_queue (
+CREATE TABLE IF NOT EXISTS link_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   url TEXT UNIQUE NOT NULL,
   via TEXT NOT NULL, -- link | search
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-  discover_item_id UUID REFERENCES discover_queue (id) ON DELETE SET NULL,
+  discovery_events_id UUID REFERENCES discovery_events (id) ON DELETE SET NULL,
   domain_id UUID REFERENCES domains (id), -- set on fetch, drives source promotion
   status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
   gate_scores JSONB NOT NULL DEFAULT '{}',
@@ -66,21 +66,21 @@ CREATE TABLE IF NOT EXISTS link_queue (
   checked_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS link_queue_pending_idx ON link_queue (created_at)
+CREATE INDEX IF NOT EXISTS link_events_pending_idx ON link_events (created_at)
 WHERE
   status = 'pending';
 
-CREATE INDEX IF NOT EXISTS link_queue_domain_idx ON link_queue (domain_id, status);
+CREATE INDEX IF NOT EXISTS link_events_domain_idx ON link_events (domain_id, status);
 ```
 
 ## Defaults
 
-| Parameter | Value | Why |
-|---|---|---|
-| Daily fetch cap | 200 URLs | Scale slowly. |
-| Per-domain rate | 1 request per 10 seconds | Politeness. |
-| Max attempts | 3 | Then `failed`. |
-| Pending window | 7 days | Older links are stale news. |
+| Parameter       | Value                    | Why                         |
+| --------------- | ------------------------ | --------------------------- |
+| Daily fetch cap | 200 URLs                 | Scale slowly.               |
+| Per-domain rate | 1 request per 10 seconds | Politeness.                 |
+| Max attempts    | 3                        | Then `failed`.              |
+| Pending window  | 7 days                   | Older links are stale news. |
 
 ## Open questions
 

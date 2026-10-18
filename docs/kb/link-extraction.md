@@ -5,7 +5,7 @@
 
 ## Summary
 
-A Go job pulls outbound links from trusted post bodies into `link_queue`. No AI is involved.
+A Go job pulls outbound links from trusted post bodies into `link_events`. No AI is involved.
 
 ## Current state
 
@@ -17,11 +17,11 @@ A Go job pulls outbound links from trusted post bodies into `link_queue`. No AI 
 2. Parse markdown links from `posts.content`.
 3. Normalize: strip `utm_*` parameters and fragments. Drop URLs longer than 2000 bytes, which would break the unique URL indexes.
 4. Skip a link when:
-   - Its URL is already in `posts` or `link_queue`.
+   - Its URL is already in `posts` or `link_events`.
    - It points to the post's own domain, which is mostly navigation.
    - Its domain is on the blocklist of social, video and file hosts. The blocklist lives in code until admin needs to edit it.
    - It is not http or https.
-5. Insert the rest into `link_queue` with `via = 'link'` and `from_post_id`.
+5. Insert the rest into `link_events` with `via = 'link'` and `from_post_id`.
 6. Mark the post scanned.
 
 Rules:
@@ -39,13 +39,13 @@ CREATE TABLE IF NOT EXISTS link_checked (
 );
 ```
 
-`link_queue` is defined in [discovered-ingest](discovered-ingest.md).
+`link_events` is defined in [discovered-ingest](discovered-ingest.md).
 
 ## Defaults
 
-| Parameter | Value | Why |
-|---|---|---|
-| Max links per post | 10 | Link farms at the end of articles. |
+| Parameter          | Value | Why                                |
+| ------------------ | ----- | ---------------------------------- |
+| Max links per post | 10    | Link farms at the end of articles. |
 
 ## Open questions
 

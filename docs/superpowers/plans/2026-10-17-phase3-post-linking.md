@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.27, pgx v5, Postgres 18 (`bit_count`, `bigint::bit(64)`).
 
-**Spec:** `docs/kb/post-linking.md`, `docs/kb/rollout.md` (phase 3), `docs/kb/search-discovery.md` (`discover_queue_event_idx`).
+**Spec:** `docs/kb/post-linking.md`, `docs/kb/rollout.md` (phase 3), `docs/kb/search-discovery.md` (`discovery_events_event_idx`).
 
 ## Global Constraints
 
@@ -36,7 +36,7 @@ These fill gaps the spec leaves open. Task 4 writes them back into the kb.
 - **Fewer than 3 words form a single shingle.**
 - **The simhash is stored as the uint64 bit pattern in a signed `BIGINT`.** Only bit patterns are compared, so negative values are fine.
 - **`UpdateFeed` recomputes the simhash** like it recomputes `content_hash`. It has no callers and does not relink.
-- **`discover_queue_event_idx` ships now**, with the definition from search-discovery, since post linking is its first reader.
+- **`discovery_events_event_idx` ships now**, with the definition from search-discovery, since post linking is its first reader.
 
 ## Review Focus
 
@@ -51,10 +51,12 @@ These fill gaps the spec leaves open. Task 4 writes them back into the kb.
 ### Task 1: Simhash
 
 **Files:**
+
 - Create: `internal/service/feed/simhash.go`
 - Test: `internal/service/feed/simhash_test.go`
 
 **Interfaces:**
+
 - Produces: `func simhash(text string) (uint64, bool)` in package `feed`. The bool is false when the text has no words. Task 2 calls it.
 
 - [ ] **Step 1: Write the failing test**
@@ -221,10 +223,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 2: Store simhash and link duplicates
 
 **Files:**
+
 - Modify: `internal/migrations/schema.sql` (posts `simhash` column)
 - Modify: `internal/service/feed/store.go` (`CreateFeed`, `UpdateFeed`)
 
 **Interfaces:**
+
 - Consumes: `simhash(text string) (uint64, bool)` from Task 1.
 - Produces: `posts.simhash BIGINT`, `duplicate_of` rows in `post_links`. `CreateFeed` keeps its signature and still returns an error matching `sql.ErrNoRows` on a URL conflict.
 
@@ -303,13 +307,13 @@ docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" link_check'
 
 Expected rows, and no others:
 
-| from | to | metadata |
-|---|---|---|
-| b | a | `{"distance": 1}` |
-| c | a | `{"distance": 3}` |
-| d | b | `{"distance": 3}` |
-| n | m | `{"distance": 1}` |
-| o | a | `{"distance": 0}` |
+| from | to  | metadata          |
+| ---- | --- | ----------------- |
+| b    | a   | `{"distance": 1}` |
+| c    | a   | `{"distance": 3}` |
+| d    | b   | `{"distance": 3}` |
+| n    | m   | `{"distance": 1}` |
+| o    | a   | `{"distance": 0}` |
 
 Why: `c` and `d` share `created_at` with `y`, `z` and `n`, so they never link to each other. `c` matches `a` and `b` and takes the earliest. `d` is 4 bits from `a`. `y` only matches `x`, which is outside the window. `z` has no simhash. `a` has nothing older within distance. `o` is newest and links to the earliest exact copy.
 
@@ -517,19 +521,21 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 3: Link same-event posts
 
 **Files:**
-- Modify: `internal/migrations/schema.sql` (`discover_queue_event_idx`)
+
+- Modify: `internal/migrations/schema.sql` (`discovery_events_event_idx`)
 - Modify: `internal/service/discovery/store.go` (`CompleteDiscovery`)
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks.
 - Produces: `same_event` rows in `post_links`. `CompleteDiscovery` keeps its signature.
 
 - [ ] **Step 1: Add the index**
 
-In `internal/migrations/schema.sql`, after `discover_queue_pending_idx`, add:
+In `internal/migrations/schema.sql`, after `discovery_events_pending_idx`, add:
 
 ```sql
-CREATE INDEX IF NOT EXISTS discover_queue_event_idx ON discover_queue (lower(entity), lower(action), searched_at);
+CREATE INDEX IF NOT EXISTS discovery_events_event_idx ON discovery_events (lower(entity), lower(action), searched_at);
 ```
 
 - [ ] **Step 2: Verify the link SQL on a throwaway database**
@@ -544,7 +550,7 @@ INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, conten
 SELECT '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'https://a.example/' || name, 'sv', name, '', '', '\x00', now() - age
 FROM (VALUES ('p0', interval '11 days'), ('p1', '3 days'), ('p2', '2 days'), ('p3', '1 day'), ('p4', '0')) f (name, age);
 
-INSERT INTO discover_queue (post_id, entity, action, query)
+INSERT INTO discovery_events (post_id, entity, action, query)
 SELECT p.id, e.entity, e.action, e.query
 FROM (VALUES
   ('p0', 'Volvo Cars', 'acquisition', 'q0'),
@@ -561,10 +567,10 @@ PREPARE link(uuid, int) AS
 INSERT INTO post_links (from_post_id, to_post_id, relation, metadata)
 SELECT n.id, anchor.id, 'same_event', jsonb_build_object('entity', e.entity, 'action', e.action)
 FROM posts n
-JOIN discover_queue e ON e.post_id = n.id
+JOIN discovery_events e ON e.post_id = n.id
 CROSS JOIN LATERAL (
   SELECT o.id
-  FROM discover_queue q
+  FROM discovery_events q
   JOIN posts o ON o.id = q.post_id
   WHERE lower(q.entity) = lower(e.entity)
     AND lower(q.action) = lower(e.action)
@@ -602,11 +608,11 @@ docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" link_check'
 
 Expected rows, and no others, all `same_event`:
 
-| from | to |
-|---|---|
-| p2 | p1 |
-| p3 | p2 |
-| p4 | p1 |
+| from | to  |
+| ---- | --- |
+| p2   | p1  |
+| p3   | p2  |
+| p4   | p1  |
 
 Why: `p1` has no earlier match inside 7 days, since `p0` is 8 days older. `p2` matches `p1` despite different case and has no earlier `Ericsson` post. `p4` has two events that resolve to `p1` and inserts once.
 
@@ -618,17 +624,17 @@ In `internal/service/discovery/store.go`, add after the imports:
 const eventWindowDays = 7
 ```
 
-In `CompleteDiscovery`, after the `INSERT INTO discover_queue` exec and still inside `if len(items) > 0`, add:
+In `CompleteDiscovery`, after the `INSERT INTO discovery_events` exec and still inside `if len(items) > 0`, add:
 
 ```go
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO post_links (from_post_id, to_post_id, relation, metadata)
 				SELECT n.id, anchor.id, 'same_event', jsonb_build_object('entity', e.entity, 'action', e.action)
 				FROM posts n
-				JOIN discover_queue e ON e.post_id = n.id
+				JOIN discovery_events e ON e.post_id = n.id
 				CROSS JOIN LATERAL (
 					SELECT o.id
-					FROM discover_queue q
+					FROM discovery_events q
 					JOIN posts o ON o.id = q.post_id
 					WHERE lower(q.entity) = lower(e.entity)
 						AND lower(q.action) = lower(e.action)
@@ -663,6 +669,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 4: Describe shipped post linking in kb
 
 **Files:**
+
 - Modify: `docs/kb/post-linking.md`
 - Modify: `docs/kb/architecture.md`
 - Modify: `docs/kb/rollout.md`
@@ -678,7 +685,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - The feed does not read `post_links` yet.
 - Under Same text, add the rulings: plain text is the markdown with link targets removed, words are lowercased runs of letters and digits, fewer than 3 words form one shingle, no words stores NULL and never links, the hash is stored as its bit pattern in a signed `BIGINT`.
 - Under Rules, add: newer and older mean insert order, `created_at`, and the window is measured from the new post's `created_at`. Say why: `posted_at` can be missing or wrong and would move existing anchors.
-- Schema changes: change `ALTER TABLE` to say the column is in `schema.sql`, and that `discover_queue_event_idx` shipped with this phase.
+- Schema changes: change `ALTER TABLE` to say the column is in `schema.sql`, and that `discovery_events_event_idx` shipped with this phase.
 
 - [ ] **Step 2: architecture.md**
 
@@ -693,7 +700,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 4: search-discovery.md and index.md**
 
-- search-discovery Current state: add that `discover_queue_event_idx` exists and post linking reads it.
+- search-discovery Current state: add that `discovery_events_event_idx` exists and post linking reads it.
 - index.md: Post linking status `done`.
 
 - [ ] **Step 5: Commit**

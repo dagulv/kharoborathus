@@ -9,18 +9,18 @@ Kharoborathus collects business and financial news from hand-picked sources, tag
 
 ## Current state
 
-| Worker | Code | Job |
-|---|---|---|
-| HTTP | [feed/route.go](../../internal/service/feed/route.go), [source/route.go](../../internal/service/source/route.go) | Serves `/feeds` and manual source sync. |
-| Sources | [sourced.go](../../internal/service/source/sourced.go) | Polls enabled, active sources at their `rate` and dormant ones weekly, and turns articles into posts. |
-| Tagging | [tagged.go](../../internal/service/tagging/tagged.go) | Proposes tags from trusted posts, classifies every post against active tags and records the shadow gate result for trusted posts while its switch is on. |
-| Tag promotion | [promote.go](../../internal/service/tagging/promote.go) | Hourly: promotes or merges proposed tags that pass support, duplicate, consistency and broadness checks. |
-| Tag maintenance | [maintain.go](../../internal/service/tagging/maintain.go) | Daily: recomputes tag match rates and `gate`, puts unused tags to sleep and flags sources while `shadow_gate` is on. |
-| Discovery | [discovery.go](../../internal/service/discovery/discovery.go) | Extracts events with gate tag keys as actions into `discover_queue` and links `same_event` posts. |
-| Search | [search.go](../../internal/service/discovery/search.go) | Searches Brave for gate tag events from trusted posts and queues filtered results while `search_discovery` is on. |
-| Links | [extract.go](../../internal/service/ingest/extract.go) | Queues outbound links from trusted posts into `link_queue`. |
-| Ingest | [ingest.go](../../internal/service/ingest/ingest.go) | Fetches, gates and inserts queued links while `discovered_ingest` is on. Proposes sources for new domains. |
-| Lifecycle | [lifecycle.go](../../internal/service/source/lifecycle.go) | Daily: puts silent sources to sleep and promotes proposed sources while `source_promotion` is on. |
+| Worker          | Code                                                                                                             | Job                                                                                                                                                      |
+| --------------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP            | [feed/route.go](../../internal/service/feed/route.go), [source/route.go](../../internal/service/source/route.go) | Serves `/feeds` and manual source sync.                                                                                                                  |
+| Sources         | [sourced.go](../../internal/service/source/sourced.go)                                                           | Polls enabled, active sources at their `rate` and dormant ones weekly, and turns articles into posts.                                                    |
+| Tagging         | [tagged.go](../../internal/service/tagging/tagged.go)                                                            | Proposes tags from trusted posts, classifies every post against active tags and records the shadow gate result for trusted posts while its switch is on. |
+| Tag promotion   | [promote.go](../../internal/service/tagging/promote.go)                                                          | Hourly: promotes or merges proposed tags that pass support, duplicate, consistency and broadness checks.                                                 |
+| Tag maintenance | [maintain.go](../../internal/service/tagging/maintain.go)                                                        | Daily: recomputes tag match rates and `gate`, puts unused tags to sleep and flags sources while `shadow_gate` is on.                                     |
+| Discovery       | [discovery.go](../../internal/service/discovery/discovery.go)                                                    | Extracts events with gate tag keys as actions into `discovery_events` and links `same_event` posts.                                                      |
+| Search          | [search.go](../../internal/service/discovery/search.go)                                                          | Searches Brave for gate tag events from trusted posts and queues filtered results while `search_discovery` is on.                                        |
+| Links           | [extract.go](../../internal/service/ingest/extract.go)                                                           | Queues outbound links from trusted posts into `link_events`.                                                                                             |
+| Ingest          | [ingest.go](../../internal/service/ingest/ingest.go)                                                             | Fetches, gates and inserts queued links while `discovered_ingest` is on. Proposes sources for new domains.                                               |
+| Lifecycle       | [lifecycle.go](../../internal/service/source/lifecycle.go)                                                       | Daily: puts silent sources to sleep and promotes proposed sources while `source_promotion` is on.                                                        |
 
 Source pipeline per article:
 
@@ -54,9 +54,9 @@ None.
 
 ## Defaults
 
-| Parameter | Value | Why |
-|---|---|---|
-| Pipeline workers per stage | 5 | `workers` in sourced.go. |
+| Parameter                   | Value               | Why                             |
+| --------------------------- | ------------------- | ------------------------------- |
+| Pipeline workers per stage  | 5                   | `workers` in sourced.go.        |
 | Tagging and discovery batch | 20 posts per minute | `batchSize` and `tickInterval`. |
 
 ## Open questions

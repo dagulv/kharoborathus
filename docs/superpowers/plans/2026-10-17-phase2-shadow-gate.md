@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Phase 2 ships the switches and the shadow gate only. The hard gate, the article question, `link_queue` and source `status` or `origin` belong to phase 4. Do not add them, and do not add rows for other switches.
+- Phase 2 ships the switches and the shadow gate only. The hard gate, the article question, `link_events` and source `status` or `origin` belong to phase 4. Do not add them, and do not add rows for other switches.
 - Every post is trusted in phase 2. Never reject or hide a post because of the gate.
 - Schema changes go straight into `internal/migrations/schema.sql`. No numbered migration file, because the project has not been deployed yet. This overrides the "Every phase" migration bullet in `rollout.md`, which Task 8 rewrites.
 - The `shadow_gate` row is inserted by `schema.sql` with `ON CONFLICT (key) DO NOTHING` and starts off.
@@ -49,6 +49,7 @@ These fill gaps the spec leaves open. Task 8 writes them back into the kb.
 ### Task 1: Switches table and admin page
 
 **Files:**
+
 - Modify: `internal/migrations/schema.sql` (append the `switches` table)
 - Modify: `frontend/src/lib/types.ts` (append `Switch`)
 - Modify: `frontend/src/routes/admin/admin.remote.ts` (append `listSwitches` and `setSwitch`)
@@ -56,6 +57,7 @@ These fill gaps the spec leaves open. Task 8 writes them back into the kb.
 - Modify: `frontend/src/routes/admin/+layout.svelte` (nav link)
 
 **Interfaces:**
+
 - Produces: table `switches (key, enabled, updated_at)`, type `Switch`, `listSwitches()` returning `Switch[]` with a `readiness: string | null` column, `setSwitch({ key, enabled })`. Task 2 adds the first row and its readiness branch.
 
 Edit the `.svelte` files through the `svelte:svelte-file-editor` agent or the Svelte MCP tools.
@@ -90,12 +92,11 @@ Expected: every command exits 0. `switches` has `key`, `enabled` defaulting to f
 Append to `frontend/src/lib/types.ts`:
 
 ```ts
-
 export type Switch = {
-	key: string;
-	enabled: boolean;
-	updatedAt: Date;
-	readiness: string | null;
+  key: string;
+  enabled: boolean;
+  updatedAt: Date;
+  readiness: string | null;
 };
 ```
 
@@ -104,7 +105,15 @@ export type Switch = {
 In `frontend/src/routes/admin/admin.remote.ts`, add `Switch` to the type import:
 
 ```ts
-import type { Post, PostSummary, Source, Switch, Tag, TagAlias, TagProposal } from '#lib/types.js';
+import type {
+  Post,
+  PostSummary,
+  Source,
+  Switch,
+  Tag,
+  TagAlias,
+  TagProposal,
+} from "#lib/types.js";
 ```
 
 Append to the end of the file:
@@ -112,9 +121,9 @@ Append to the end of the file:
 ```ts
 // Readiness per key mirrors the switch table in docs/kb/rollout.md
 export const listSwitches = query(async () => {
-	const sql = db();
+  const sql = db();
 
-	return sql<Switch[]>`
+  return sql<Switch[]>`
 		SELECT
 			s.key,
 			s.enabled,
@@ -126,19 +135,22 @@ export const listSwitches = query(async () => {
 });
 
 export const setSwitch = command(
-	v.object({ key: v.pipe(v.string(), v.nonEmpty(), v.maxLength(40)), enabled: v.boolean() }),
-	async ({ key, enabled }) => {
-		const sql = db();
-		const [row] = await sql`
+  v.object({
+    key: v.pipe(v.string(), v.nonEmpty(), v.maxLength(40)),
+    enabled: v.boolean(),
+  }),
+  async ({ key, enabled }) => {
+    const sql = db();
+    const [row] = await sql`
 			UPDATE switches SET enabled = ${enabled}, updated_at = now()
 			WHERE key = ${key}
 			RETURNING 1
 		`;
 
-		if (!row) error(404, `Unknown switch ${key}`);
+    if (!row) error(404, `Unknown switch ${key}`);
 
-		await listSwitches().refresh();
-	}
+    await listSwitches().refresh();
+  },
 );
 ```
 
@@ -270,11 +282,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 2: Shadow gate schema and switch row
 
 **Files:**
+
 - Modify: `internal/migrations/schema.sql` (the `sources` table, the `tag_checked` table, the end of the file)
 - Modify: `frontend/src/routes/admin/admin.remote.ts` (`listSwitches` readiness)
 - Modify: `frontend/src/routes/admin/switches/+page.svelte` (`descriptions`)
 
 **Interfaces:**
+
 - Consumes: `switches` table and `listSwitches` from Task 1.
 - Produces: `tag_checked.gate_passed BOOLEAN` (nullable), `sources.flagged_at TIMESTAMPTZ`, `sources.reviewed_at TIMESTAMPTZ`, switch row `shadow_gate` starting off, readiness text `<n> gate tags`.
 
@@ -351,16 +365,16 @@ with:
 In `switches/+page.svelte`, replace:
 
 ```ts
-	const descriptions: Record<string, string> = {};
+const descriptions: Record<string, string> = {};
 ```
 
 with:
 
 ```ts
-	const descriptions: Record<string, string> = {
-		shadow_gate:
-			'Stores the shadow gate result per post and flags drifting sources. Turn on when several gate tags exist.'
-	};
+const descriptions: Record<string, string> = {
+  shadow_gate:
+    "Stores the shadow gate result per post and flags drifting sources. Turn on when several gate tags exist.",
+};
 ```
 
 - [ ] **Step 5: Check on a throwaway database**
@@ -410,9 +424,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 3: Switches Go package
 
 **Files:**
+
 - Create: `internal/service/switches/store.go`
 
 **Interfaces:**
+
 - Consumes: `switches` table and the `shadow_gate` row from Tasks 1 and 2.
 - Produces: package `switches` with `const ShadowGate = "shadow_gate"`, `type Store`, `func NewStore(db *database.Database) Store`, `func (s *Store) Enabled(ctx context.Context, key string) (bool, error)`. A missing row returns false. Task 5 builds it in `cmd/main.go`.
 
@@ -492,11 +508,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 4: Shadow gate decision
 
 **Files:**
+
 - Create: `internal/service/tagging/gate.go`
 - Create: `internal/service/tagging/gate_test.go`
 - Modify: `internal/service/tagging/model.go` (`TagState`)
 
 **Interfaces:**
+
 - Consumes: `Vocabulary{Tags map[string]TagState; Aliases map[string]string}`, `statusActive` from `model.go`.
 - Produces: `TagState.Gate bool`, and `func shadowGate(v Vocabulary, targets, keys []string) *bool`. `nil` means no basis to judge.
 
@@ -638,12 +656,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 5: Store the gate result in the tagging worker
 
 **Files:**
+
 - Modify: `internal/service/tagging/model.go` (`Post`)
 - Modify: `internal/service/tagging/store.go` (`ListUntaggedPosts`, `CompleteTagging`, `Vocabulary`)
 - Modify: `internal/service/tagging/tagged.go` (`Run`, `tagPosts`, `generateTags`)
 - Modify: `cmd/main.go`
 
 **Interfaces:**
+
 - Consumes: `shadowGate` and `TagState.Gate` from Task 4, `switches.Store.Enabled` and `switches.ShadowGate` from Task 3, `tag_checked.gate_passed` from Task 2.
 - Produces: `Post.TargetTags []string`, `func (s *Store) CompleteTagging(ctx context.Context, postID string, keys []string, gatePassed *bool) error`, `func Run(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error`, `func generateTags(ctx context.Context, s *Store, g *robot.TagGenerator, v Vocabulary, lang string, post Post) error`.
 
@@ -966,11 +986,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 6: Flag drifting sources
 
 **Files:**
+
 - Modify: `internal/service/tagging/store.go` (append `FlagSources`)
 - Modify: `internal/service/tagging/maintain.go`
 - Modify: `cmd/main.go`
 
 **Interfaces:**
+
 - Consumes: `tag_checked.gate_passed` from Task 5, `sources.flagged_at` and `sources.reviewed_at` from Task 2, `switches.Store` from Task 3 and `switchStore` in `cmd/main.go` from Task 5.
 - Produces: `func (s *Store) FlagSources(ctx context.Context, window int, floor float64) (int64, error)`, `func RunMaintenance(ctx context.Context, s *Store, sw *switches.Store, l *slog.Logger) error`, constants `flagWindow = 50` and `flagFloor = 0.7`. Task 7's admin pass rate mirrors this query.
 
@@ -978,16 +1000,16 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 The fixture builds eight sources on a throwaway database. Post `i` of a source was checked `i` hours ago, so `i = 1` is the newest. A post passes when `i <= passed`. Source `h` stores NULL results.
 
-| Source | Posts | Passing | Other state | Expected |
-|---|---|---|---|---|
-| a | 60 | newest 30 | | flagged (60% of the newest 50) |
-| b | 60 | newest 40 | | not flagged (80%) |
-| c | 30 | none | | not flagged (window not full) |
-| d | 60 | none | `reviewed_at` 90 minutes ago | not flagged (1 post after review) |
-| e | 80 | newest 50 | | not flagged (window is the newest 50, all passing) |
-| f | 60 | none | disabled | not flagged |
-| g | 60 | none | `flagged_at` 2026-01-01 | stays flagged with the old time |
-| h | 60 | NULL | | not flagged |
+| Source | Posts | Passing   | Other state                  | Expected                                           |
+| ------ | ----- | --------- | ---------------------------- | -------------------------------------------------- |
+| a      | 60    | newest 30 |                              | flagged (60% of the newest 50)                     |
+| b      | 60    | newest 40 |                              | not flagged (80%)                                  |
+| c      | 30    | none      |                              | not flagged (window not full)                      |
+| d      | 60    | none      | `reviewed_at` 90 minutes ago | not flagged (1 post after review)                  |
+| e      | 80    | newest 50 |                              | not flagged (window is the newest 50, all passing) |
+| f      | 60    | none      | disabled                     | not flagged                                        |
+| g      | 60    | none      | `flagged_at` 2026-01-01      | stays flagged with the old time                    |
+| h      | 60    | NULL      |                              | not flagged                                        |
 
 Save this as `.superpowers/flag_fixture.sql` (git-ignored scratch):
 
@@ -1207,12 +1229,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 7: Admin flagged sources
 
 **Files:**
+
 - Modify: `frontend/src/lib/types.ts` (`Source`)
 - Modify: `frontend/src/routes/admin/admin.remote.ts` (`getStats`, `listSources`, new `reviewSource` at the end of the file)
 - Modify: `frontend/src/routes/admin/+page.svelte`
 - Modify: `frontend/src/routes/admin/sources/+page.svelte`
 
 **Interfaces:**
+
 - Consumes: `sources.flagged_at`, `sources.reviewed_at` and `tag_checked.gate_passed`, plus the window from Task 6.
 - Produces: `Source.flaggedAt: Date | null`, `Source.gateRate: number | null`, stat `flaggedSources`, and `reviewSource({ id, enabled, targetTags })`. The command sets `enabled` and `target_tags`, clears `flagged_at` and sets `reviewed_at = now()`.
 
@@ -1248,7 +1272,7 @@ Expected: `svelte-check found 0 errors`. A type change alone cannot fail, so thi
 In `frontend/src/routes/admin/admin.remote.ts`, replace the body of the `listSources` SQL:
 
 ```ts
-		return sql<Source[]>`
+return sql<Source[]>`
 			SELECT
 				s.id,
 				s.domain_id,
@@ -1278,8 +1302,8 @@ In `frontend/src/routes/admin/admin.remote.ts`, replace the body of the `listSou
 with:
 
 ```ts
-		// gate_rate mirrors the window in tagging.Store.FlagSources in the Go app
-		return sql<Source[]>`
+// gate_rate mirrors the window in tagging.Store.FlagSources in the Go app
+return sql<Source[]>`
 			SELECT
 				s.id,
 				s.domain_id,
@@ -1358,18 +1382,18 @@ Append to the end of `admin.remote.ts`, after `mergeTag`, so `tagKey` is already
 
 ```ts
 export const reviewSource = command(
-	v.object({ id: uuid, enabled: v.boolean(), targetTags: v.array(tagKey) }),
-	async ({ id, enabled, targetTags }) => {
-		const sql = db();
-		const [source] = await sql`
+  v.object({ id: uuid, enabled: v.boolean(), targetTags: v.array(tagKey) }),
+  async ({ id, enabled, targetTags }) => {
+    const sql = db();
+    const [source] = await sql`
 			UPDATE sources
 			SET enabled = ${enabled}, target_tags = ${targetTags}::text[], flagged_at = NULL, reviewed_at = now()
 			WHERE id = ${id} AND deleted_at IS NULL
 			RETURNING 1
 		`;
 
-		if (!source) error(404, 'Source not found');
-	}
+    if (!source) error(404, "Source not found");
+  },
 );
 ```
 
@@ -1394,50 +1418,55 @@ with:
 In `frontend/src/routes/admin/sources/+page.svelte`, replace the import line:
 
 ```ts
-	import { listSources, syncSource } from '../admin.remote';
+import { listSources, syncSource } from "../admin.remote";
 ```
 
 with:
 
 ```ts
-	import { listSources, reviewSource, syncSource } from '../admin.remote';
-	import type { Source } from '#lib/types.js';
+import { listSources, reviewSource, syncSource } from "../admin.remote";
+import type { Source } from "#lib/types.js";
 ```
 
 After the `sync` function, before `</script>`, add:
 
 ```ts
-	const flagged = $derived(sources.filter((s) => s.flaggedAt && !s.deletedAt));
-	const pct = new Intl.NumberFormat('sv-SE', { style: 'percent', maximumFractionDigits: 0 });
+const flagged = $derived(sources.filter((s) => s.flaggedAt && !s.deletedAt));
+const pct = new Intl.NumberFormat("sv-SE", {
+  style: "percent",
+  maximumFractionDigits: 0,
+});
 
-	const targetInput = new SvelteMap<string, string>();
-	const reviewState = new SvelteMap<string, 'pending' | 'failed'>();
+const targetInput = new SvelteMap<string, string>();
+const reviewState = new SvelteMap<string, "pending" | "failed">();
 
-	function parseTags(text: string) {
-		return [
-			...new Set(
-				text
-					.split(',')
-					.map((t) => t.trim())
-					.filter(Boolean)
-			)
-		];
-	}
+function parseTags(text: string) {
+  return [
+    ...new Set(
+      text
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
 
-	async function review(source: Source, enabled: boolean) {
-		const targetTags = parseTags(targetInput.get(source.id) ?? source.targetTags.join(', '));
+async function review(source: Source, enabled: boolean) {
+  const targetTags = parseTags(
+    targetInput.get(source.id) ?? source.targetTags.join(", "),
+  );
 
-		reviewState.set(source.id, 'pending');
-		try {
-			await reviewSource({ id: source.id, enabled, targetTags }).updates(
-				listSources({ includeDeleted })
-			);
-			reviewState.delete(source.id);
-			targetInput.delete(source.id);
-		} catch {
-			reviewState.set(source.id, 'failed');
-		}
-	}
+  reviewState.set(source.id, "pending");
+  try {
+    await reviewSource({ id: source.id, enabled, targetTags }).updates(
+      listSources({ includeDeleted }),
+    );
+    reviewState.delete(source.id);
+    targetInput.delete(source.id);
+  } catch {
+    reviewState.set(source.id, "failed");
+  }
+}
 ```
 
 Between the header `</div>` and `<div class="overflow-x-auto ...">`, add:
@@ -1567,12 +1596,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 8: Knowledge base
 
 **Files:**
+
 - Modify: `docs/kb/classifier-gate.md`
 - Modify: `docs/kb/architecture.md`
 - Modify: `docs/kb/rollout.md`
 - Modify: `docs/kb/index.md`
 
 **Interfaces:**
+
 - Consumes: the rulings at the top of this plan.
 
 - [ ] **Step 1: Update `classifier-gate.md`**

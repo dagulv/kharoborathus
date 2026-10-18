@@ -12,7 +12,7 @@ Searches the web with the Brave Search API for other sources on events found in 
 - [discovery.go](../../internal/service/discovery/discovery.go) extracts events from every post. The prompt lists the gate tag keys, actions become tag keys and are remapped through `tag_aliases`.
 - [search.go](../../internal/service/discovery/search.go) searches while `search_discovery` is on, through [brave.go](../../internal/service/discovery/brave.go), and filters results with [search_filter.go](../../internal/service/robot/search_filter.go).
 - Admin shows Brave searches in the last 24 hours against the daily cap.
-- `discover_queue_event_idx` serves the dedupe check and [post linking](post-linking.md).
+- `discovery_events_event_idx` serves the dedupe check and [post linking](post-linking.md).
 
 ## Design
 
@@ -27,10 +27,10 @@ A search runs only for events whose `action` is the key of a tag with `enabled`,
    - come from trusted posts,
    - have an `action` that is a gate tag key at search time, since `gate` is recomputed daily,
    - were created inside the dedupe window. Older non-matching items are left alone instead of clogging the queue.
-5. Dedupe: skip the query and `MarkSearched` when the same lowercased `entity` and `action` had a paid search inside the dedupe window. Rows marked without a call do not count, or the window would keep sliding. `discover_queue` is only unique per post, so many posts about one event would each search it.
+5. Dedupe: skip the query and `MarkSearched` when the same lowercased `entity` and `action` had a paid search inside the dedupe window. Rows marked without a call do not count, or the window would keep sliding. `discovery_events` is only unique per post, so many posts about one event would each search it.
 6. Call Brave Web Search through a `Searcher` interface. One call returns both web and news results.
 7. An LLM sees each result's `title`, `description`, `extra_snippets`, `page_age` and hostname plus the event's `entity` and `action`. It keeps only results about that event, from any kind of source.
-8. Insert kept URLs into `link_queue` with `via = 'search'` and `discover_item_id`. Brave snippets are dropped after filtering, so only URLs are stored.
+8. Insert kept URLs into `link_events` with `via = 'search'` and `discovery_events_id`. Brave snippets are dropped after filtering, so only URLs are stored.
 9. `MarkSearched`.
 
 Rules:
@@ -48,7 +48,7 @@ Rules:
 - The filter never sees result URLs and answers with result ids.
 - Without `BRAVE_API_KEY` the search worker does not start.
 
-Search engine URLs never enter `link_queue`. Only result URLs do.
+Search engine URLs never enter `link_events`. Only result URLs do.
 
 ### Brave Web Search request
 
@@ -57,36 +57,36 @@ GET https://api.search.brave.com/res/v1/web/search
 x-subscription-token: <key>
 ```
 
-| Param | Value |
-|---|---|
-| `q` | `discover_queue.query`, max 400 characters |
-| `country` | `SE` |
-| `search_lang` | Post language, `sv` or `en` |
-| `freshness` | `pw`, last 7 days |
-| `count` | 20, the max |
-| `result_filter` | `web,news` |
-| `extra_snippets` | `true` |
+| Param            | Value                                        |
+| ---------------- | -------------------------------------------- |
+| `q`              | `discovery_events.query`, max 400 characters |
+| `country`        | `SE`                                         |
+| `search_lang`    | Post language, `sv` or `en`                  |
+| `freshness`      | `pw`, last 7 days                            |
+| `count`          | 20, the max                                  |
+| `result_filter`  | `web,news`                                   |
+| `extra_snippets` | `true`                                       |
 
 Results are read from `web.results` and `news.results` and deduplicated by URL. Fields used: `url`, `title`, `description`, `extra_snippets`, `page_age`, `meta_url.hostname`.
 
 ## Schema changes
 
 ```sql
-CREATE INDEX IF NOT EXISTS discover_queue_event_idx ON discover_queue (lower(entity), lower(action), searched_at);
-ALTER TABLE discover_queue ADD COLUMN result_count INT;
+CREATE INDEX IF NOT EXISTS discovery_events_event_idx ON discovery_events (lower(entity), lower(action), searched_at);
+ALTER TABLE discovery_events ADD COLUMN result_count INT;
 ```
 
 ## Defaults
 
-| Parameter | Value | Why |
-|---|---|---|
-| Dedupe window | 7 days | Same as freshness. |
-| Results per query | 20 per result type | One call, filter cuts the rest. |
-| Freshness | `pw` | Same event, not old coverage. |
-| Monthly budget alert | $50 | About 10k queries at $5 per 1k. |
-| Daily search cap | 322 | $50 a month at $5 per 1k queries over a 31-day month. |
-| Searches per tick | 5 | Every minute, inside the cap. |
-| Pending search results limit | 200 | One day of ingest at its daily cap. |
+| Parameter                    | Value              | Why                                                   |
+| ---------------------------- | ------------------ | ----------------------------------------------------- |
+| Dedupe window                | 7 days             | Same as freshness.                                    |
+| Results per query            | 20 per result type | One call, filter cuts the rest.                       |
+| Freshness                    | `pw`               | Same event, not old coverage.                         |
+| Monthly budget alert         | $50                | About 10k queries at $5 per 1k.                       |
+| Daily search cap             | 322                | $50 a month at $5 per 1k queries over a 31-day month. |
+| Searches per tick            | 5                  | Every minute, inside the cap.                         |
+| Pending search results limit | 200                | One day of ingest at its daily cap.                   |
 
 ## Open questions
 

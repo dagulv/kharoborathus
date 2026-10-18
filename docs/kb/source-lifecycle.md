@@ -19,16 +19,16 @@ Sources move through `proposed`, `active` and `dormant`, like tags. Discovered d
 
 States:
 
-| Status | Scraped on `rate` | Posts trusted | Enters by |
-|---|---|---|---|
-| `proposed` | No | No, gated | First accepted post from a new domain, or demotion |
-| `active` | Yes | Yes | Added in admin, promotion, or a dormant probe finding new posts |
-| `dormant` | Probe only | Yes | No new posts or repeated fetch failures |
+| Status     | Scraped on `rate` | Posts trusted | Enters by                                                       |
+| ---------- | ----------------- | ------------- | --------------------------------------------------------------- |
+| `proposed` | No                | No, gated     | First accepted post from a new domain, or demotion              |
+| `active`   | Yes               | Yes           | Added in admin, promotion, or a dormant probe finding new posts |
+| `dormant`  | Probe only        | Yes           | No new posts or repeated fetch failures                         |
 
 The existing `active` boolean is renamed to `enabled` and stays your manual switch. A source is scraped when `enabled = true` and `status = 'active'`. The lifecycle never changes `enabled`.
 
 1. **Propose.** On the first accepted post from a new domain, [discovered ingest](discovered-ingest.md) creates a source with `origin = 'discovered'`, `status = 'proposed'`, `enabled = true` and `url` set to the domain's base URL. `enabled` must be set explicitly, since the column defaults to false.
-2. **Promote.** A daily job checks each proposed source against the `link_queue` rows for its `domain_id`. It runs only while the `source_promotion` switch is on, see [rollout](rollout.md). Dormancy and probe always run.
+2. **Promote.** A daily job checks each proposed source against the `link_events` rows for its `domain_id`. It runs only while the `source_promotion` switch is on, see [rollout](rollout.md). Dormancy and probe always run.
    - Enough accepted posts.
    - Spread over enough distinct days, so one news burst cannot promote.
    - A high enough acceptance rate.
@@ -42,7 +42,7 @@ The existing `active` boolean is renamed to `enabled` and stays your manual swit
 
 Rules:
 
-- Promotion evidence counts every `link_queue` row of the domain, in either scheme, until the first promotion, so rejections before the proposal lower the rate. A demoted source counts only rows checked since its demotion.
+- Promotion evidence counts every `link_events` row of the domain, in either scheme, until the first promotion, so rejections before the proposal lower the rate. A demoted source counts only rows checked since its demotion.
 - The acceptance rate is accepted over accepted plus rejected. Distinct days are calendar days of `created_at`, when links were found, so one burst processed over several days cannot promote.
 - Promotion fetches the domain base URL, not the stored source URL, which may be a feed after an earlier promotion.
 - `promoted_at` records promotions, so the weekly cap ignores probe revivals.
@@ -69,16 +69,16 @@ Until the first deploy these go straight into `schema.sql`. `fetch_failures` res
 
 ## Defaults
 
-| Parameter | Value | Why |
-|---|---|---|
-| Min accepted posts | 5 | Enough evidence. |
-| Min distinct days | 3 | Not one news burst. |
-| Min acceptance rate | 60% | Mostly relevant. |
-| Max promotions per week | 5 | Scale slowly. |
-| Dormancy window | 30 days | News sources publish often. |
-| Max fetch failures | 10 | Site moved or blocks us. |
-| Min failing time | 1 day | A network blip is no dead site. |
-| Probe interval | 7 days | Cheap check for revival. |
+| Parameter               | Value   | Why                             |
+| ----------------------- | ------- | ------------------------------- |
+| Min accepted posts      | 5       | Enough evidence.                |
+| Min distinct days       | 3       | Not one news burst.             |
+| Min acceptance rate     | 60%     | Mostly relevant.                |
+| Max promotions per week | 5       | Scale slowly.                   |
+| Dormancy window         | 30 days | News sources publish often.     |
+| Max fetch failures      | 10      | Site moved or blocks us.        |
+| Min failing time        | 1 day   | A network blip is no dead site. |
+| Probe interval          | 7 days  | Cheap check for revival.        |
 
 ## Open questions
 

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fill `link_queue` with outbound links from trusted posts, and while the `discovered_ingest` switch is on, turn queued URLs into gated posts whose new domains become proposed sources.
+**Goal:** Fill `link_events` with outbound links from trusted posts, and while the `discovered_ingest` switch is on, turn queued URLs into gated posts whose new domains become proposed sources.
 
-**Architecture:** Sources get `origin` and `status`, and only `active` sources are scraped. A new `ingest` package holds two workers. Link extraction parses markdown links from recent trusted posts into `link_queue` with no AI. The ingester fetches pending links one host per tick, checks `robots.txt`, trims, rejects duplicates by simhash, runs the hard gate (the Jev tagging call plus one article question) and only then summarizes and inserts the post, its source, its `discovered` link and its `tag_checked` row in one transaction. Admin shows source status, link queue counts and the switch readiness.
+**Architecture:** Sources get `origin` and `status`, and only `active` sources are scraped. A new `ingest` package holds two workers. Link extraction parses markdown links from recent trusted posts into `link_events` with no AI. The ingester fetches pending links one host per tick, checks `robots.txt`, trims, rejects duplicates by simhash, runs the hard gate (the Jev tagging call plus one article question) and only then summarizes and inserts the post, its source, its `discovered` link and its `tag_checked` row in one transaction. Admin shows source status, link queue counts and the switch readiness.
 
 **Tech Stack:** Go 1.27, pgx v5, Postgres 18, SvelteKit admin with postgres.js and valibot.
 
@@ -15,9 +15,9 @@
 - Trusted means source `status` is `active` or `dormant`. `proposed` is untrusted. Trust is read through `posts.source_id`.
 - A source is scraped only when `enabled = true` and `status = 'active'`. The lifecycle never changes `enabled`.
 - Link extraction runs whether or not the switch is on. The ingester reads `discovered_ingest` at the start of every tick and skips the tick when off.
-- Link extraction: strip `utm_*` parameters and fragments. Skip links already in `posts` or `link_queue`, links to the post's own domain, blocklisted social, video and file hosts, and anything not http or https. Max 10 links per post. `via = 'link'`.
+- Link extraction: strip `utm_*` parameters and fragments. Skip links already in `posts` or `link_events`, links to the post's own domain, blocklisted social, video and file hosts, and anything not http or https. Max 10 links per post. `via = 'link'`.
 - Ingest defaults: daily fetch cap 200 URLs, per-domain rate 1 request per 10 seconds, max attempts 3 then `failed`, pending window 7 days.
-- `link_queue.status`: `pending | accepted | rejected | duplicate | failed`.
+- `link_events.status`: `pending | accepted | rejected | duplicate | failed`.
 - Hard gate: accept if the article question and any tag with `gate = true` score at least 0.8, the existing `tagThreshold`. Store the scores in `gate_scores`.
 - A proposed source has `origin = 'discovered'`, `status = 'proposed'`, `enabled = true` (set explicitly) and `url` set to the domain's base URL.
 - A `discovered` link points from the found post to the post whose link led to it, with metadata `via`.
@@ -38,7 +38,7 @@ These fill gaps the spec leaves open. Task 10 writes them back into the kb.
 - **Image links are not links.** `![alt](src)` is skipped. A linked image `[![alt](img)](href)` is skipped too, since the parser only reads link text without brackets.
 - **Own domain compares hosts**, lowercased, without `www.` and scheme, so `http://www.a.example` and `https://a.example` match.
 - **One link per host per tick**, oldest first and fresh links before retries. The 10-second rate then only applies between the `robots.txt` fetch and the page fetch of the same host, which the pacer enforces.
-- **The daily cap is a rolling 24 hours** counted from `link_queue.checked_at`.
+- **The daily cap is a rolling 24 hours** counted from `link_events.checked_at`.
 - **`robots.txt` disallow sets `failed`** with error `disallowed by robots.txt`, without retries. It is no gate decision, so it must not count as `rejected` in the acceptance rate of phase 6. A missing `robots.txt` (4xx) allows everything. 5xx, 429 and network errors are retried like a failed fetch. Results are cached per host for 24 hours.
 - **No gate tag means no tick.** With no enabled, active tag with `gate = true` every link would be rejected for good, so the ingester waits.
 - **Classifier unavailable stops the tick** and leaves the link untouched, like the tagging worker.
@@ -63,10 +63,12 @@ These fill gaps the spec leaves open. Task 10 writes them back into the kb.
 ### Task 1: Source origin and status
 
 **Files:**
+
 - Modify: `internal/migrations/schema.sql` (`sources`)
 - Modify: `internal/service/source/model.go`, `internal/service/source/store.go`, `internal/service/source/sourced.go`, `internal/service/source/route.go`
 
 **Interfaces:**
+
 - Produces: `sources.origin TEXT NOT NULL DEFAULT 'manual'`, `sources.status TEXT NOT NULL DEFAULT 'active'`. `source.Source.Status`, `source.Source.Origin`, `source.Filter.Status sql.Null[string]`. Task 2, 4, 8 and 9 read `status`.
 
 - [ ] **Step 1: Add the columns**
@@ -172,10 +174,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 2: Tag rates from trusted posts only
 
 **Files:**
+
 - Modify: `internal/service/tagging/store.go` (`RecomputeRates`, `ListRecentPosts`)
 - Temporary: `internal/service/tagging/check_test.go` (deleted before commit)
 
 **Interfaces:**
+
 - Consumes: `sources.status` from Task 1.
 - Produces: unchanged signatures.
 
@@ -329,10 +333,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 3: Outbound links
 
 **Files:**
+
 - Create: `internal/service/ingest/links.go`
 - Test: `internal/service/ingest/links_test.go`
 
 **Interfaces:**
+
 - Produces: `func outboundLinks(markdown, ownBaseURL string) []string` and `func hostOf(rawURL string) string` in package `ingest`. Task 4 calls `outboundLinks`, Task 6 and 8 call `hostOf`.
 
 - [ ] **Step 1: Write the failing test**
@@ -530,26 +536,28 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 4: Link extraction worker
 
 **Files:**
-- Modify: `internal/migrations/schema.sql` (`link_queue`, `link_checked`)
+
+- Modify: `internal/migrations/schema.sql` (`link_events`, `link_checked`)
 - Create: `internal/service/ingest/model.go`, `internal/service/ingest/store.go`, `internal/service/ingest/extract.go`
 - Modify: `cmd/main.go`
 - Temporary: `internal/service/ingest/check_test.go` (deleted before commit)
 
 **Interfaces:**
+
 - Consumes: `outboundLinks` from Task 3, `sources.status` from Task 1.
-- Produces: tables `link_queue` and `link_checked`. `ingest.Store` with `NewStore(db *database.Database) Store`, `ListUnscannedPosts(ctx, windowDays, limit int) ([]ScanPost, error)`, `QueueLinks(ctx, postID string, urls []string) (int64, error)`. `func RunExtraction(ctx context.Context, s *Store, l *slog.Logger) error`. Const `pendingWindow = 7`. Task 8 extends the same files.
+- Produces: tables `link_events` and `link_checked`. `ingest.Store` with `NewStore(db *database.Database) Store`, `ListUnscannedPosts(ctx, windowDays, limit int) ([]ScanPost, error)`, `QueueLinks(ctx, postID string, urls []string) (int64, error)`. `func RunExtraction(ctx context.Context, s *Store, l *slog.Logger) error`. Const `pendingWindow = 7`. Task 8 extends the same files.
 
 - [ ] **Step 1: Add the tables**
 
 In `internal/migrations/schema.sql`, after the `discover_checked` table, add:
 
 ```sql
-CREATE TABLE IF NOT EXISTS link_queue (
+CREATE TABLE IF NOT EXISTS link_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   url TEXT UNIQUE NOT NULL,
   via TEXT NOT NULL, -- link | search
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-  discover_item_id UUID REFERENCES discover_queue (id) ON DELETE SET NULL,
+  discovery_events_id UUID REFERENCES discovery_events (id) ON DELETE SET NULL,
   domain_id UUID REFERENCES domains (id), -- set on fetch, drives source promotion
   status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
   gate_scores JSONB NOT NULL DEFAULT '{}',
@@ -559,11 +567,11 @@ CREATE TABLE IF NOT EXISTS link_queue (
   checked_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS link_queue_pending_idx ON link_queue (created_at)
+CREATE INDEX IF NOT EXISTS link_events_pending_idx ON link_events (created_at)
 WHERE
   status = 'pending';
 
-CREATE INDEX IF NOT EXISTS link_queue_domain_idx ON link_queue (domain_id, status);
+CREATE INDEX IF NOT EXISTS link_events_domain_idx ON link_events (domain_id, status);
 
 CREATE TABLE IF NOT EXISTS link_checked (
   post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,
@@ -626,7 +634,7 @@ func TestExtractionCheck(t *testing.T) {
 			('00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'https://own.example/p3', 'sv', 'p3', '',
 				'[o](https://old.example/o)', '\x00', now() - interval '8 days'),
 			('00000000-0000-0000-0000-0000000000a4', '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'https://existing.example/p', 'sv', 'p4', '', 'Inga länkar.', '\x00', now());
-		INSERT INTO link_queue (url, via, from_post_id) VALUES ('https://queued.example/q', 'link', '00000000-0000-0000-0000-0000000000a4');
+		INSERT INTO link_events (url, via, from_post_id) VALUES ('https://queued.example/q', 'link', '00000000-0000-0000-0000-0000000000a4');
 		`); err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +645,7 @@ func TestExtractionCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, err := db.Query(ctx, `SELECT url FROM link_queue ORDER BY url`)
+	rows, err := db.Query(ctx, `SELECT url FROM link_events ORDER BY url`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -653,7 +661,7 @@ func TestExtractionCheck(t *testing.T) {
 
 	var via, from string
 
-	if err := db.QueryRow(ctx, `SELECT via, from_post_id::text FROM link_queue WHERE url = 'https://news.example/a'`).Scan(&via, &from); err != nil {
+	if err := db.QueryRow(ctx, `SELECT via, from_post_id::text FROM link_events WHERE url = 'https://news.example/a'`).Scan(&via, &from); err != nil {
 		t.Fatal(err)
 	}
 
@@ -747,7 +755,7 @@ func (s *Store) ListUnscannedPosts(ctx context.Context, windowDays, limit int) (
 func (s *Store) QueueLinks(ctx context.Context, postID string, urls []string) (queued int64, err error) {
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
-			INSERT INTO link_queue (url, via, from_post_id)
+			INSERT INTO link_events (url, via, from_post_id)
 			SELECT u, 'link', $2 FROM unnest($1::text[]) AS u
 			WHERE NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = u)
 			ON CONFLICT (url) DO NOTHING
@@ -875,11 +883,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 5: Hard gate
 
 **Files:**
+
 - Create: `internal/service/robot/prompts/article.md`, `internal/service/robot/gate.go`
 - Modify: `internal/service/robot/tagger.go`, `internal/service/tagging/store.go` (`ListTags`)
 - Test: `internal/service/robot/gate_test.go`
 
 **Interfaces:**
+
 - Produces: `robot.Tag.Gate bool`. `func (t *Tagger) Gate(ctx context.Context, title, markdown string, tags []Tag) (Verdict, error)` with `type Verdict struct { Article float64; Tags map[string]float64; Keys []string; Passed bool }`, JSON `{"article": ..., "tags": {...}}`. `tagging.Store.ListTags` fills `Gate`. Task 8 calls both.
 
 - [ ] **Step 1: Write the failing test**
@@ -1183,10 +1193,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 6: robots.txt and per-domain pacing
 
 **Files:**
+
 - Create: `internal/service/ingest/robots.go`, `internal/service/ingest/pacer.go`
 - Test: `internal/service/ingest/robots_test.go`, `internal/service/ingest/pacer_test.go`
 
 **Interfaces:**
+
 - Consumes: `hostOf` from Task 3.
 - Produces: `newPacer(gap time.Duration) *pacer` with field `gap` and `Wait(ctx context.Context, host string) error`. `NewRobots(client *http.Client, p *pacer) *Robots` with `Allowed(ctx context.Context, rawURL string) (bool, error)`. Const `userAgent = "kharoborathus/1.0"`. Task 8 uses all of them.
 
@@ -1599,11 +1611,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 7: Reusable post insert, duplicate check and markdown
 
 **Files:**
+
 - Modify: `internal/service/feed/store.go`
 - Modify: `internal/service/source/sourced.go`
 - Test: `internal/service/source/markdown_test.go`
 
 **Interfaces:**
+
 - Produces: `func feed.InsertFeed(ctx context.Context, tx pgx.Tx, f Feed) (Feed, error)`, returning an error matching `pgx.ErrNoRows` on a URL conflict. `func (s *feed.Store) HasDuplicate(ctx context.Context, content string) (bool, error)`. `func source.Markdown(f feed.Feed) (feed.Feed, error)`. Task 8 calls all three.
 
 - [ ] **Step 1: Split CreateFeed**
@@ -1810,6 +1824,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 8: Discovered ingest worker
 
 **Files:**
+
 - Modify: `internal/migrations/schema.sql` (switch row)
 - Modify: `internal/service/switches/store.go`
 - Modify: `internal/service/ingest/model.go`, `internal/service/ingest/store.go`
@@ -1818,8 +1833,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Temporary: `internal/service/ingest/check_test.go` (deleted before commit)
 
 **Interfaces:**
-- Consumes: `link_queue` and `Store` from Task 4, `hostOf` from Task 3, `Tagger.Gate`, `Verdict`, `Tag.Gate` and `tagging.Store.ListTags` from Task 5, `Robots`, `pacer`, `userAgent` from Task 6, `feed.InsertFeed`, `feed.Store.HasDuplicate`, `source.Markdown` from Task 7, `source.Trim.Apply`, `adapter.FetchHTML`, `domain.Store.GetOrCreateDomain`, `robot.Summarizer.Summarize`.
-- Produces: `switches.DiscoveredIngest = "discovered_ingest"`. `ingest.NewIngester(...) *Ingester` and `(*Ingester).Run(ctx) error`. `link_queue` rows leave `pending`.
+
+- Consumes: `link_events` and `Store` from Task 4, `hostOf` from Task 3, `Tagger.Gate`, `Verdict`, `Tag.Gate` and `tagging.Store.ListTags` from Task 5, `Robots`, `pacer`, `userAgent` from Task 6, `feed.InsertFeed`, `feed.Store.HasDuplicate`, `source.Markdown` from Task 7, `source.Trim.Apply`, `adapter.FetchHTML`, `domain.Store.GetOrCreateDomain`, `robot.Summarizer.Summarize`.
+- Produces: `switches.DiscoveredIngest = "discovered_ingest"`. `ingest.NewIngester(...) *Ingester` and `(*Ingester).Run(ctx) error`. `link_events` rows leave `pending`.
 
 - [ ] **Step 1: Switch row and key**
 
@@ -1982,7 +1998,7 @@ func TestIngestCheck(t *testing.T) {
 
 	for _, q := range queue {
 		if _, err := db.Exec(ctx, `
-			INSERT INTO link_queue (url, via, from_post_id, created_at, attempts, checked_at)
+			INSERT INTO link_events (url, via, from_post_id, created_at, attempts, checked_at)
 			VALUES ($1, 'link', '00000000-0000-0000-0000-0000000000a1', now() - $2::interval, $3, CASE WHEN $3 > 0 THEN now() - interval '1 hour' END)
 			`, srv.URL+q.path, q.age, q.attempts); err != nil {
 			t.Fatal(err)
@@ -2006,7 +2022,7 @@ func TestIngestCheck(t *testing.T) {
 
 	var touched int
 
-	if err := db.QueryRow(ctx, `SELECT count(*) FROM link_queue WHERE status <> 'pending' OR attempts <> CASE WHEN url LIKE '%/missing' THEN 2 ELSE 0 END`).Scan(&touched); err != nil {
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM link_events WHERE status <> 'pending' OR attempts <> CASE WHEN url LIKE '%/missing' THEN 2 ELSE 0 END`).Scan(&touched); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2039,7 +2055,7 @@ func TestIngestCheck(t *testing.T) {
 		"/news/old":        {"pending", 0, ""},
 	}
 
-	rows, err := db.Query(ctx, `SELECT url, status, attempts, coalesce(error, '') FROM link_queue`)
+	rows, err := db.Query(ctx, `SELECT url, status, attempts, coalesce(error, '') FROM link_events`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2081,8 +2097,8 @@ func TestIngestCheck(t *testing.T) {
 		"discovered by post": `SELECT count(*) FROM source_discovered_by_post WHERE post_id = '00000000-0000-0000-0000-0000000000a1'`,
 		"discovered link":    `SELECT count(*) FROM post_links l JOIN posts p ON p.id = l.from_post_id WHERE p.url LIKE '%/news/volvo' AND l.to_post_id = '00000000-0000-0000-0000-0000000000a1' AND l.relation = 'discovered' AND l.metadata->>'via' = 'link'`,
 		"tag checked":        `SELECT count(*) FROM tag_checked c JOIN posts p ON p.id = c.post_id WHERE p.url LIKE '%/news/volvo' AND c.gate_passed IS NULL`,
-		"accepted scores":    `SELECT count(*) FROM link_queue WHERE url LIKE '%/news/volvo' AND domain_id IS NOT NULL AND gate_scores ? 'article'`,
-		"rejected scores":    `SELECT count(*) FROM link_queue WHERE url LIKE '%/news/weather' AND gate_scores ? 'article'`,
+		"accepted scores":    `SELECT count(*) FROM link_events WHERE url LIKE '%/news/volvo' AND domain_id IS NOT NULL AND gate_scores ? 'article'`,
+		"rejected scores":    `SELECT count(*) FROM link_events WHERE url LIKE '%/news/weather' AND gate_scores ? 'article'`,
 		"untouched tag":      `SELECT count(*) FROM tags WHERE key = 'resultat' AND last_matched_at IS NULL`,
 	}
 
@@ -2129,7 +2145,7 @@ Add to `internal/service/ingest/store.go`, with imports `"errors"` and `"github.
 
 ```go
 func (s *Store) CheckedLastDay(ctx context.Context) (n int, err error) {
-	if err = s.db.QueryRow(ctx, `SELECT count(*) FROM link_queue WHERE checked_at > now() - interval '1 day'`).Scan(&n); err != nil {
+	if err = s.db.QueryRow(ctx, `SELECT count(*) FROM link_events WHERE checked_at > now() - interval '1 day'`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("err count checked links: %w", err)
 	}
 
@@ -2144,7 +2160,7 @@ func (s *Store) ListPending(ctx context.Context, windowDays, limit int) ([]Link,
 			SELECT DISTINCT ON (host) id, url, via, from_post_id, checked_at, created_at
 			FROM (
 				SELECT *, lower(substring(url FROM '^[^:]+://(?:www\.)?([^/:?#]+)')) AS host
-				FROM link_queue
+				FROM link_events
 				WHERE status = 'pending' AND created_at > now() - make_interval(days => $1)
 			) q
 			ORDER BY host, checked_at NULLS FIRST, created_at
@@ -2169,7 +2185,7 @@ func (s *Store) ListPending(ctx context.Context, windowDays, limit int) ([]Link,
 
 func (s *Store) Finish(ctx context.Context, id, status, domainID string, scores any, reason string) error {
 	if _, err := s.db.Exec(ctx, `
-		UPDATE link_queue
+		UPDATE link_events
 		SET
 			status = $2,
 			domain_id = coalesce(NULLIF($3, '')::uuid, domain_id),
@@ -2187,7 +2203,7 @@ func (s *Store) Finish(ctx context.Context, id, status, domainID string, scores 
 
 func (s *Store) Retry(ctx context.Context, id, domainID, reason string, maxAttempts int) (failed bool, err error) {
 	if err = s.db.QueryRow(ctx, `
-		UPDATE link_queue
+		UPDATE link_events
 		SET
 			status = CASE WHEN attempts + 1 >= $4 THEN 'failed' ELSE status END,
 			domain_id = coalesce(NULLIF($2, '')::uuid, domain_id),
@@ -2231,7 +2247,7 @@ func (s *Store) Accept(ctx context.Context, link Link, f feed.Feed, scores any) 
 		}
 
 		if _, err := tx.Exec(ctx, `
-			UPDATE link_queue
+			UPDATE link_events
 			SET status = 'accepted', domain_id = $2, gate_scores = $3, error = NULL, attempts = attempts + 1, checked_at = now()
 			WHERE id = $1
 			`, link.ID, f.DomainID, scores); err != nil {
@@ -2576,11 +2592,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 9: Admin
 
 **Files:**
+
 - Modify: `frontend/src/lib/types.ts`, `frontend/src/routes/admin/admin.remote.ts`
 - Modify: `frontend/src/routes/admin/sources/+page.svelte`, `frontend/src/routes/admin/+page.svelte`, `frontend/src/routes/admin/switches/+page.svelte`
 
 **Interfaces:**
-- Consumes: `sources.status`, `sources.origin`, `link_queue.status`, the `discovered_ingest` switch row.
+
+- Consumes: `sources.status`, `sources.origin`, `link_events.status`, the `discovered_ingest` switch row.
 - Produces: `getLinkQueue` remote query.
 
 - [ ] **Step 1: Baseline**
@@ -2593,8 +2611,8 @@ Expected: 0 errors. Note any warnings that exist before this task, so new ones a
 In `frontend/src/lib/types.ts` add to `Source` after `enabled: boolean;`:
 
 ```ts
-	status: 'proposed' | 'active' | 'dormant';
-	origin: 'manual' | 'discovered';
+status: "proposed" | "active" | "dormant";
+origin: "manual" | "discovered";
 ```
 
 In `admin.remote.ts` `listSources`, add `s.status,` and `s.origin,` after `s.enabled,`.
@@ -2603,12 +2621,15 @@ Add after `getStats`:
 
 ```ts
 export const getLinkQueue = query(async () => {
-	const sql = db();
-	const rows = await sql<{ status: string; count: number }[]>`
-		SELECT status, count(*)::int AS count FROM link_queue GROUP BY status
+  const sql = db();
+  const rows = await sql<{ status: string; count: number }[]>`
+		SELECT status, count(*)::int AS count FROM link_events GROUP BY status
 	`;
 
-	return Object.fromEntries(rows.map((r) => [r.status, r.count])) as Record<string, number>;
+  return Object.fromEntries(rows.map((r) => [r.status, r.count])) as Record<
+    string,
+    number
+  >;
 });
 ```
 
@@ -2644,9 +2665,15 @@ Change the Sync condition `{#if !source.deletedAt}` to `{#if !source.deletedAt &
 In `admin/+page.svelte` import `getLinkQueue` next to `getStats`, add:
 
 ```ts
-	const linkQueue = $derived(await getLinkQueue());
+const linkQueue = $derived(await getLinkQueue());
 
-	const LINK_STATUSES = ['pending', 'accepted', 'rejected', 'duplicate', 'failed'];
+const LINK_STATUSES = [
+  "pending",
+  "accepted",
+  "rejected",
+  "duplicate",
+  "failed",
+];
 ```
 
 and before `<div class="mt-6 flex gap-4 text-sm">`:
@@ -2669,8 +2696,7 @@ and before `<div class="mt-6 flex gap-4 text-sm">`:
 In `switches/+page.svelte` add to `descriptions`:
 
 ```ts
-		discovered_ingest:
-			'Fetches queued links, gates them and adds accepted pages as posts with proposed sources. Link extraction fills the queue either way.'
+discovered_ingest: "Fetches queued links, gates them and adds accepted pages as posts with proposed sources. Link extraction fills the queue either way.";
 ```
 
 - [ ] **Step 6: Autofix and check**
@@ -2697,7 +2723,7 @@ SELECT s.key, CASE s.key
 	)
 END AS readiness
 FROM switches s ORDER BY s.key;
-SELECT status, count(*)::int AS count FROM link_queue GROUP BY status;
+SELECT status, count(*)::int AS count FROM link_events GROUP BY status;
 SQL
 ```
 
@@ -2717,6 +2743,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 10: Knowledge base
 
 **Files:**
+
 - Modify: `docs/kb/link-extraction.md`, `docs/kb/discovered-ingest.md`, `docs/kb/trust-model.md`, `docs/kb/source-lifecycle.md`, `docs/kb/classifier-gate.md`, `docs/kb/post-linking.md`, `docs/kb/rollout.md`, `docs/kb/architecture.md`, `docs/kb/index.md`
 
 - [ ] **Step 1: Link extraction**
@@ -2742,7 +2769,7 @@ Rules:
 Status `done`. Replace Current state with:
 
 ```markdown
-[ingest.go](../../internal/service/ingest/ingest.go) runs every minute while `discovered_ingest` is on. Admin shows `link_queue` status counts on the overview.
+[ingest.go](../../internal/service/ingest/ingest.go) runs every minute while `discovered_ingest` is on. Admin shows `link_events` status counts on the overview.
 ```
 
 Add after step 8:
@@ -2810,15 +2837,15 @@ Phases 1 to 4 are done, with the switches table and admin page. `shadow_gate` an
 Replace `Four workers run side by side from [main.go](../../cmd/main.go).` with `Workers run side by side from [main.go](../../cmd/main.go).` Add rows to the worker table:
 
 ```markdown
-| Links | [extract.go](../../internal/service/ingest/extract.go) | Queues outbound links from trusted posts into `link_queue`. |
+| Links | [extract.go](../../internal/service/ingest/extract.go) | Queues outbound links from trusted posts into `link_events`. |
 | Ingest | [ingest.go](../../internal/service/ingest/ingest.go) | Fetches, gates and inserts queued links while `discovered_ingest` is on. Proposes sources for new domains. |
 ```
 
 Change the Sources row job to `Polls enabled, active sources at their \`rate\` and turns articles into posts.` Replace the Unused parts list with:
 
 ```markdown
-- `discover_queue` is read only for `same_event` links. Nothing searches it yet.
-- `link_queue.discover_item_id` and `via = 'search'` wait for [search discovery](search-discovery.md).
+- `discovery_events` is read only for `same_event` links. Nothing searches it yet.
+- `link_events.discovery_events_id` and `via = 'search'` wait for [search discovery](search-discovery.md).
 - `post_links` gets `discovered`, `duplicate_of` and `same_event`.
 ```
 

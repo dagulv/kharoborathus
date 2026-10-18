@@ -18,7 +18,7 @@ While the `shadow_gate` switch is on, the tagging worker stores the shadow gate 
 1. Run `Tagger` on the trimmed markdown.
 2. Add one question to the same Jev batch: does this page report a specific business event, like a news article, press release or filing?
 3. Accept if the article question passes and any tag with `gate = true` scores at least the threshold.
-4. Discovered content uses the same threshold as tagging. Tune it later from `link_queue.gate_scores`.
+4. Discovered content uses the same threshold as tagging. Tune it later from `link_events.gate_scores`.
 
 **Shadow gate for trusted content**
 
@@ -39,11 +39,11 @@ ALTER TABLE sources ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
 
 ## Defaults
 
-| Parameter | Value | Why |
-|---|---|---|
-| Tag threshold | 0.8 | Existing `tagThreshold`. |
-| Pass rate window | last 50 posts | Smooths one bad day. |
-| Pass rate floor | 70% | Flags clear drift only. |
+| Parameter        | Value         | Why                      |
+| ---------------- | ------------- | ------------------------ |
+| Tag threshold    | 0.8           | Existing `tagThreshold`. |
+| Pass rate window | last 50 posts | Smooths one bad day.     |
+| Pass rate floor  | 70%           | Flags clear drift only.  |
 
 ## Open questions
 

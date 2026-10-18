@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** While the `search_discovery` switch is on, search Brave for events from trusted posts whose action is a gate tag, let the LLM keep results about the event, and queue the kept URLs in `link_queue` for the phase 4 ingester.
+**Goal:** While the `search_discovery` switch is on, search Brave for events from trusted posts whose action is a gate tag, let the LLM keep results about the event, and queue the kept URLs in `link_events` for the phase 4 ingester.
 
-**Architecture:** Event extraction learns the gate tag keys and normalizes actions to tag keys through `tag_aliases`. A new search worker in the `discovery` package reads searchable `discover_queue` items, dedupes events, calls Brave through a `Searcher` interface, filters results with a `robot.ResultFilter` and inserts the kept URLs with `via = 'search'`. Admin shows the switch readiness and daily searches against the budget.
+**Architecture:** Event extraction learns the gate tag keys and normalizes actions to tag keys through `tag_aliases`. A new search worker in the `discovery` package reads searchable `discovery_events` items, dedupes events, calls Brave through a `Searcher` interface, filters results with a `robot.ResultFilter` and inserts the kept URLs with `via = 'search'`. Admin shows the switch readiness and daily searches against the budget.
 
 **Tech Stack:** Go 1.27, pgx v5, Postgres 18, SvelteKit admin with postgres.js and valibot.
 
@@ -16,8 +16,8 @@
 - Event extraction keeps running on every post. The discovery prompt gets the current gate tag keys. Actions are normalized like tag keys and remapped through `tag_aliases`.
 - Dedupe: skip the query and `MarkSearched` when the same lowercased `entity` and `action` were searched inside the dedupe window.
 - Brave request: `GET https://api.search.brave.com/res/v1/web/search`, header `X-Subscription-Token`, params `q`, `country=SE`, `search_lang` from the post language `sv` or `en`, `freshness=pw`, `count=20`, `result_filter=web,news`, `extra_snippets=true`. Results from `web.results` and `news.results`, deduplicated by URL.
-- The LLM filter sees `title`, `description`, `extra_snippets`, `page_age` and hostname plus the event's `entity` and `action`. Only kept URLs are stored. Search engine URLs never enter `link_queue`.
-- Kept URLs go into `link_queue` with `via = 'search'` and `discover_item_id`, then `MarkSearched`.
+- The LLM filter sees `title`, `description`, `extra_snippets`, `page_age` and hostname plus the event's `entity` and `action`. Only kept URLs are stored. Search engine URLs never enter `link_events`.
+- Kept URLs go into `link_events` with `via = 'search'` and `discovery_events_id`, then `MarkSearched`.
 - The worker reads `search_discovery` at the start of every tick and skips the tick when off. `schema.sql` inserts the switch row with `ON CONFLICT DO NOTHING`.
 - Defaults: dedupe window 7 days, freshness `pw`, 20 results per result type, monthly budget $50 (about 10k queries at $5 per 1k).
 - Schema changes go straight into `internal/migrations/schema.sql`. No numbered migration file.
@@ -32,7 +32,7 @@
 These fill gaps the spec leaves open. Task 8 writes them back into the kb.
 
 - **A daily cap of 330 searches is enforced**, counted over a rolling 24 hours. The spec names a $50 monthly budget alert. $50 at $5 per 1k is 10k queries a month, 330 a day. Searching is paid, so a backlog must not spend a month's budget in a day.
-- **`discover_queue.result_count` records paid calls.** It holds the number of Brave results and stays NULL when an item is marked searched without a call (dedupe or a rejected query). Brave usage per day is counted from it, not from `searched_at` alone, which dedupe also sets.
+- **`discovery_events.result_count` records paid calls.** It holds the number of Brave results and stays NULL when an item is marked searched without a call (dedupe or a rejected query). Brave usage per day is counted from it, not from `searched_at` alone, which dedupe also sets.
 - **Newest items first.** When the cap holds back a backlog, older items age out of the window instead of crowding out fresh events.
 - **`search_lang` is sent only for `sv` and `en`.** Other post languages search without it.
 - **No query truncation.** The discoverer already drops queries over 100 characters, under Brave's 400.
@@ -49,7 +49,7 @@ These fill gaps the spec leaves open. Task 8 writes them back into the kb.
 - Many posts about one event inside the window, with different casing, must cost one Brave call. Pinned in Task 4 (`Searched` with `VOLVO`) and Task 6 (two Volvo items in one tick).
 - A backlog must never push searches past 330 in 24 hours. Pinned in Task 6 (budget rows, then a searcher that fails the test if called).
 - Brave 429 or an unavailable LLM must not mark an item searched or lose it. Pinned in Task 3 (status mapping) and Task 6 (Saab item stays pending).
-- Result URLs on blocklisted hosts, the post's own host, with tracking parameters or already in `posts` must not enter `link_queue` as is. Pinned in Task 5 and Task 6 (`own.example`, `youtube.com`, `utm_source`).
+- Result URLs on blocklisted hosts, the post's own host, with tracking parameters or already in `posts` must not enter `link_events` as is. Pinned in Task 5 and Task 6 (`own.example`, `youtube.com`, `utm_source`).
 - Items from proposed sources, with non-gate actions or older than 7 days must never be searched. Pinned in Task 4 (`ListQueue` check).
 
 ---
@@ -57,10 +57,12 @@ These fill gaps the spec leaves open. Task 8 writes them back into the kb.
 ### Task 1: Gate keys and normalized actions in event extraction
 
 **Files:**
+
 - Create: `internal/service/robot/prompts/discovery_user.md`, `internal/service/discovery/discovery_test.go`
 - Modify: `internal/service/robot/prompts/discovery.md`, `internal/service/robot/discovery.go`, `internal/service/robot/discovery_test.go`, `internal/service/discovery/discovery.go`, `internal/service/discovery/store.go`
 
 **Interfaces:**
+
 - Produces: `(*robot.Discoverer).Keywords(ctx context.Context, markdown string, gateKeys []string) ([]robot.Keyword, error)` with `Action` as a tag key. `(*discovery.Store).Actions(ctx) (gateKeys []string, aliases map[string]string, err error)`. `eventItems(postID string, keywords []robot.Keyword, aliases map[string]string) []DiscoverItem`.
 
 - [ ] **Step 1: Update the robot tests**
@@ -334,10 +336,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 2: Search result filter
 
 **Files:**
+
 - Create: `internal/service/robot/search_filter.go`, `internal/service/robot/search_filter_test.go`, `internal/service/robot/prompts/search_filter.md`
 - Modify: `internal/service/robot/discovery_test.go` (`fakeLLM.answer` becomes `any`)
 
 **Interfaces:**
+
 - Produces: `robot.SearchResult{URL, Title, Description string; ExtraSnippets []string; PageAge, Hostname string}`, `robot.NewResultFilter(llm adapter.LLM) *robot.ResultFilter`, `(*robot.ResultFilter).Keep(ctx context.Context, entity, action string, results []robot.SearchResult) ([]string, error)` returning kept URLs in answer order.
 
 - [ ] **Step 1: Generalize the fake LLM**
@@ -541,10 +545,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 3: Brave searcher
 
 **Files:**
+
 - Create: `internal/service/discovery/brave.go`, `internal/service/discovery/brave_test.go`
 - Modify: `internal/lib/config/env.go`, `.env-sample`
 
 **Interfaces:**
+
 - Consumes: `robot.SearchResult` from Task 2.
 - Produces: `discovery.Query{Q, Lang string}`, `discovery.Searcher` interface `Search(ctx context.Context, q Query) ([]robot.SearchResult, error)`, `discovery.NewBrave(env *config.Environment) (Searcher, error)`, `errSearchRejected`. 429, 5xx and network errors wrap `adapter.ErrUnavailable`. 400 and 422 wrap `errSearchRejected`.
 
@@ -851,15 +857,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 4: Search switch, schema and queue store
 
 **Files:**
+
 - Modify: `internal/migrations/schema.sql`, `internal/service/switches/store.go`, `internal/service/discovery/model.go`, `internal/service/discovery/store.go`
 - Temporary: `internal/service/discovery/check_test.go` (deleted before commit)
 
 **Interfaces:**
-- Produces: `discover_queue.result_count INT`, switch row `search_discovery`, `switches.SearchDiscovery`. `discovery.SearchItem{ID, PostID, Entity, Action, Query, Lang, BaseURL string}`. On `*discovery.Store`: `ListQueue(ctx, windowDays, limit int) ([]SearchItem, error)` newest first, `Searched(ctx, entity, action string, windowDays int) (bool, error)`, `SearchesLastDay(ctx) (int, error)`, `QueueResults(ctx, item SearchItem, urls []string, resultCount int) (int64, error)`, existing `MarkSearched(ctx, id string) error`.
+
+- Produces: `discovery_events.result_count INT`, switch row `search_discovery`, `switches.SearchDiscovery`. `discovery.SearchItem{ID, PostID, Entity, Action, Query, Lang, BaseURL string}`. On `*discovery.Store`: `ListQueue(ctx, windowDays, limit int) ([]SearchItem, error)` newest first, `Searched(ctx, entity, action string, windowDays int) (bool, error)`, `SearchesLastDay(ctx) (int, error)`, `QueueResults(ctx, item SearchItem, urls []string, resultCount int) (int64, error)`, existing `MarkSearched(ctx, id string) error`.
 
 - [ ] **Step 1: Schema and switch**
 
-In `internal/migrations/schema.sql`, in `discover_queue` after `searched_at TIMESTAMPTZ,` add:
+In `internal/migrations/schema.sql`, in `discovery_events` after `searched_at TIMESTAMPTZ,` add:
 
 ```sql
   result_count INT, -- Brave results, NULL when marked searched without a call
@@ -922,7 +930,7 @@ func TestQueueCheck(t *testing.T) {
 			('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'https://own.example/p1', 'sv', 'p1', '', 'c', '\x00'),
 			('00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000004', 'https://other.example/p2', 'sv', 'p2', '', 'c', '\x00'),
 			('00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'https://existing.example/p', 'sv', 'p3', '', 'c', '\x00');
-		INSERT INTO discover_queue (id, post_id, entity, action, query, searched_at, result_count, created_at) VALUES
+		INSERT INTO discovery_events (id, post_id, entity, action, query, searched_at, result_count, created_at) VALUES
 			('00000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000000a1', 'Saab', 'acquisition', 'Saab köper', NULL, NULL, now() - interval '1 hour'),
 			('00000000-0000-0000-0000-0000000000e2', '00000000-0000-0000-0000-0000000000a2', 'Saab', 'acquisition', 'Saab förvärv', NULL, NULL, now()),
 			('00000000-0000-0000-0000-0000000000e3', '00000000-0000-0000-0000-0000000000a1', 'Saab', 'contract', 'Saab avtal', NULL, NULL, now()),
@@ -930,7 +938,7 @@ func TestQueueCheck(t *testing.T) {
 			('00000000-0000-0000-0000-0000000000e5', '00000000-0000-0000-0000-0000000000a1', 'Volvo', 'acquisition', 'Volvo köper', now(), 12, now()),
 			('00000000-0000-0000-0000-0000000000e6', '00000000-0000-0000-0000-0000000000a1', 'Ericsson', 'acquisition', 'Ericsson köper', NULL, NULL, now()),
 			('00000000-0000-0000-0000-0000000000e7', '00000000-0000-0000-0000-0000000000a1', 'Volvo', 'acquisition', 'Volvo förvärv', now(), NULL, now());
-		INSERT INTO link_queue (url, via, from_post_id) VALUES ('https://queued.example/q', 'link', '00000000-0000-0000-0000-0000000000a1');
+		INSERT INTO link_events (url, via, from_post_id) VALUES ('https://queued.example/q', 'link', '00000000-0000-0000-0000-0000000000a1');
 		`); err != nil {
 		t.Fatal(err)
 	}
@@ -975,7 +983,7 @@ func TestQueueCheck(t *testing.T) {
 
 	var via, from, item string
 
-	if err := db.QueryRow(ctx, `SELECT via, from_post_id::text, discover_item_id::text FROM link_queue WHERE url = 'https://news.example/a'`).Scan(&via, &from, &item); err != nil {
+	if err := db.QueryRow(ctx, `SELECT via, from_post_id::text, discovery_events_id::text FROM link_events WHERE url = 'https://news.example/a'`).Scan(&via, &from, &item); err != nil {
 		t.Fatal(err)
 	}
 
@@ -985,7 +993,7 @@ func TestQueueCheck(t *testing.T) {
 
 	var count *int
 
-	if err := db.QueryRow(ctx, `SELECT result_count FROM discover_queue WHERE id = '00000000-0000-0000-0000-0000000000e1' AND searched_at IS NOT NULL`).Scan(&count); err != nil || count == nil || *count != 17 {
+	if err := db.QueryRow(ctx, `SELECT result_count FROM discovery_events WHERE id = '00000000-0000-0000-0000-0000000000e1' AND searched_at IS NOT NULL`).Scan(&count); err != nil || count == nil || *count != 17 {
 		t.Errorf("result count %v %v", count, err)
 	}
 
@@ -1028,7 +1036,7 @@ In `internal/service/discovery/store.go` delete `queueColumns`, the old `ListQue
 func (s *Store) ListQueue(ctx context.Context, windowDays, limit int) ([]SearchItem, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT q.id, q.post_id, q.entity, q.action, q.query, p.lang, d.base_url
-		FROM discover_queue q
+		FROM discovery_events q
 		JOIN posts p ON p.id = q.post_id
 		JOIN sources s ON s.id = p.source_id
 		JOIN domains d ON d.id = p.domain_id
@@ -1057,7 +1065,7 @@ func (s *Store) ListQueue(ctx context.Context, windowDays, limit int) ([]SearchI
 func (s *Store) Searched(ctx context.Context, entity, action string, windowDays int) (found bool, err error) {
 	if err = s.db.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1 FROM discover_queue
+			SELECT 1 FROM discovery_events
 			WHERE lower(entity) = lower($1)
 				AND lower(action) = lower($2)
 				AND searched_at > now() - make_interval(days => $3)
@@ -1071,7 +1079,7 @@ func (s *Store) Searched(ctx context.Context, entity, action string, windowDays 
 
 func (s *Store) SearchesLastDay(ctx context.Context) (n int, err error) {
 	if err = s.db.QueryRow(ctx, `
-		SELECT count(*) FROM discover_queue
+		SELECT count(*) FROM discovery_events
 		WHERE searched_at > now() - interval '1 day' AND result_count IS NOT NULL
 		`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("err count searches: %w", err)
@@ -1083,7 +1091,7 @@ func (s *Store) SearchesLastDay(ctx context.Context) (n int, err error) {
 func (s *Store) QueueResults(ctx context.Context, item SearchItem, urls []string, resultCount int) (queued int64, err error) {
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
-			INSERT INTO link_queue (url, via, from_post_id, discover_item_id)
+			INSERT INTO link_events (url, via, from_post_id, discovery_events_id)
 			SELECT u, 'search', $2, $3 FROM unnest($1::text[]) AS u
 			WHERE NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = u)
 			ON CONFLICT (url) DO NOTHING
@@ -1094,7 +1102,7 @@ func (s *Store) QueueResults(ctx context.Context, item SearchItem, urls []string
 
 		queued = tag.RowsAffected()
 
-		if _, err := tx.Exec(ctx, `UPDATE discover_queue SET searched_at = now(), result_count = $2 WHERE id = $1`, item.ID, resultCount); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE discovery_events SET searched_at = now(), result_count = $2 WHERE id = $1`, item.ID, resultCount); err != nil {
 			return fmt.Errorf("err mark searched: %w", err)
 		}
 
@@ -1137,9 +1145,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 5: Shared link filter
 
 **Files:**
+
 - Modify: `internal/service/ingest/links.go`, `internal/service/ingest/links_test.go`
 
 **Interfaces:**
+
 - Produces: `ingest.FilterLinks(raw []string, ownBaseURL string) []string`: normalized, deduplicated, without the own host, blocklisted hosts and non-http links, in input order, uncapped. `outboundLinks` keeps its behaviour.
 
 - [ ] **Step 1: Write the failing test**
@@ -1231,11 +1241,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 6: Search worker
 
 **Files:**
+
 - Create: `internal/service/discovery/search.go`
 - Modify: `cmd/main.go`
 - Temporary: `internal/service/discovery/check_test.go` (deleted before commit)
 
 **Interfaces:**
+
 - Consumes: `Searcher`, `Query`, `errSearchRejected` (Task 3), `Store.ListQueue`, `Searched`, `SearchesLastDay`, `QueueResults`, `MarkSearched` (Task 4), `ingest.FilterLinks` (Task 5), `robot.ResultFilter` (Task 2), `switches.SearchDiscovery`.
 - Produces: `discovery.RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f *robot.ResultFilter, sched schedule.Schedule, l *slog.Logger) error`, `searchEvents(...)`, `dailySearchBudget = 330`.
 
@@ -1283,7 +1295,7 @@ func TestSearchCheck(t *testing.T) {
 		INSERT INTO sources (id, domain_id, adapter, url) VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'rss', 'https://own.example/rss');
 		INSERT INTO posts (id, source_id, domain_id, url, lang, title, short_content, content, content_hash) VALUES
 			('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'https://own.example/p1', 'sv', 'p1', '', 'c', '\x00');
-		INSERT INTO discover_queue (id, post_id, entity, action, query, created_at) VALUES
+		INSERT INTO discovery_events (id, post_id, entity, action, query, created_at) VALUES
 			('00000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000000a1', 'Volvo', 'acquisition', 'Volvo köper Northvolt', now() - interval '2 hours'),
 			('00000000-0000-0000-0000-0000000000e2', '00000000-0000-0000-0000-0000000000a1', 'volvo', 'acquisition', 'Volvo förvärv Northvolt', now() - interval '1 hour'),
 			('00000000-0000-0000-0000-0000000000e3', '00000000-0000-0000-0000-0000000000a1', 'Saab', 'acquisition', 'Saab köper', now() - interval '3 hours');
@@ -1333,7 +1345,7 @@ func TestSearchCheck(t *testing.T) {
 		t.Errorf("queries %v", queries)
 	}
 
-	rows, err := db.Query(ctx, `SELECT url FROM link_queue WHERE via = 'search' AND discover_item_id = '00000000-0000-0000-0000-0000000000e2' ORDER BY url`)
+	rows, err := db.Query(ctx, `SELECT url FROM link_events WHERE via = 'search' AND discovery_events_id = '00000000-0000-0000-0000-0000000000e2' ORDER BY url`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1347,7 +1359,7 @@ func TestSearchCheck(t *testing.T) {
 		t.Errorf("queued %v", urls)
 	}
 
-	rows, err = db.Query(ctx, `SELECT id::text || ':' || coalesce(result_count::text, '-') || ':' || (searched_at IS NOT NULL)::text FROM discover_queue ORDER BY id`)
+	rows, err = db.Query(ctx, `SELECT id::text || ':' || coalesce(result_count::text, '-') || ':' || (searched_at IS NOT NULL)::text FROM discovery_events ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1368,7 +1380,7 @@ func TestSearchCheck(t *testing.T) {
 	}
 
 	if _, err := db.Exec(ctx, `
-		INSERT INTO discover_queue (post_id, entity, action, query, searched_at, result_count)
+		INSERT INTO discovery_events (post_id, entity, action, query, searched_at, result_count)
 		SELECT '00000000-0000-0000-0000-0000000000a1', 'Budget', 'acquisition', 'budget ' || i, now(), 1
 		FROM generate_series(1, 329) AS i
 		`); err != nil {
@@ -1564,10 +1576,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 7: Admin
 
 **Files:**
+
 - Modify: `frontend/src/routes/admin/admin.remote.ts`, `frontend/src/routes/admin/+page.svelte`, `frontend/src/routes/admin/switches/+page.svelte`
 
 **Interfaces:**
-- Consumes: `discover_queue.result_count`, switch `search_discovery`, `dailySearchBudget = 330`.
+
+- Consumes: `discovery_events.result_count`, switch `search_discovery`, `dailySearchBudget = 330`.
 - Produces: `getStats().searchesToday: number`, readiness text for `search_discovery`.
 
 - [ ] **Step 1: Baseline**
@@ -1580,7 +1594,7 @@ Expected: note the existing warnings (prettier on `eslint.config.js`, `tags/+pag
 In `admin.remote.ts`, in `getStats` add `searchesToday: number;` to the row type and after the `posts_today` line:
 
 ```sql
-			(SELECT count(*)::int FROM discover_queue WHERE searched_at > now() - interval '24 hours' AND result_count IS NOT NULL) AS searches_today
+			(SELECT count(*)::int FROM discovery_events WHERE searched_at > now() - interval '24 hours' AND result_count IS NOT NULL) AS searches_today
 ```
 
 (add the comma after `posts_today`). In `listSwitches` add after the `discovered_ingest` branch:
@@ -1589,7 +1603,7 @@ In `admin.remote.ts`, in `getStats` add `searchesToday: number;` to the row type
 				WHEN 'search_discovery' THEN (
 					SELECT coalesce(round(avg((status = 'accepted')::int) * 100) || '% accepted', 'no acceptance rate')
 						|| ' of ' || count(*) || ' gate decisions in 7 days'
-					FROM link_queue
+					FROM link_events
 					WHERE status IN ('accepted', 'rejected') AND checked_at > now() - interval '7 days'
 				)
 ```
@@ -1599,8 +1613,8 @@ In `admin.remote.ts`, in `getStats` add `searchesToday: number;` to the row type
 In `admin/+page.svelte` add to the script:
 
 ```ts
-	// Mirrors dailySearchBudget in internal/service/discovery/search.go
-	const SEARCH_BUDGET = 330;
+// Mirrors dailySearchBudget in internal/service/discovery/search.go
+const SEARCH_BUDGET = 330;
 ```
 
 and before `<div class="mt-6 flex gap-4 text-sm">`:
@@ -1621,8 +1635,7 @@ and before `<div class="mt-6 flex gap-4 text-sm">`:
 In `switches/+page.svelte` add to `descriptions`:
 
 ```ts
-		search_discovery:
-			'Searches Brave for events from trusted posts whose action is a gate tag and queues relevant results for ingest. Event extraction runs either way. At most 330 searches a day.'
+search_discovery: "Searches Brave for events from trusted posts whose action is a gate tag and queues relevant results for ingest. Event extraction runs either way. At most 330 searches a day.";
 ```
 
 - [ ] **Step 5: Autofix and check**
@@ -1642,12 +1655,12 @@ SELECT s.key, CASE s.key
 	WHEN 'search_discovery' THEN (
 		SELECT coalesce(round(avg((status = 'accepted')::int) * 100) || '% accepted', 'no acceptance rate')
 			|| ' of ' || count(*) || ' gate decisions in 7 days'
-		FROM link_queue
+		FROM link_events
 		WHERE status IN ('accepted', 'rejected') AND checked_at > now() - interval '7 days'
 	)
 END AS readiness
 FROM switches s ORDER BY s.key;
-SELECT (SELECT count(*)::int FROM discover_queue WHERE searched_at > now() - interval '24 hours' AND result_count IS NOT NULL) AS searches_today;
+SELECT (SELECT count(*)::int FROM discovery_events WHERE searched_at > now() - interval '24 hours' AND result_count IS NOT NULL) AS searches_today;
 SQL
 docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" ingest_check'
 ```
@@ -1668,6 +1681,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 8: Knowledge base
 
 **Files:**
+
 - Modify: `docs/kb/search-discovery.md`, `docs/kb/rollout.md`, `docs/kb/architecture.md`, `docs/kb/index.md`
 
 - [ ] **Step 1: Search discovery**
@@ -1700,24 +1714,24 @@ Rules:
 In Schema changes add:
 
 ```sql
-ALTER TABLE discover_queue ADD COLUMN result_count INT;
+ALTER TABLE discovery_events ADD COLUMN result_count INT;
 ```
 
 In Defaults add the row `| Daily search cap | 330 | $50 a month at $5 per 1k queries over 30 days. |` and `| Searches per tick | 5 | Every minute, inside the cap. |`.
 
 - [ ] **Step 2: Rollout**
 
-Current state: `Phases 1 to 5 are done, with the switches table and admin page. \`shadow_gate\`, \`discovered_ingest\` and \`search_discovery\` start off.` In Monitoring change the Brave line to `Brave usage per day is counted from \`discover_queue.result_count\` over the last 24 hours of \`searched_at\`.`
+Current state: `Phases 1 to 5 are done, with the switches table and admin page. \`shadow_gate\`, \`discovered_ingest\` and \`search_discovery\` start off.`In Monitoring change the Brave line to`Brave usage per day is counted from \`discovery_events.result_count\` over the last 24 hours of \`searched_at\`.`
 
 - [ ] **Step 3: Architecture**
 
-Change the Discovery row job to `Extracts events with gate tag keys as actions into \`discover_queue\` and links \`same_event\` posts.` Add a row after it:
+Change the Discovery row job to `Extracts events with gate tag keys as actions into \`discovery_events\` and links \`same_event\` posts.` Add a row after it:
 
 ```markdown
 | Search | [search.go](../../internal/service/discovery/search.go) | Searches Brave for gate tag events from trusted posts and queues filtered results while `search_discovery` is on. |
 ```
 
-Add `- Brave is the web search API.` after the Jev line. In Unused parts of the schema delete the `discover_queue` and `link_queue.discover_item_id` lines.
+Add `- Brave is the web search API.` after the Jev line. In Unused parts of the schema delete the `discovery_events` and `link_events.discovery_events_id` lines.
 
 - [ ] **Step 4: Index**
 

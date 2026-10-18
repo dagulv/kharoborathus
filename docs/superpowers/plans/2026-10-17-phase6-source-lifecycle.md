@@ -14,7 +14,7 @@
 
 - States: `proposed` (not scraped, untrusted), `active` (scraped on `rate`), `dormant` (probe only, trusted). A source is scraped when `enabled = true` and `status = 'active'`. The lifecycle never changes `enabled`.
 - Promotion runs only while `source_promotion` is on. Dormancy and probe always run.
-- Promotion thresholds from `link_queue` rows of the source's `domain_id`: at least 5 accepted posts, on at least 3 distinct days, acceptance rate at least 60%. At most 5 promotions per week, oldest qualifying first.
+- Promotion thresholds from `link_events` rows of the source's `domain_id`: at least 5 accepted posts, on at least 3 distinct days, acceptance rate at least 60%. At most 5 promotions per week, oldest qualifying first.
 - On promotion fetch the homepage. An RSS autodiscovery `<link rel="alternate" type="application/rss+xml">` gives `adapter = 'rss'` and the feed URL, otherwise `adapter = 'page'` with the homepage URL.
 - Demote: when the shadow gate flags an active discovered source, set `status = 'proposed'`. A flagged manual source stays active.
 - Dormancy: no new posts inside 30 days, or 10 consecutive fetch failures. `fetch_failures` resets on a successful fetch.
@@ -30,7 +30,7 @@
 
 These fill gaps the spec leaves open. Task 7 writes them back into the kb.
 
-- **Promotion evidence counts only `link_queue` rows checked since `status_changed_at`.** Otherwise a demoted source would be promoted again the next day on the evidence that got it promoted before. The row that proposed the source has the same timestamp, so the comparison is `>=`.
+- **Promotion evidence counts only `link_events` rows checked since `status_changed_at`.** Otherwise a demoted source would be promoted again the next day on the evidence that got it promoted before. The row that proposed the source has the same timestamp, so the comparison is `>=`.
 - **The acceptance rate is accepted over accepted plus rejected.** `failed` and `duplicate` are no gate decisions.
 - **Distinct days are calendar days of `checked_at` of accepted rows**, in the database time zone.
 - **`promoted_at` records promotions** so the weekly cap counts promotions only, not probe revivals, which also set `status_changed_at`.
@@ -58,10 +58,12 @@ These fill gaps the spec leaves open. Task 7 writes them back into the kb.
 ### Task 1: Lifecycle columns, fetch failures and revival
 
 **Files:**
+
 - Modify: `internal/migrations/schema.sql`, `internal/service/switches/store.go`, `internal/service/source/model.go`, `internal/service/source/store.go`, `internal/service/source/sourced.go`
 - Temporary: `internal/service/source/check_test.go`
 
 **Interfaces:**
+
 - Produces: `sources.status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `sources.fetch_failures INT NOT NULL DEFAULT 0`, `sources.promoted_at TIMESTAMPTZ`, switch row `source_promotion`, `switches.SourcePromotion`. `source.StatusDormant`, `source.StatusProposed`. `(*Store).RecordFetch(ctx, id string, ok bool, maxFailures int) error`, `(*Store).Revive(ctx, id string) error`. `maxFetchFailures = 10`, `probeInterval = 7 * 24 * time.Hour`.
 
 - [ ] **Step 1: Schema and switch**
@@ -320,16 +322,19 @@ git commit -m "Track source fetch failures, probe dormant sources and revive the
 ### Task 2: Dormancy
 
 **Files:**
+
 - Create: `internal/service/source/lifecycle.go`
 - Modify: `internal/service/source/store.go`, `cmd/main.go`
 - Temporary: `internal/service/source/check_test.go`
 
 **Interfaces:**
+
 - Produces: `(*Store).MarkDormant(ctx, windowDays int) (int64, error)`, `source.RunLifecycle(ctx, s *Store, sw *switches.Store, l *slog.Logger) error`, `lifecycle(ctx, s, sw, client, l) error` (Task 4 extends it), `dormancyWindow = 30`.
 
 - [ ] **Step 1: Write the temporary check**
 
 `TestDormancyCheck`: insert four enabled `active` sources and one disabled one:
+
 - `a`: `status_changed_at` 40 days ago, a post created 40 days ago → dormant.
 - `b`: `status_changed_at` 40 days ago, a post created 2 days ago → stays active.
 - `c`: `status_changed_at` 2 days ago, no posts → stays active.
@@ -425,9 +430,11 @@ In `cmd/main.go` add after the sources `g.Go` block:
 ### Task 3: Listing discovery
 
 **Files:**
+
 - Create: `internal/service/source/listing.go`, `internal/service/source/listing_test.go`
 
 **Interfaces:**
+
 - Produces: `findListing(page []byte, pageURL, sourceURL string) (adapterName, url string)`.
 
 - [ ] **Step 1: Write the failing test**
@@ -516,16 +523,19 @@ func findListing(page []byte, pageURL, sourceURL string) (adapterName, listing s
 ### Task 4: Promotion
 
 **Files:**
+
 - Modify: `internal/service/source/store.go`, `internal/service/source/lifecycle.go`
 - Temporary: `internal/service/source/check_test.go`
 
 **Interfaces:**
+
 - Consumes: `findListing` (Task 3), `adapter.FetchPage`, `switches.SourcePromotion`.
 - Produces: `Promotable{ID, URL string}`, `(*Store).PromotedLastWeek(ctx) (int, error)`, `(*Store).ListPromotable(ctx, minAccepted, minDays int, minRate float64, limit int) ([]Promotable, error)`, `(*Store).Promote(ctx, id, adapterName, url string) error`. Constants `minAccepted = 5`, `minDays = 3`, `minAcceptRate = 0.6`, `maxPromotionsPerWeek = 5`.
 
 - [ ] **Step 1: Write the temporary check**
 
 `TestPromotionCheck`. An `httptest` server serves `/` with an RSS `<link>` to `/feed.xml`. Domains and enabled `proposed` sources, `status_changed_at` 30 days ago unless noted, `created_at` ascending in this order:
+
 - `a`: url = server URL. 5 accepted rows on 3 distinct days (now - 1, 2, 3 days), 2 rejected → qualifies (5/7 = 71%).
 - `b`: 6 accepted rows all on one day → not promoted (1 day).
 - `c`: 5 accepted on 3 days, 4 rejected → not promoted (5/9 = 56%).
@@ -566,7 +576,7 @@ func (s *Store) ListPromotable(ctx context.Context, minAccepted, minDays int, mi
 				count(*) FILTER (WHERE q.status = 'accepted') AS accepted,
 				count(DISTINCT q.checked_at::date) FILTER (WHERE q.status = 'accepted') AS days,
 				count(*) FILTER (WHERE q.status IN ('accepted', 'rejected')) AS decided
-			FROM link_queue q
+			FROM link_events q
 			WHERE q.domain_id = s.domain_id AND q.checked_at >= s.status_changed_at
 		) e ON true
 		WHERE s.status = 'proposed'
@@ -676,6 +686,7 @@ Import `github.com/dagulv/kharoborathus/internal/service/source/adapter`.
 ### Task 5: Demotion
 
 **Files:**
+
 - Modify: `internal/service/tagging/store.go` (`FlagSources`)
 - Temporary: `internal/service/tagging/check_test.go`
 
@@ -703,6 +714,7 @@ In `FlagSources` change `SET flagged_at = now()` to:
 ### Task 6: Admin
 
 **Files:**
+
 - Modify: `frontend/src/routes/admin/admin.remote.ts`, `frontend/src/routes/admin/switches/+page.svelte`
 
 - [ ] **Step 1: Readiness**
@@ -720,13 +732,13 @@ In `listSwitches` add:
 									count(*) FILTER (WHERE q.status = 'accepted') AS accepted,
 									count(DISTINCT q.checked_at::date) FILTER (WHERE q.status = 'accepted') AS days,
 									count(*) FILTER (WHERE q.status IN ('accepted', 'rejected')) AS decided
-								FROM link_queue q
+								FROM link_events q
 								WHERE q.domain_id = s.domain_id AND q.checked_at >= s.status_changed_at
 							) e ON true
 							WHERE s.status = 'proposed' AND s.enabled AND s.deleted_at IS NULL
 								AND e.accepted >= 5 AND e.days >= 3 AND e.accepted >= 0.6 * e.decided
 						) || ' proposed sources qualify'
-					FROM link_queue
+					FROM link_events
 				)
 ```
 
