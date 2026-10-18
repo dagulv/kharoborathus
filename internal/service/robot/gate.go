@@ -3,6 +3,7 @@ package robot
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -27,10 +28,14 @@ type Verdict struct {
 	Passed  bool               `json:"-"`
 }
 
-func (t *Tagger) Gate(ctx context.Context, l *slog.Logger, title, markdown string, tags []Tag) (Verdict, error) {
-	scores, extra, err := t.classify(ctx, l, title, markdown, tags, map[string]adapter.NoulQuestion{
+func articleQuestion() map[string]adapter.NoulQuestion {
+	return map[string]adapter.NoulQuestion{
 		articleID: {Instructions: strings.TrimSpace(articlePrompt), Criteria: &articleCriteria},
-	})
+	}
+}
+
+func (t *Tagger) Gate(ctx context.Context, l *slog.Logger, title, markdown string, tags []Tag) (Verdict, error) {
+	scores, extra, err := t.classify(ctx, l, title, markdown, tags, articleQuestion())
 	if err != nil {
 		return Verdict{}, err
 	}
@@ -41,4 +46,13 @@ func (t *Tagger) Gate(ctx context.Context, l *slog.Logger, title, markdown strin
 	})
 
 	return v, nil
+}
+
+func (t *Tagger) Quality(ctx context.Context, l *slog.Logger, title, markdown string) (bool, error) {
+	_, extra, err := t.classify(ctx, l, title, markdown, nil, articleQuestion())
+	if err != nil {
+		return false, fmt.Errorf("err classify quality: %w", err)
+	}
+
+	return extra[articleID] >= tagThreshold, nil
 }
