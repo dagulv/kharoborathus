@@ -4,7 +4,7 @@ Runs the stack on one UpCloud server with Haloy. Design: [docs/kb/infra.md](../d
 
 ## Secrets
 
-Secrets never sit in an env file. They live in two SOPS vaults under `secrets/`, managed with the `vault` tool and encrypted to one age key kept in Bitwarden. `.env` files hold safe values only, one per service:
+Prod secrets never sit in an env file. They live in two SOPS vaults under `secrets/`, managed with the `vault` tool and encrypted to one age key kept in Bitwarden. `.env` files hold safe values only, one per service:
 
 | Service | Dev env | Prod env | Deploy Dockerfile |
 |---|---|---|---|
@@ -28,6 +28,12 @@ Each file is a Kubernetes `Secret` with the keys under `stringData`, since that 
 infra/secrets.sh dev docker compose up -d db
 infra/secrets.sh dev go run ./cmd
 infra/secrets.sh dev pnpm -C frontend dev
+```
+
+To skip the prompt in dev, `dotenv.sh` writes the dev vault's secrets into the root `.env` and keeps its other lines. Compose and the Go app read that file, so `docker compose up -d db` and `go run ./cmd` then work bare. Rerun it after a vault change:
+
+```bash
+infra/dotenv.sh
 ```
 
 Change a secret from inside `infra/`:
