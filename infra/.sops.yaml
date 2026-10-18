@@ -10,10 +10,10 @@ vaults:
     open: secrets/dev/vault.open
     cluster: none
     bitwarden:
-      item: ffb5c836-b520-4fb8-af2c-b4e600fbe555
+      item: 4aa7bc48-6193-458f-b276-b4e700bb4ffe
   prod:
     sealed: secrets/prod/vault.sealed
     open: secrets/prod/vault.open
     cluster: none
     bitwarden:
-      item: ffb5c836-b520-4fb8-af2c-b4e600fbe555
+      item: 4aa7bc48-6193-458f-b276-b4e700bb4ffe
