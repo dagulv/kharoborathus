@@ -242,3 +242,21 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- One row per outbound request, written by the slog handler in internal/lib/logs.
+CREATE TABLE IF NOT EXISTS logs (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  type TEXT NOT NULL, -- deepseek | jev | brave | rss | page | trim | ingest | robots | homepage
+  level TEXT NOT NULL,
+  request JSONB NOT NULL,
+  response JSONB,
+  status INT,
+  duration_ms BIGINT NOT NULL DEFAULT 0,
+  error TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS logs_type_created_at_idx ON logs (type, created_at);
+
+CREATE INDEX IF NOT EXISTS logs_metadata_idx ON logs USING gin (metadata jsonb_path_ops);
