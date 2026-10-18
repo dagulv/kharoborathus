@@ -1,17 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 import { hashPassword } from '../src/lib/server/password.ts';
+import { loadDevEnv } from '../load-env.ts';
 
 const email = process.argv[2]?.trim();
-const conn = process.env.POSTGRES_CONNECTION_STRING;
+const root = loadDevEnv('development');
+const conn = process.env.POSTGRES_CONNECTION_STRING ?? root.POSTGRES_CONNECTION_STRING;
 
 if (!email) {
 	console.error('usage: pnpm user:add <email>');
-	process.exit(1);
-}
-
-if (!conn) {
-	console.error('POSTGRES_CONNECTION_STRING is not set');
 	process.exit(1);
 }
 
