@@ -1,0 +1,56 @@
+name: migrate
+
+on:
+  push:
+    branches: [main]
+    paths: [internal/migrations/**]
+  workflow_dispatch:
+
+concurrency:
+  group: migrate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      HALOY_VERSION: v0.1.0-beta.73
+      HALOY_SHA256: 6f8a8e213f01972525e858293ab4be96078c46109eb42b3d4d1185265dab51e9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install haloy
+        run: |
+          curl -fsSL -o haloy "https://github.com/haloydev/haloy/releases/download/$HALOY_VERSION/haloy-linux-amd64"
+          echo "$HALOY_SHA256  haloy" | sha256sum -c -
+          sudo install -m 755 haloy /usr/local/bin/haloy
+
+      # Haloy resolves the db target's env from infra/db/.env. The Go config reads that file only beside a root .env.
+      - name: Write env files
+        run: |
+          cp infra/db/.env.example infra/db/.env
+          touch .env
+
+      # The db is only on the server's haloy network, so the tunnel goes through the haloyd API on 443.
+      - name: Migrate
+        env:
+          HALOY_API_TOKEN: ${{ secrets.HALOY_API_TOKEN }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          infra/haloy.sh tunnel db &
+          tunnel=$!
+          trap 'kill $tunnel' EXIT
+          for i in $(seq 1 30); do
+            (: </dev/tcp/127.0.0.1/5432) 2>/dev/null && break
+            kill -0 $tunnel || exit 1
+            sleep 1
+          done
+          go run ./cmd migrate
