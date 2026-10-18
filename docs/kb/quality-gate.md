@@ -23,7 +23,7 @@ Every post passes a Jev quality check before any DeepSeek call or feed listing. 
 2. The quality worker takes up to 20 `pending` posts a minute, newest `posted_at` first. A large backfill then drains behind live posts instead of holding them out of the feed.
 3. It asks Jev the `article` question from [gate.go](../../internal/service/robot/gate.go) alone, on title and markdown.
 4. A score of at least the threshold sets `active`. A lower score sets `rejected`.
-5. While Jev is unavailable the tick stops and posts stay `pending`. Any other error skips the post, which stays `pending` for the next tick. An error never hides a post.
+5. While Jev is unavailable the tick stops and posts stay `pending`. Any other error skips the post, which stays `pending` and sets `quality_tried_at`. Tried posts go behind untried ones, so a post that keeps failing cannot block the queue. An error never hides a post.
 6. With the mocked classifier every pending post becomes `active`, since the mock cannot judge quality.
 7. Ingest inserts discovered posts as `active`, since `Tagger.Gate` already asked the same question. It no longer summarizes inline.
 8. Four workers run side by side on `active` posts. Each tracks its own checked table:
@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS summary_checked (
 
 INSERT INTO summary_checked (post_id) SELECT id FROM posts WHERE NOT summary_pending
 ON CONFLICT DO NOTHING;
+```
+
+`003_quality_tried_at.sql`:
+
+```sql
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS quality_tried_at TIMESTAMPTZ;
 ```
 
 Later migration:

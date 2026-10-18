@@ -259,9 +259,15 @@ func scanFeed(row pgx.Row) (feed Feed, err error) {
 	return
 }
 
-// Newest first, so a large backfill cannot hold live posts out of the feed.
+// Newest first, so a large backfill cannot hold live posts out of the feed. Failed posts go last, so they cannot block it either.
 func (s *Store) ListPendingQuality(ctx context.Context, limit int) ([]Feed, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+feedColumns+` FROM posts WHERE status = 'pending' ORDER BY posted_at DESC LIMIT $1`, limit)
+	rows, err := s.db.Query(ctx, `
+		SELECT `+feedColumns+`
+		FROM posts
+		WHERE status = 'pending'
+		ORDER BY quality_tried_at NULLS FIRST, posted_at DESC
+		LIMIT $1
+		`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("err query pending quality: %w", err)
 	}
@@ -274,6 +280,14 @@ func (s *Store) ListPendingQuality(ctx context.Context, limit int) ([]Feed, erro
 	}
 
 	return feeds, nil
+}
+
+func (s *Store) DeferQuality(ctx context.Context, id string) error {
+	if _, err := s.db.Exec(ctx, `UPDATE posts SET quality_tried_at = now() WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("err defer quality: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Store) SetStatus(ctx context.Context, id, status string) error {

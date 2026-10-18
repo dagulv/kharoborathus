@@ -720,7 +720,7 @@ git commit -m "Document the quality gate as built"
 
 ## Follow-up after deploy
 
-Not part of this plan. Once the new binary runs in prod, add `internal/migrations/003_drop_summary_pending.sql` in its own push:
+Not part of this plan. Once the new binary runs in prod, add `internal/migrations/004_drop_summary_pending.sql` in its own push:
 
 ```sql
 DROP INDEX IF EXISTS posts_summary_pending_idx;

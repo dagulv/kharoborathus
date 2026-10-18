@@ -57,6 +57,11 @@ func checkQuality(ctx context.Context, s *Store, tagger *robot.Tagger, mocked bo
 		case err != nil:
 			l.Warn("check quality", "post", post.ID, "err", err)
 			counts["error"]++
+
+			if err := s.feedStore.DeferQuality(ctx, post.ID); err != nil {
+				return err
+			}
+
 			continue
 		}
 
