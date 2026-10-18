@@ -49,7 +49,7 @@ func (s *Store) ListUnscannedPosts(ctx context.Context, windowDays, limit int) (
 func (s *Store) QueueLinks(ctx context.Context, postID string, urls []string) (queued int64, err error) {
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
-			INSERT INTO link_queue (url, via, from_post_id)
+			INSERT INTO link_events (url, via, from_post_id)
 			SELECT u, 'link', $2 FROM unnest($1::text[]) AS u
 			WHERE NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = u)
 			ON CONFLICT (url) DO NOTHING
@@ -71,7 +71,7 @@ func (s *Store) QueueLinks(ctx context.Context, postID string, urls []string) (q
 }
 
 func (s *Store) CheckedLastDay(ctx context.Context) (n int, err error) {
-	if err = s.db.QueryRow(ctx, `SELECT count(*) FROM link_queue WHERE checked_at > now() - interval '1 day'`).Scan(&n); err != nil {
+	if err = s.db.QueryRow(ctx, `SELECT count(*) FROM link_events WHERE checked_at > now() - interval '1 day'`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("err count checked links: %w", err)
 	}
 
@@ -86,7 +86,7 @@ func (s *Store) ListPending(ctx context.Context, windowDays, limit int) ([]Link,
 			SELECT DISTINCT ON (host) id, url, via, from_post_id, checked_at, created_at
 			FROM (
 				SELECT *, lower(substring(url FROM '^[^:]+://(?:www\.)?([^/:?#]+)')) AS host
-				FROM link_queue
+				FROM link_events
 				WHERE status = 'pending' AND created_at > now() - make_interval(days => $1)
 			) q
 			ORDER BY host, checked_at NULLS FIRST, created_at
@@ -111,7 +111,7 @@ func (s *Store) ListPending(ctx context.Context, windowDays, limit int) ([]Link,
 
 func (s *Store) Finish(ctx context.Context, id, status, domainID string, scores any, reason string) error {
 	if _, err := s.db.Exec(ctx, `
-		UPDATE link_queue
+		UPDATE link_events
 		SET
 			status = $2,
 			domain_id = coalesce(NULLIF($3, '')::uuid, domain_id),
@@ -129,7 +129,7 @@ func (s *Store) Finish(ctx context.Context, id, status, domainID string, scores 
 
 func (s *Store) Retry(ctx context.Context, id, domainID, reason string, maxAttempts int) (failed bool, err error) {
 	if err = s.db.QueryRow(ctx, `
-		UPDATE link_queue
+		UPDATE link_events
 		SET
 			status = CASE WHEN attempts + 1 >= $4 THEN 'failed' ELSE status END,
 			domain_id = coalesce(NULLIF($2, '')::uuid, domain_id),
@@ -203,7 +203,7 @@ func (s *Store) Accept(ctx context.Context, link Link, baseURL string, f feed.Fe
 			INSERT INTO post_links (from_post_id, to_post_id, relation, metadata)
 			VALUES ($1, $2, 'discovered', jsonb_strip_nulls(jsonb_build_object(
 				'via', $3::text,
-				'query', (SELECT q.query FROM link_queue l JOIN discover_queue q ON q.id = l.discover_item_id WHERE l.id = $4)
+				'query', (SELECT q.query FROM link_events l JOIN discovery_events q ON q.id = l.discovery_events_id WHERE l.id = $4)
 			)))
 			`, post.ID, link.FromPostID, link.Via, link.ID); err != nil {
 			return fmt.Errorf("err link discovered: %w", err)
@@ -214,7 +214,7 @@ func (s *Store) Accept(ctx context.Context, link Link, baseURL string, f feed.Fe
 		}
 
 		if _, err := tx.Exec(ctx, `
-			UPDATE link_queue
+			UPDATE link_events
 			SET status = 'accepted', domain_id = $2, gate_scores = $3, error = NULL, attempts = attempts + 1, checked_at = now()
 			WHERE id = $1
 			`, link.ID, f.DomainID, scores); err != nil {

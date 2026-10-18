@@ -9,7 +9,7 @@ import (
 
 const (
 	maxLinksPerPost = 10
-	// Longer URLs break the unique btree indexes on link_queue.url and posts.url.
+	// Longer URLs break the unique btree indexes on link_events.url and posts.url.
 	maxLinkLength = 2000
 )
 

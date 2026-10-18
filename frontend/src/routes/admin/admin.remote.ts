@@ -27,7 +27,7 @@ export const getStats = query(async () => {
 			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND flagged_at IS NOT NULL) AS flagged_sources,
 			(SELECT count(*)::int FROM posts) AS posts,
 			(SELECT count(*)::int FROM posts WHERE created_at > now() - interval '24 hours') AS posts_today,
-			(SELECT count(*)::int FROM discover_queue WHERE searched_at > now() - interval '24 hours' AND result_count IS NOT NULL) AS searches_today
+			(SELECT count(*)::int FROM discovery_events WHERE searched_at > now() - interval '24 hours' AND result_count IS NOT NULL) AS searches_today
 	`;
 
 	return row;
@@ -36,7 +36,7 @@ export const getStats = query(async () => {
 export const getLinkQueue = query(async () => {
 	const sql = db();
 	const rows = await sql<{ status: string; count: number }[]>`
-		SELECT status, count(*)::int AS count FROM link_queue GROUP BY status
+		SELECT status, count(*)::int AS count FROM link_events GROUP BY status
 	`;
 
 	return Object.fromEntries(rows.map((r) => [r.status, r.count])) as Record<string, number>;
@@ -360,7 +360,7 @@ export const listSwitches = query(async () => {
 				WHEN 'search_discovery' THEN (
 					SELECT coalesce(round(avg((status = 'accepted')::int) * 100) || '% accepted', 'no acceptance rate')
 						|| ' of ' || count(*) || ' gate decisions in 7 days'
-					FROM link_queue
+					FROM link_events
 					WHERE status IN ('accepted', 'rejected') AND checked_at > now() - interval '7 days'
 				)
 				WHEN 'source_promotion' THEN (
@@ -374,7 +374,7 @@ export const listSwitches = query(async () => {
 									count(*) FILTER (WHERE q.status = 'accepted') AS accepted,
 									count(DISTINCT q.created_at::date) FILTER (WHERE q.status = 'accepted') AS days,
 									count(*) FILTER (WHERE q.status IN ('accepted', 'rejected')) AS decided
-								FROM link_queue q
+								FROM link_events q
 								JOIN domains qd ON qd.id = q.domain_id
 								WHERE split_part(qd.base_url, '://', 2) = split_part(d.base_url, '://', 2)
 									AND q.checked_at >= CASE WHEN s.promoted_at IS NULL THEN '-infinity' ELSE s.status_changed_at END
@@ -382,7 +382,7 @@ export const listSwitches = query(async () => {
 							WHERE s.status = 'proposed' AND s.enabled AND s.deleted_at IS NULL
 								AND e.accepted >= 5 AND e.days >= 3 AND e.accepted >= 0.6 * e.decided
 						) || ' proposed sources qualify'
-					FROM link_queue
+					FROM link_events
 				)
 			END AS readiness
 		FROM switches s

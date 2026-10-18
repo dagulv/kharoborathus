@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS source_discovered_by_post (
   PRIMARY KEY (source_id, post_id)
 );
 
-CREATE TABLE IF NOT EXISTS discover_queue (
+CREATE TABLE IF NOT EXISTS discovery_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
   entity TEXT NOT NULL,
@@ -145,23 +145,23 @@ CREATE TABLE IF NOT EXISTS discover_queue (
   UNIQUE (post_id, query)
 );
 
-CREATE INDEX IF NOT EXISTS discover_queue_pending_idx ON discover_queue (created_at)
+CREATE INDEX IF NOT EXISTS discovery_events_pending_idx ON discovery_events (created_at)
 WHERE
   searched_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS discover_queue_event_idx ON discover_queue (lower(entity), lower(action), searched_at);
+CREATE INDEX IF NOT EXISTS discovery_events_idx ON discovery_events (lower(entity), lower(action), searched_at);
 
 CREATE TABLE IF NOT EXISTS discover_checked (
   post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,
   checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS link_queue (
+CREATE TABLE IF NOT EXISTS link_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   url TEXT UNIQUE NOT NULL,
   via TEXT NOT NULL, -- link | search
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-  discover_item_id UUID REFERENCES discover_queue (id) ON DELETE SET NULL,
+  discovery_events_id UUID REFERENCES discovery_events (id) ON DELETE SET NULL,
   domain_id UUID REFERENCES domains (id), -- set on fetch, drives source promotion
   status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
   gate_scores JSONB NOT NULL DEFAULT '{}',
@@ -171,11 +171,11 @@ CREATE TABLE IF NOT EXISTS link_queue (
   checked_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS link_queue_pending_idx ON link_queue (created_at)
+CREATE INDEX IF NOT EXISTS link_events_pending_idx ON link_events (created_at)
 WHERE
   status = 'pending';
 
-CREATE INDEX IF NOT EXISTS link_queue_domain_idx ON link_queue (domain_id, status);
+CREATE INDEX IF NOT EXISTS link_events_domain_idx ON link_events (domain_id, status);
 
 CREATE TABLE IF NOT EXISTS link_checked (
   post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,

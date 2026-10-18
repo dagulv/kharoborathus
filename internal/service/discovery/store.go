@@ -68,7 +68,7 @@ func (s *Store) CompleteDiscovery(ctx context.Context, postID string, items []Di
 			}
 
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO discover_queue (post_id, entity, action, query)
+				INSERT INTO discovery_events (post_id, entity, action, query)
 				SELECT $1, * FROM unnest($2::text[], $3::text[], $4::text[])
 				ON CONFLICT (post_id, query) DO NOTHING
 				`, postID, entities, actions, queries); err != nil {
@@ -79,10 +79,10 @@ func (s *Store) CompleteDiscovery(ctx context.Context, postID string, items []Di
 				INSERT INTO post_links (from_post_id, to_post_id, relation, metadata)
 				SELECT n.id, anchor.id, 'same_event', jsonb_build_object('entity', e.entity, 'action', e.action)
 				FROM posts n
-				JOIN discover_queue e ON e.post_id = n.id
+				JOIN discovery_events e ON e.post_id = n.id
 				CROSS JOIN LATERAL (
 					SELECT o.id
-					FROM discover_queue q
+					FROM discovery_events q
 					JOIN posts o ON o.id = q.post_id
 					WHERE lower(q.entity) = lower(e.entity)
 						AND lower(q.action) = lower(e.action)
@@ -139,7 +139,7 @@ func (s *Store) Actions(ctx context.Context) (gateKeys []string, aliases map[str
 func (s *Store) ListQueue(ctx context.Context, windowDays, limit int) ([]SearchItem, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT q.id, q.post_id, q.entity, q.action, q.query, p.lang, d.base_url
-		FROM discover_queue q
+		FROM discovery_events q
 		JOIN posts p ON p.id = q.post_id
 		JOIN sources s ON s.id = p.source_id
 		JOIN domains d ON d.id = p.domain_id
@@ -170,7 +170,7 @@ func (s *Store) ListQueue(ctx context.Context, windowDays, limit int) ([]SearchI
 func (s *Store) Searched(ctx context.Context, entity, action string, windowDays int) (found bool, err error) {
 	if err = s.db.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1 FROM discover_queue
+			SELECT 1 FROM discovery_events
 			WHERE lower(entity) = lower($1)
 				AND lower(action) = lower($2)
 				AND searched_at > now() - make_interval(days => $3)
@@ -185,7 +185,7 @@ func (s *Store) Searched(ctx context.Context, entity, action string, windowDays 
 
 func (s *Store) SearchesLastDay(ctx context.Context) (n int, err error) {
 	if err = s.db.QueryRow(ctx, `
-		SELECT count(*) FROM discover_queue
+		SELECT count(*) FROM discovery_events
 		WHERE searched_at > now() - interval '1 day' AND result_count IS NOT NULL
 		`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("err count searches: %w", err)
@@ -196,7 +196,7 @@ func (s *Store) SearchesLastDay(ctx context.Context) (n int, err error) {
 
 func (s *Store) PendingResults(ctx context.Context, windowDays int) (n int, err error) {
 	if err = s.db.QueryRow(ctx, `
-		SELECT count(*) FROM link_queue
+		SELECT count(*) FROM link_events
 		WHERE via = 'search' AND status = 'pending' AND created_at > now() - make_interval(days => $1)
 		`, windowDays).Scan(&n); err != nil {
 		return 0, fmt.Errorf("err count pending search results: %w", err)
@@ -208,7 +208,7 @@ func (s *Store) PendingResults(ctx context.Context, windowDays int) (n int, err 
 func (s *Store) QueueResults(ctx context.Context, item SearchItem, urls []string, resultCount int) (queued int64, err error) {
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
-			INSERT INTO link_queue (url, via, from_post_id, discover_item_id)
+			INSERT INTO link_events (url, via, from_post_id, discovery_events_id)
 			SELECT u, 'search', $2, $3 FROM unnest($1::text[]) AS u
 			WHERE NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = u)
 			ON CONFLICT (url) DO NOTHING
@@ -219,7 +219,7 @@ func (s *Store) QueueResults(ctx context.Context, item SearchItem, urls []string
 
 		queued = tag.RowsAffected()
 
-		if _, err := tx.Exec(ctx, `UPDATE discover_queue SET searched_at = now(), result_count = $2 WHERE id = $1`, item.ID, resultCount); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE discovery_events SET searched_at = now(), result_count = $2 WHERE id = $1`, item.ID, resultCount); err != nil {
 			return fmt.Errorf("err mark searched: %w", err)
 		}
 
@@ -233,7 +233,7 @@ func (s *Store) QueueResults(ctx context.Context, item SearchItem, urls []string
 }
 
 func (s *Store) MarkSearched(ctx context.Context, id string) error {
-	tag, err := s.db.Exec(ctx, `UPDATE discover_queue SET searched_at = now() WHERE id = $1`, id)
+	tag, err := s.db.Exec(ctx, `UPDATE discovery_events SET searched_at = now() WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("err mark searched: %w", err)
 	}
