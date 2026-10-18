@@ -69,6 +69,14 @@ export type Switch = {
 	readiness: string | null;
 };
 
+export type ListingCandidate = {
+	adapter: 'rss' | 'page';
+	url: string;
+	title?: string;
+	items?: number;
+	latest?: string;
+};
+
 export type LogSummary = {
 	id: string;
 	type: string;

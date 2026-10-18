@@ -32,7 +32,7 @@ The existing `active` boolean is renamed to `enabled` and stays your manual swit
    - Enough accepted posts.
    - Spread over enough distinct days, so one news burst cannot promote.
    - A high enough acceptance rate.
-3. **Find a listing** on promotion. Fetch the homepage. Adding a `page` source in admin runs the same check on its URL through the internal `GET /listing` route.
+3. **Find a listing** on promotion. Fetch the homepage. Adding a source in admin goes further, through `discover` in [discover.go](../../internal/service/source/discover.go) behind the internal `GET /listing` route: the URL itself when it is a feed, else every feed the page links to, or failing those the feeds at common paths, and last the page for the linker. Each feed is fetched and parsed, and the admin preselects the first.
    - RSS autodiscovery: a `<link rel="alternate" type="application/rss+xml">` tag gives `adapter = 'rss'` and the feed URL.
    - Otherwise `adapter = 'page'` with the homepage URL. The linker first tries a link rule from the first listing fetch, so a new source gets posts at once. If that fails it generates one from three listing samples, 30 minutes apart.
 4. **Cap.** At most a few promotions per week, oldest qualifying first.

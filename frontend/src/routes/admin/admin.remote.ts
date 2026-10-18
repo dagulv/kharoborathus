@@ -5,6 +5,7 @@ import { API_URL } from '$app/env/private';
 import { db } from '#lib/server/db.js';
 import { LOG_TYPES } from '#lib/types.js';
 import type {
+	ListingCandidate,
 	Log,
 	LogSummary,
 	Post,
@@ -176,7 +177,26 @@ export const getPost = query(uuid, async (id) => {
 	return post;
 });
 
-const ADAPTERS = ['rss', 'page'] as const;
+const httpURL = v.pipe(
+	v.string(),
+	v.trim(),
+	v.nonEmpty('URL is required'),
+	v.url('Must be a valid URL'),
+	v.regex(/^https?:\/\//, 'Only http(s) URLs are supported')
+);
+
+// Lists what the Go app can read a url as, best first. See discover in the Go app.
+export const checkSource = command(httpURL, async (url) => {
+	const res = await fetch(`${API_URL}/listing?url=${encodeURIComponent(url)}`).catch(() => {
+		error(502, 'Go app unreachable');
+	});
+
+	if (!res.ok) error(422, `Could not fetch ${url}: ${(await res.text()).trim()}`);
+
+	const { candidates } = (await res.json()) as { candidates: ListingCandidate[] };
+
+	return candidates;
+});
 
 // Mirrors domain.BaseURL in the Go app
 function baseURL(url: URL) {
@@ -185,8 +205,12 @@ function baseURL(url: URL) {
 
 export const createSource = form(
 	v.object({
-		url: v.pipe(v.string(), v.trim(), v.nonEmpty('URL is required'), v.url('Must be a valid URL')),
-		adapter: v.picklist(ADAPTERS, 'Unknown adapter'),
+		url: httpURL,
+		// One of the checked candidates, as "adapter url".
+		listing: v.pipe(
+			v.string('Check the URL first'),
+			v.regex(/^(rss|page) https?:\/\/\S+$/, 'Check the URL first')
+		),
 		rate: v.pipe(
 			v.number('Rate must be a number'),
 			v.integer(),
@@ -194,11 +218,8 @@ export const createSource = form(
 		),
 		targetTags: v.optional(v.pipe(v.string(), v.maxLength(1000)), '')
 	}),
-	async ({ url, adapter, rate, targetTags }, issue) => {
-		const parsed = new URL(url);
-		if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-			invalid(issue.url('Only http(s) URLs are supported'));
-		}
+	async ({ url, listing, rate, targetTags }, issue) => {
+		const [adapter, listingURL] = listing.split(' ');
 
 		const tags = [
 			...new Set(
@@ -209,35 +230,22 @@ export const createSource = form(
 			)
 		];
 
-		let listing: { adapter: string; url: string } = { adapter, url };
-
-		// Like promotion in the Go app, a page that links to a feed becomes an rss source.
-		if (adapter === 'page') {
-			const res = await fetch(`${API_URL}/listing?url=${encodeURIComponent(url)}`).catch(() => {
-				error(502, 'Go app unreachable');
-			});
-
-			if (!res.ok) invalid(issue.url(`Could not fetch the page: ${(await res.text()).trim()}`));
-
-			listing = await res.json();
-		}
-
 		const sql = db();
 		const [existing] =
-			await sql`SELECT 1 FROM sources WHERE url = ${listing.url} AND deleted_at IS NULL`;
-		if (existing) invalid(issue.url('A source with this URL already exists'));
+			await sql`SELECT 1 FROM sources WHERE url = ${listingURL} AND deleted_at IS NULL`;
+		if (existing) invalid(issue.listing('A source with this feed or page already exists'));
 
 		await sql.begin(async (tx) => {
 			const [domain] = await tx<{ id: string }[]>`
 				INSERT INTO domains (base_url)
-				VALUES (${baseURL(parsed)})
+				VALUES (${baseURL(new URL(url))})
 				ON CONFLICT (base_url) DO UPDATE SET base_url = EXCLUDED.base_url
 				RETURNING id
 			`;
 
 			await tx`
 				INSERT INTO sources (domain_id, adapter, url, enabled, rate, target_tags)
-				VALUES (${domain.id}, ${listing.adapter}, ${listing.url}, true, ${rate}, ${tags}::text[])
+				VALUES (${domain.id}, ${adapter}, ${listingURL}, true, ${rate}, ${tags}::text[])
 			`;
 		});
 
