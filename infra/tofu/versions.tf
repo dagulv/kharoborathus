@@ -29,5 +29,5 @@ terraform {
   }
 }
 
-# Credentials come from UPCLOUD_USERNAME and UPCLOUD_PASSWORD.
+# Credentials come from UPCLOUD_TOKEN. The provider still marks token auth experimental.
 provider "upcloud" {}

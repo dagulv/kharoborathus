@@ -18,7 +18,7 @@ Each has a `.env-sample` or `.env.example` beside it. The dev db also builds fro
 |---|---|---|
 | dev | `kharoborathus/app.yaml` | `POSTGRES_PASSWORD`, `ADMIN_PASSWORD`, `DEEPSEEK_API_KEY`, `TYPESAFE_API_KEY`, `BRAVE_API_KEY` |
 | prod | `kharoborathus/app.yaml` | The dev keys plus `POSTGRES_CONNECTION_STRING` |
-| prod | `kharoborathus/tofu.yaml` | `UPCLOUD_PASSWORD`, `TF_VAR_state_passphrase` |
+| prod | `kharoborathus/tofu.yaml` | `UPCLOUD_TOKEN`, `TF_VAR_state_passphrase` |
 
 Each file is a Kubernetes `Secret` with the keys under `stringData`, since that is what `vault` manages. Nothing here deploys to a cluster, so `vault diff` and `vault apply` don't apply.
 
@@ -46,11 +46,7 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
    go install github.com/haloydev/haloy/cmd/haloy@v0.1.0-beta.73
    ```
 
-2. Create an UpCloud API user. Seal its password and a state passphrase of at least 16 characters in the prod vault's `tofu.yaml`. Export the username:
-
-   ```bash
-   export UPCLOUD_USERNAME=...
-   ```
+2. Create an UpCloud API token under Account > API Tokens, limited to your IP. It lasts at most 365 days, so renew it before it expires. Seal it as `UPCLOUD_TOKEN` in the prod vault's `tofu.yaml`, with a state passphrase of at least 16 characters.
 
 3. Put your SSH public key and the Haloy API domain in `terraform.tfvars`. The server ignores later changes to either, so a wrong key locks you out:
 

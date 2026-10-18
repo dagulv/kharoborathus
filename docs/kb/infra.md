@@ -79,7 +79,7 @@ Secrets:
 - Secrets live in the `dev` and `prod` SOPS vaults, one Kubernetes `Secret` manifest per file, since that is the format `vault` manages. Only `data` and `stringData` are encrypted. Both vaults share one age key, kept in a Bitwarden custom field `AGE-SECRET-KEY`. `vault` requires a cluster name, so they name `none`.
 - `secrets.sh` unlocks Bitwarden with the master password, decrypts every file of one vault, or the one file named after a colon, in memory and exports its `stringData` keys, then locks Bitwarden and runs the command. The password and session go through env, never argv. A set `SOPS_AGE_KEY` skips Bitwarden and is unset before the command runs.
 - The Go app and Vite both let the process env win over their `.env`, and both expand `${POSTGRES_PASSWORD}` in a `.env` value from it. The dev Postgres container reads `POSTGRES_PASSWORD` from the process env too.
-- UpCloud credentials: `UPCLOUD_USERNAME` is a safe value you export. `UPCLOUD_PASSWORD` and `TF_VAR_state_passphrase` live in the prod vault's `tofu.yaml`. The OpenTofu state stays local, encrypted and gitignored.
+- UpCloud credentials: an API token, not a user's password, since it expires within a year, can be limited to your IP and revoked alone. `UPCLOUD_TOKEN` and `TF_VAR_state_passphrase` live in the prod vault's `tofu.yaml`. The OpenTofu state stays local, encrypted and gitignored.
 - Haloy passes each value `haloy.yaml` names to its container. The rest of the prod vault never leaves your machine.
 - The Haloy API token lives in `~/.config/haloy` locally and in `/etc/haloy` on the server.
 
