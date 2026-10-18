@@ -23,6 +23,10 @@ func TestAdaptersRefusePrivate(t *testing.T) {
 		t.Errorf("rss: %v", err)
 	}
 
+	if _, err := NewWordPress(nil, l).FetchFromSource(context.Background(), slog.New(slog.DiscardHandler), srv.URL); !errors.Is(err, safehttp.ErrPrivateAddress) {
+		t.Errorf("wordpress: %v", err)
+	}
+
 	if _, err := NewPage(nil, nil, l).FetchFromSource(context.Background(), slog.New(slog.DiscardHandler), srv.URL); !errors.Is(err, safehttp.ErrPrivateAddress) {
 		t.Errorf("page: %v", err)
 	}
