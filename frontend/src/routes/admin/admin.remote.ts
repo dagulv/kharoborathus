@@ -3,7 +3,18 @@ import { error, invalid, redirect } from '@sveltejs/kit';
 import { command, form, query } from '$app/server';
 import { API_URL } from '$app/env/private';
 import { db } from '#lib/server/db.js';
-import type { Post, PostSummary, Source, Switch, Tag, TagAlias, TagProposal } from '#lib/types.js';
+import { LOG_TYPES } from '#lib/types.js';
+import type {
+	Log,
+	LogSummary,
+	Post,
+	PostSummary,
+	Source,
+	Switch,
+	Tag,
+	TagAlias,
+	TagProposal
+} from '#lib/types.js';
 
 const PAGE_SIZE = 50;
 
@@ -404,3 +415,63 @@ export const setSwitch = command(
 		await listSwitches().refresh();
 	}
 );
+
+// The camel transform would rename keys inside jsonb too, so it is read as text.
+function parseJson<T extends Record<string, unknown>>(row: T, keys: (keyof T)[]): T {
+	for (const key of keys) row[key] = JSON.parse(row[key] as string);
+	return row;
+}
+
+// Bodies are left out, since a stored page can be megabytes.
+// No total count: count(*) over the whole table gets slow as it grows.
+export const listLogs = query(
+	v.object({
+		type: v.optional(v.picklist(LOG_TYPES)),
+		level: v.optional(v.picklist(['INFO', 'WARN', 'ERROR'])),
+		metaKey: v.optional(v.pipe(v.string(), v.trim(), v.nonEmpty(), v.maxLength(100))),
+		metaValue: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(500)), ''),
+		page: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1)), 1)
+	}),
+	async ({ type, level, metaKey, metaValue, page }) => {
+		const sql = db();
+		const conds = [sql`TRUE`];
+
+		if (type) conds.push(sql`type = ${type}`);
+		if (level) conds.push(sql`level = ${level}`);
+		if (metaKey && metaValue) conds.push(sql`metadata @> ${sql.json({ [metaKey]: metaValue })}`);
+		if (metaKey && !metaValue) conds.push(sql`metadata ? ${metaKey}`);
+
+		const where = conds.reduce((acc, c) => sql`${acc} AND ${c}`);
+
+		const rows = await sql<LogSummary[]>`
+			SELECT
+				id, type, level, request->>'method' AS method, request->>'url' AS url,
+				status, duration_ms::int, error, metadata::text, created_at
+			FROM logs
+			WHERE ${where}
+			ORDER BY id DESC
+			LIMIT ${PAGE_SIZE + 1} OFFSET ${(page - 1) * PAGE_SIZE}
+		`;
+
+		return {
+			logs: rows.slice(0, PAGE_SIZE).map((r) => parseJson(r, ['metadata'])),
+			hasNext: rows.length > PAGE_SIZE,
+			page
+		};
+	}
+);
+
+export const getLog = query(v.pipe(v.string(), v.regex(/^\d+$/)), async (id) => {
+	const sql = db();
+	const [log] = await sql<Log[]>`
+		SELECT
+			id, type, level, request->>'method' AS method, request->>'url' AS url,
+			status, duration_ms::int, error, metadata::text, created_at, request::text, response::text
+		FROM logs
+		WHERE id = ${id}
+	`;
+
+	if (!log) error(404, 'Log not found');
+
+	return parseJson(log, ['metadata', 'request', 'response']);
+});

@@ -8,7 +8,8 @@
 		{ href: '/admin/sources', label: 'Sources' },
 		{ href: '/admin/tags', label: 'Tags' },
 		{ href: '/admin/posts', label: 'Posts' },
-		{ href: '/admin/switches', label: 'Switches' }
+		{ href: '/admin/switches', label: 'Switches' },
+		{ href: '/admin/logs', label: 'Logs' }
 	];
 
 	function isActive(href: string) {

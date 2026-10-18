@@ -68,3 +68,34 @@ export type Switch = {
 	updatedAt: Date;
 	readiness: string | null;
 };
+
+export type LogSummary = {
+	id: string;
+	type: string;
+	level: string;
+	method: string | null;
+	url: string | null;
+	status: number | null;
+	durationMs: number;
+	error: string | null;
+	metadata: Record<string, unknown>;
+	createdAt: Date;
+};
+
+export type Log = LogSummary & {
+	request: unknown;
+	response: unknown;
+};
+
+// Mirrors the types in docs/kb/request-logs.md
+export const LOG_TYPES = [
+	'deepseek',
+	'jev',
+	'brave',
+	'rss',
+	'page',
+	'trim',
+	'ingest',
+	'robots',
+	'homepage'
+] as const;
