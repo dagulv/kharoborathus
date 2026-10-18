@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS sources (
   promoted_at TIMESTAMPTZ,
   flagged_at TIMESTAMPTZ,
   reviewed_at TIMESTAMPTZ,
+  backfilled_at TIMESTAMPTZ, -- when the WordPress check, and any backfill it found, ran
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ,
   -- Trust checks read only enabled, so a deleted source must never stay enabled.
@@ -93,6 +94,7 @@ CREATE TABLE IF NOT EXISTS posts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   content_hash BYTEA NOT NULL,
   simhash BIGINT, -- NULL when the content has no words
+  summary_pending BOOLEAN NOT NULL DEFAULT false, -- backfilled posts are summarized in the background
   ts tsvector GENERATED ALWAYS AS (
     CASE lang
       WHEN 'sv' THEN setweight(to_tsvector('ts_swedish', title), 'A') || setweight(
@@ -126,6 +128,8 @@ CREATE INDEX IF NOT EXISTS posts_tags_idx ON posts USING gin (tags);
 CREATE INDEX IF NOT EXISTS posts_posted_at_idx ON posts (posted_at DESC);
 
 CREATE INDEX IF NOT EXISTS posts_ts_idx ON posts USING gin (ts);
+
+CREATE INDEX IF NOT EXISTS posts_summary_pending_idx ON posts (created_at) WHERE summary_pending;
 
 CREATE TABLE IF NOT EXISTS source_discovered_by_post (
   source_id UUID NOT NULL REFERENCES sources (id),
@@ -246,7 +250,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- One row per outbound request, written by the slog handler in internal/lib/logs.
 CREATE TABLE IF NOT EXISTS logs (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  type TEXT NOT NULL, -- deepseek | jev | brave | rss | page | trim | ingest | robots | homepage
+  type TEXT NOT NULL, -- deepseek | jev | brave | rss | page | trim | ingest | robots | homepage | wordpress
   level TEXT NOT NULL,
   request JSONB NOT NULL,
   response JSONB,

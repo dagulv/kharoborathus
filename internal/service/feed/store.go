@@ -136,11 +136,11 @@ func InsertFeed(ctx context.Context, tx pgx.Tx, feed Feed) (out Feed, err error)
 	hash := sha256.Sum256([]byte(feed.Content))
 
 	out, err = scanFeed(tx.QueryRow(ctx, `
-		INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, content, tags, authors, posted_at, content_hash, simhash)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), COALESCE($9::text[], '{}'), $10, $11, $12)
+		INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, content, tags, authors, posted_at, content_hash, simhash, summary_pending)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), COALESCE($9::text[], '{}'), $10, $11, $12, $13)
 		ON CONFLICT (url) DO NOTHING
 		RETURNING `+feedColumns,
-		feed.SourceID, feed.DomainID, feed.URL, feed.Lang, feed.Title, feed.ShortContent, feed.Content, feed.Tags, feed.Authors, feed.PostedAt, hash[:], textSimhash(feed.Content),
+		feed.SourceID, feed.DomainID, feed.URL, feed.Lang, feed.Title, feed.ShortContent, feed.Content, feed.Tags, feed.Authors, feed.PostedAt, hash[:], textSimhash(feed.Content), feed.SummaryPending,
 	))
 	if err != nil {
 		return out, err
@@ -186,6 +186,34 @@ func (s *Store) HasDuplicate(ctx context.Context, content string) (bool, error) 
 	}
 
 	return exists, nil
+}
+
+func (s *Store) ListPendingSummaries(ctx context.Context, limit int) ([]Feed, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+feedColumns+` FROM posts WHERE summary_pending ORDER BY created_at LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("err query pending summaries: %w", err)
+	}
+
+	feeds, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Feed, error) {
+		return scanFeed(row)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("err scan pending summaries: %w", err)
+	}
+
+	return feeds, nil
+}
+
+// An empty summary keeps the excerpt, so a post the summarizer cannot handle still leaves the queue.
+func (s *Store) CompleteSummary(ctx context.Context, id, summary string) error {
+	if _, err := s.db.Exec(ctx, `
+		UPDATE posts SET short_content = coalesce(nullif($2, ''), short_content), summary_pending = false
+		WHERE id = $1
+		`, id, summary); err != nil {
+		return fmt.Errorf("err complete summary: %w", err)
+	}
+
+	return nil
 }
 
 // Stored as the uint64 bit pattern, so half of all hashes are negative. Only bits are compared.

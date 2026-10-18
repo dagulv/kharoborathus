@@ -22,6 +22,8 @@ type Feed struct {
 	PostedAt  time.Time `json:"postedAt"`
 	CreatedAt time.Time `json:"createdAt"`
 	Page      []byte    `json:"-"` // Article html already fetched by the adapter, trim skips refetching it
+	// Left to the background summarizer, see source.RunSummaries.
+	SummaryPending bool `json:"-"`
 }
 
 type Filter struct {
