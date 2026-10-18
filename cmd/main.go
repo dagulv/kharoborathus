@@ -16,6 +16,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
+	"github.com/dagulv/kharoborathus/internal/migrations"
 	"github.com/dagulv/kharoborathus/internal/service/discovery"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
@@ -32,9 +33,25 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := app(ctx); err != nil {
+	run := app
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		run = migrate
+	}
+
+	if err := run(ctx); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func migrate(ctx context.Context) error {
+	env, err := config.Load(true)
+	if err != nil {
+		return fmt.Errorf("err load config: %w", err)
+	}
+
+	l := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	return migrations.Migrate(ctx, env.PostgresConn, l.WithGroup("migrate"))
 }
 
 func app(ctx context.Context) (err error) {
