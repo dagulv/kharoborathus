@@ -1,6 +1,6 @@
 # Quality gate
 
-**Status:** designed
+**Status:** done
 **Related:** [classifier-gate](classifier-gate.md), [trust-model](trust-model.md), [backfill](backfill.md), [architecture](architecture.md)
 
 ## Summary
@@ -9,7 +9,7 @@ Every post passes a Jev quality check before any DeepSeek call or feed listing. 
 
 ## Current state
 
-Nothing yet. Today the pipeline summarizes every post inline in [sourced.go](../../internal/service/source/sourced.go), and backfilled posts wait for [summaries.go](../../internal/service/source/summaries.go) through `summary_pending`. Tagging, discovery and link extraction read every post. Only discovered posts are checked first, by `Tagger.Gate` in [ingest.go](../../internal/service/ingest/ingest.go).
+[quality.go](../../internal/service/source/quality.go) checks `pending` posts with `Tagger.Quality` in [gate.go](../../internal/service/robot/gate.go). [summaries.go](../../internal/service/source/summaries.go) summarizes `active` posts through `summary_checked`. Tagging, discovery and link extraction read `active` posts only. `summary_pending` is still in the schema until the follow-up migration.
 
 ## Design
 

@@ -23,7 +23,7 @@ Grow beyond hand-picked sources without losing quality. Scale slowly and prefer 
 | [Infra](infra.md)                         | done   | One UpCloud VPS with OpenTofu, cloud-init and Haloy.                                                   |
 | [Request logs](request-logs.md)           | done   | Every third-party request as a row in `logs`, written by a slog handler.                               |
 | [Backfill](backfill.md)                   | done   | Whole archives of WordPress sources through the REST API, summarized in the background.                |
-| [Quality gate](quality-gate.md)           | designed | Jev checks every post before summaries, tags, events, links and the feed.                            |
+| [Quality gate](quality-gate.md)           | done   | Jev checks every post before summaries, tags, events, links and the feed.                              |
 
 ## Flow
 
