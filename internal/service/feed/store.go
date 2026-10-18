@@ -259,8 +259,9 @@ func scanFeed(row pgx.Row) (feed Feed, err error) {
 	return
 }
 
+// Newest first, so a large backfill cannot hold live posts out of the feed.
 func (s *Store) ListPendingQuality(ctx context.Context, limit int) ([]Feed, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+feedColumns+` FROM posts WHERE status = 'pending' ORDER BY created_at LIMIT $1`, limit)
+	rows, err := s.db.Query(ctx, `SELECT `+feedColumns+` FROM posts WHERE status = 'pending' ORDER BY posted_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("err query pending quality: %w", err)
 	}
