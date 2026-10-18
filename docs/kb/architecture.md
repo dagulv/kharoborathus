@@ -23,7 +23,7 @@ Kharoborathus collects business and financial news from hand-picked sources, tag
 | Summaries       | [summaries.go](../../internal/service/source/summaries.go)                                                       | Summarizes [backfilled](backfill.md) posts off peak.                                                                                                     |
 | Lifecycle       | [lifecycle.go](../../internal/service/source/lifecycle.go)                                                       | Daily: puts silent sources to sleep and promotes proposed sources while `source_promotion` is on.                                                        |
 
-Source pipeline per article:
+Source pipeline per article. Every request to a host waits 5 seconds after the previous one, through one [pacer](../../internal/lib/pace/pace.go) shared by all adapters:
 
 1. Adapter fetches the listing. `rss` reads the feed. `page` applies an LLM-generated CSS link rule. `wordpress` reads the REST API on a [backfill](backfill.md).
 2. Skip URLs already in `posts`.

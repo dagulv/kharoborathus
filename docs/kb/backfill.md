@@ -20,7 +20,7 @@ A feed shows only its newest posts. A WordPress site also serves its whole archi
 2. It fetches the source URL and looks for the REST API root: the `Link` header with `rel="https://api.w.org/"`, sent on pages and feeds, or the same `<link>` in the page head.
 3. It probes `wp/v2/posts?per_page=1`, whose `X-WP-Total` header gives the post total.
 4. It sets `backfilled_at`, then sends a copy of the source with adapter `wordpress` and the posts endpoint as URL.
-5. The `wordpress` adapter pages through the API, 20 posts per request, newest first, until `X-WP-TotalPages`. `_embed=author,wp:term` gives author and category names.
+5. The `wordpress` adapter pages through the API, 20 posts per request, newest first, until `X-WP-TotalPages`. Requests to one host go at least 5 seconds apart, so 420 posts take about 2 minutes. `_embed=author,wp:term` gives author and category names.
 6. The pipeline skips posts already stored, like any other source, and inserts the rest with `summary_pending`.
 7. `RunSummaries` summarizes 20 pending posts a minute while DeepSeek is off peak. Until then a post shows its excerpt.
 
@@ -46,11 +46,12 @@ These are in `001_init.sql`.
 
 ## Defaults
 
-| Parameter                  | Value | Why                                                |
-| -------------------------- | ----- | -------------------------------------------------- |
-| Sources checked per minute | 10    | A first run on many existing sources stays gentle. |
-| Posts per API request      | 20    | Full content fits well under the 5 MB body cap.    |
-| Summaries per minute       | 20    | Same batch as tagging and discovery.               |
+| Parameter                      | Value | Why                                                                           |
+| ------------------------------ | ----- | ----------------------------------------------------------------------------- |
+| Sources checked per minute     | 10    | A first run on many existing sources stays gentle.                            |
+| Posts per API request          | 20    | Full content fits well under the 5 MB body cap.                               |
+| Summaries per minute           | 20    | Same batch as tagging and discovery.                                          |
+| Gap between requests to a host | 5 s   | The site serves full posts per request, which is heavy work for a small host. |
 
 ## Open questions
 
