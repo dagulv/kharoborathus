@@ -88,9 +88,9 @@ func app(ctx context.Context) (err error) {
 	mux := http.NewServeMux()
 	feed.Routes(mux, feedStore, l.WithGroup("feed"))
 
-	// The proxy publishes only the public port, so sync stays reachable from the admin alone.
+	// The proxy publishes only the public port, so sync and listing stay reachable from the admin alone.
 	internalMux := http.NewServeMux()
-	source.Routes(internalMux, &sourceStore, syncs, l.WithGroup("source"))
+	source.Routes(internalMux, &sourceStore, syncs, l.WithGroup("source"), calls)
 
 	servers := []*http.Server{
 		{Addr: env.HttpHost, Handler: mux},
