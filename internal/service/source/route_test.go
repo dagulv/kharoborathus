@@ -11,22 +11,22 @@ import (
 
 func TestListingRoute(t *testing.T) {
 	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-
-		if r.URL.Path == "/blog" {
-			w.Write([]byte(`<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head></html>`))
+		if r.URL.Path == "/feed.xml" {
+			w.Header().Set("Content-Type", "application/rss+xml")
+			w.Write([]byte(testFeedOf("Blogg")))
 			return
 		}
 
-		w.Write([]byte(`<html><body>Hej</body></html>`))
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head></html>`))
 	}))
 	defer site.Close()
 
 	handler := listingRoute(site.Client(), slog.New(slog.DiscardHandler), slog.New(slog.DiscardHandler))
 
 	cases := []struct{ path, want string }{
-		{"/blog", `{"adapter":"rss","url":"` + site.URL + `/feed.xml"}`},
-		{"/", `{"adapter":"page","url":"` + site.URL + `/"}`},
+		{"/blog", `{"candidates":[{"adapter":"rss","url":"` + site.URL + `/feed.xml","title":"Blogg","items":2,"latest":"2026-09-16T00:00:00Z"},{"adapter":"page","url":"` + site.URL + `/blog"}]}`},
+		{"/feed.xml", `{"candidates":[{"adapter":"rss","url":"` + site.URL + `/feed.xml","title":"Blogg","items":2,"latest":"2026-09-16T00:00:00Z"}]}`},
 	}
 
 	for _, c := range cases {

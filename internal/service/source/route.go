@@ -1,19 +1,22 @@
 package source
 
 import (
+	"context"
 	"database/sql"
 	json "encoding/json/v2"
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
-	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const SyncQueue = 16
+
+const discoverTimeout = time.Minute
 
 const invalidTextRepresentation = "22P02"
 
@@ -22,7 +25,7 @@ func Routes(mux *http.ServeMux, s *Store, syncs chan<- Source, l, calls *slog.Lo
 	mux.HandleFunc("GET /listing", listingRoute(safehttp.NewClient(homepageTimeout), l, calls))
 }
 
-// listingRoute lets the admin swap a new page source for the feed its page links to.
+// listingRoute lists what the admin can add a url as, best first.
 func listingRoute(client *http.Client, l, calls *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u := r.URL.Query().Get("url")
@@ -31,17 +34,19 @@ func listingRoute(client *http.Client, l, calls *slog.Logger) http.HandlerFunc {
 			return
 		}
 
-		page, final, err := adapter.FetchPage(r.Context(), logs.Client(client, calls.With("url", u), "homepage"), u)
+		// Probing can take several requests, and the admin waits for all of them.
+		ctx, cancel := context.WithTimeout(r.Context(), discoverTimeout)
+		defer cancel()
+
+		candidates, err := discover(ctx, logs.Client(client, calls.With("url", u), "homepage"), u)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 
-		name, listing := findListing(page, final, u)
-
 		w.Header().Set("Content-Type", "application/json")
 
-		if err := json.MarshalWrite(w, map[string]string{"adapter": name, "url": listing}); err != nil {
+		if err := json.MarshalWrite(w, map[string][]Candidate{"candidates": candidates}); err != nil {
 			l.Error("write listing", "url", u, "err", err)
 		}
 	}
