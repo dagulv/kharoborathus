@@ -98,7 +98,7 @@ func app(ctx context.Context) (err error) {
 	tagMerger := robot.NewTagMerger(classifier)
 	resultFilter := robot.NewResultFilter(llm)
 	searcher, searchErr := discovery.NewBrave(env)
-	ingester := ingest.NewIngester(&ingestStore, &switchStore, &taggingStore, &feedStore, &domainStore, trim, tagger, summarizer, l.WithGroup("ingest"), calls)
+	ingester := ingest.NewIngester(&ingestStore, &switchStore, &taggingStore, &feedStore, &domainStore, trim, tagger, l.WithGroup("ingest"), calls)
 
 	syncs := make(chan source.Source, source.SyncQueue)
 

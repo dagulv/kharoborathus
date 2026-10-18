@@ -41,20 +41,19 @@ type domainAllower interface {
 }
 
 type Ingester struct {
-	store      *Store
-	allower    domainAllower
-	switches   *switches.Store
-	tags       *tagging.Store
-	feeds      *feed.Store
-	domains    *domain.Store
-	trim       *source.Trim
-	tagger     *robot.Tagger
-	summarizer *robot.Summarizer
-	client     *http.Client
-	pacer      *pacer
-	robots     *Robots
-	l          *slog.Logger
-	calls      *slog.Logger
+	store    *Store
+	allower  domainAllower
+	switches *switches.Store
+	tags     *tagging.Store
+	feeds    *feed.Store
+	domains  *domain.Store
+	trim     *source.Trim
+	tagger   *robot.Tagger
+	client   *http.Client
+	pacer    *pacer
+	robots   *Robots
+	l        *slog.Logger
+	calls    *slog.Logger
 }
 
 type result struct {
@@ -65,25 +64,24 @@ type result struct {
 	aiCalls  int
 }
 
-func NewIngester(s *Store, sw *switches.Store, tags *tagging.Store, feeds *feed.Store, domains *domain.Store, trim *source.Trim, tagger *robot.Tagger, summarizer *robot.Summarizer, l, calls *slog.Logger) *Ingester {
+func NewIngester(s *Store, sw *switches.Store, tags *tagging.Store, feeds *feed.Store, domains *domain.Store, trim *source.Trim, tagger *robot.Tagger, l, calls *slog.Logger) *Ingester {
 	client := safehttp.NewClient(fetchTimeout)
 	p := newPacer(domainGap)
 
 	return &Ingester{
-		store:      s,
-		allower:    s,
-		switches:   sw,
-		tags:       tags,
-		feeds:      feeds,
-		domains:    domains,
-		trim:       trim,
-		tagger:     tagger,
-		summarizer: summarizer,
-		client:     client,
-		pacer:      p,
-		robots:     NewRobots(client, p),
-		l:          l,
-		calls:      calls,
+		store:    s,
+		allower:  s,
+		switches: sw,
+		tags:     tags,
+		feeds:    feeds,
+		domains:  domains,
+		trim:     trim,
+		tagger:   tagger,
+		client:   client,
+		pacer:    p,
+		robots:   NewRobots(client, p),
+		l:        l,
+		calls:    calls,
 	}
 }
 
@@ -268,14 +266,6 @@ func (in *Ingester) process(ctx context.Context, l *slog.Logger, link Link, tags
 	if !v.Passed {
 		res.status = statusRejected
 		return res, nil
-	}
-
-	res.aiCalls++
-
-	if summary, err := in.summarizer.Summarize(ctx, l, f.Content); err == nil {
-		f.ShortContent = summary
-	} else if !errors.Is(err, adapter.ErrUnavailable) {
-		in.l.Warn("summarize", "url", link.URL, "err", err)
 	}
 
 	f.Tags = v.Keys
