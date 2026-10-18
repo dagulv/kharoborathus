@@ -1,7 +1,9 @@
 package html
 
 import (
+	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -37,6 +39,7 @@ type skelNode struct {
 	links    float64
 	children []*skelNode
 	elements int
+	shape    uint64
 }
 
 func (n *skelNode) sig() string {
@@ -169,7 +172,21 @@ func skeletonOf(n *nethtml.Node, parentKey string, depth int) *skelNode {
 		}
 	}
 
+	s.shape = shapeOf(s)
+
 	return s
+}
+
+// shapeOf hashes a node's signature with its children's shapes, ignoring text.
+func shapeOf(n *skelNode) uint64 {
+	h := fnv.New64a()
+	fmt.Fprintf(h, "%s/%d", n.sig(), n.elements)
+
+	for _, c := range n.children {
+		binary.Write(h, binary.LittleEndian, c.shape)
+	}
+
+	return h.Sum64()
 }
 
 func visitSkel(n *skelNode, f func(*skelNode)) {
@@ -216,22 +233,47 @@ func (r *renderer) render(n *skelNode, depth int) {
 			run++
 		}
 
-		longest := 0
-		for _, sib := range n.children[i : i+run] {
-			longest = max(longest, utf8.RuneCountInString(sib.text))
-		}
+		// Only siblings with the same insides collapse, so one that differs is never hidden behind the first.
+		for _, group := range byShape(n.children[i : i+run]) {
+			if r.lines >= skeletonLines {
+				return
+			}
 
-		if r.lines >= skeletonLines {
-			return
-		}
+			first := group[0]
 
-		if c.subText > 0 || keepEmpty[atom.Lookup([]byte(c.tag))] {
-			r.line(c, depth, run, longest)
-			r.render(c, depth+1)
+			longest := 0
+			for _, sib := range group {
+				longest = max(longest, utf8.RuneCountInString(sib.text))
+			}
+
+			if first.subText > 0 || keepEmpty[atom.Lookup([]byte(first.tag))] {
+				r.line(first, depth, len(group), longest)
+				r.render(first, depth+1)
+			}
 		}
 
 		i += run
 	}
+}
+
+// byShape groups siblings by shape, in order of first appearance.
+func byShape(sibs []*skelNode) [][]*skelNode {
+	var groups [][]*skelNode
+
+	index := make(map[uint64]int)
+
+	for _, s := range sibs {
+		i, ok := index[s.shape]
+		if !ok {
+			i = len(groups)
+			index[s.shape] = i
+			groups = append(groups, nil)
+		}
+
+		groups[i] = append(groups[i], s)
+	}
+
+	return groups
 }
 
 func (r *renderer) line(n *skelNode, depth, run, longest int) {

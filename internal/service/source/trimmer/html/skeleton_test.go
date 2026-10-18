@@ -78,3 +78,26 @@ func TestSkeletonSinglePage(t *testing.T) {
 		t.Errorf("teasers missing:\n%s", page)
 	}
 }
+
+func TestSkeletonKeepsDifferentSiblings(t *testing.T) {
+	d, err := parse([]byte(`<html><body><main>
+<details class="section"><summary>About</summary><p>Om mig och vad jag gör om dagarna.</p><a class="experience-link" href="/a">Jobb</a></details>
+<details class="section"><summary>Work</summary><ul class="work"><li><a class="project" href="/b">Projekt ett</a></li><li><a class="project" href="/c">Projekt två</a></li></ul></details>
+</main></body></html>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	page := buildSkeleton([]document{d}).Pages[0]
+
+	// Same tag and class, different insides: collapsing them would hide the second.
+	for _, want := range []string{"experience-link", `<ul class="work"`, `<li> links:1.00 children:1 ×2`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("missing %q in\n%s", want, page)
+		}
+	}
+
+	if n := strings.Count(page, `<details class="section">`); n != 2 {
+		t.Errorf("%d section lines, want 2:\n%s", n, page)
+	}
+}
