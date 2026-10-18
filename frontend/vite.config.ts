@@ -14,6 +14,8 @@ export default defineConfig({
 				experimental: { async: true }
 			},
 			adapter: adapter(),
+			// The root .env, shared with the Go app and filled by infra/dotenv.sh. Prod reads only the process env.
+			env: { dir: '..' },
 			experimental: { remoteFunctions: true, forkPreloads: true }
 		})
 	]

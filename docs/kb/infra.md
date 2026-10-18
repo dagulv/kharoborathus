@@ -33,7 +33,7 @@ Layout:
 2. `infra/haloy.yaml` holds the production stack and its domains. `infra/haloy.sh` runs one Haloy command per target.
 3. `infra/.sops.yaml` and `infra/secrets/{dev,prod}/vault.sealed` hold the encrypted secrets. `infra/secrets.sh` runs a command with one vault's secrets in its environment.
 4. `infra/<service>/` holds each service's deploy `Dockerfile` and prod `.env`, for `db`, `api` and `web`. `infra/db/Dockerfile` builds the database with the Swedish dictionary and `schema.sql`, for dev too. The `api` and `web` images build from the repo root and from `frontend/`.
-5. Dev env files sit with the code: `.env` for the Go app, `frontend/.env` for the admin and `docker/postgres/.env` for the dev database.
+5. Dev env files sit with the code: the root `.env` for the Go app and the admin, which reads it through `env.dir`, and `docker/postgres/.env` for the dev database.
 
 Server:
 

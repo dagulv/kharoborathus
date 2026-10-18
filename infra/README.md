@@ -10,7 +10,7 @@ Prod secrets never sit in an env file. They live in two SOPS vaults under `secre
 |---|---|---|---|
 | db | `docker/postgres/.env` | `infra/db/.env` | `infra/db/Dockerfile` |
 | api, the Go app | `.env` | `infra/api/.env` | `infra/api/Dockerfile` |
-| web, the admin | `frontend/.env` | `infra/web/.env` | `infra/web/Dockerfile` |
+| web, the admin | `.env`, shared with the api | `infra/web/.env` | `infra/web/Dockerfile` |
 
 Each has a `.env-sample` or `.env.example` beside it. The dev db also builds from `infra/db/Dockerfile`.
 
@@ -30,7 +30,7 @@ infra/secrets.sh dev go run ./cmd
 infra/secrets.sh dev pnpm -C frontend dev
 ```
 
-To skip the prompt in dev, `dotenv.sh` writes the dev vault's secrets into the root `.env` and keeps its other lines. Compose and the Go app read that file, so `docker compose up -d db` and `go run ./cmd` then work bare. Rerun it after a vault change:
+To skip the prompt in dev, `dotenv.sh` writes the dev vault's secrets into the root `.env` and keeps its other lines. Compose, the Go app and the admin read that file, so `docker compose up -d db`, `go run ./cmd` and `pnpm -C frontend dev` then work bare. Rerun it after a vault change:
 
 ```bash
 infra/dotenv.sh
