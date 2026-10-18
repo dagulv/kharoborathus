@@ -20,7 +20,8 @@ Kharoborathus collects business and financial news from hand-picked sources, tag
 | Search          | [search.go](../../internal/service/discovery/search.go)                                                          | Searches Brave for gate tag events from trusted posts and queues filtered results while `search_discovery` is on.                                        |
 | Links           | [extract.go](../../internal/service/ingest/extract.go)                                                           | Queues outbound links from trusted posts into `link_events`.                                                                                             |
 | Ingest          | [ingest.go](../../internal/service/ingest/ingest.go)                                                             | Fetches, gates and inserts queued links while `discovered_ingest` is on. Proposes sources for new domains.                                               |
-| Summaries       | [summaries.go](../../internal/service/source/summaries.go)                                                       | Summarizes [backfilled](backfill.md) posts off peak.                                                                                                     |
+| Summaries       | [summaries.go](../../internal/service/source/summaries.go)                                                       | Summarizes active posts off peak.                                                                                                                        |
+| Quality         | [quality.go](../../internal/service/source/quality.go)                                                           | Every minute: activates or rejects pending posts with the Jev [quality gate](quality-gate.md).                                                           |
 | Lifecycle       | [lifecycle.go](../../internal/service/source/lifecycle.go)                                                       | Daily: puts silent sources to sleep and promotes proposed sources while `source_promotion` is on.                                                        |
 
 Source pipeline per article. Every request to a host waits 5 seconds after the previous one, through one [pacer](../../internal/lib/pace/pace.go) shared by all adapters:
@@ -31,13 +32,13 @@ Source pipeline per article. Every request to a host waits 5 seconds after the p
 4. Resolve its domain.
 5. Trim with the domain's LLM-generated rule. Without a rule, `trimGeneric` picks the densest node.
 6. Convert to markdown.
-7. Summarize with the LLM.
-8. Insert into `posts` with a simhash and link `duplicate_of`.
+7. Insert into `posts` as `pending` with a simhash and link `duplicate_of`.
+8. The [quality gate](quality-gate.md) sets `active` or `rejected`. Summary, tagging, discovery and links follow on `active` posts.
 
 AI providers live in [robot/adapter](../../internal/service/robot/adapter):
 
 - DeepSeek is the LLM for rule generation, summaries, tag generation, event extraction and the search result filter.
-- Jev is the classifier. It answers yes or no questions as scores from 0 to 1.
+- Jev is the classifier. It answers yes or no questions as scores from 0 to 1, including the quality gate on every post.
 
 Brave Web Search is called from [brave.go](../../internal/service/discovery/brave.go).
 
