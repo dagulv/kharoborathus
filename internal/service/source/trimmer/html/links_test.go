@@ -98,13 +98,40 @@ func TestGenerateLinkRule(t *testing.T) {
 		t.Errorf("no usable candidate: %v", err)
 	}
 
-	if _, err := NewLinker(llm, "").GenerateRuleset(context.Background(), listings(2), fetchSite); err == nil {
-		t.Error("generated from fewer than the minimum listings")
+	if _, err := NewLinker(llm, "").GenerateRuleset(context.Background(), listings(0), fetchSite); err == nil {
+		t.Error("generated from no listings")
+	}
+}
+
+func TestGenerateLinkRuleSingleListing(t *testing.T) {
+	good := LinkRule{Links: str("article.teaser h2 a"), Reasoning: "repeated teasers"}
+	llm := &fakeLLM{answers: []any{good}}
+
+	rule, err := NewLinker(llm, "").GenerateRuleset(context.Background(), listings(1), fetchSite)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if *rule.Links != *good.Links {
+		t.Errorf("picked %q, want %q", *rule.Links, *good.Links)
+	}
+
+	if s := llm.systems[0]; !strings.Contains(s, "one capture") || strings.Contains(s, "[unique]") {
+		t.Errorf("system prompt should describe a single capture:\n%s", s)
+	}
+
+	multi := &fakeLLM{answers: []any{good}}
+	if _, err := NewLinker(multi, "").GenerateRuleset(context.Background(), listings(3), fetchSite); err != nil {
+		t.Fatal(err)
+	}
+
+	if s := multi.systems[0]; !strings.Contains(s, "[unique]") {
+		t.Errorf("system prompt should describe the capture annotations:\n%s", s)
 	}
 }
 
 func TestLinkPrompts(t *testing.T) {
-	if prompts.linksSystem == "" {
+	if prompts.linksSystem(1) == "" || prompts.linksSystem(3) == "" {
 		t.Fatal("empty links system prompt")
 	}
 

@@ -58,3 +58,23 @@ func TestSkeleton(t *testing.T) {
 		t.Errorf("vocabulary should hold rendered names only: %v", skel.vocab.classes)
 	}
 }
+
+func TestSkeletonSinglePage(t *testing.T) {
+	d, err := parse([]byte(listing(0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	page := buildSkeleton([]document{d}).Pages[0]
+
+	// Every text is on fewer than two captures, so the capture annotations would all claim unique.
+	for _, denied := range []string{"[unique]", "[shared]", "[partial", "uniq:"} {
+		if strings.Contains(page, denied) {
+			t.Errorf("%s in single page skeleton:\n%s", denied, page)
+		}
+	}
+
+	if !strings.Contains(page, `<article class="teaser"`) {
+		t.Errorf("teasers missing:\n%s", page)
+	}
+}

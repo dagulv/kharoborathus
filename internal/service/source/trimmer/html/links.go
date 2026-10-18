@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	minListings     = 3
+	minListings     = 1
 	minLinks        = 5
 	linkChecks      = 4
 	minArticleShare = 0.75
@@ -131,7 +131,7 @@ func (t *htmlLinker) GenerateRuleset(ctx context.Context, samples []trimmer.Samp
 	skel := buildSkeleton(docs)
 
 	req := adapter.Request{
-		System: prompts.linksSystem,
+		System: prompts.linksSystem(len(samples)),
 		Prompt: prompts.user(skel),
 		Model:  t.model,
 	}

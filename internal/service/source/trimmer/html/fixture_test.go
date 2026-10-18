@@ -79,6 +79,7 @@ type fakeLLM struct {
 	answers []any
 	calls   int
 	prompts []string
+	systems []string
 }
 
 func (f *fakeLLM) Schedule() schedule.Schedule { return schedule.Always }
@@ -90,6 +91,7 @@ func (f *fakeLLM) Unmarshal(_ context.Context, req adapter.Request, out any) err
 	defer f.mu.Unlock()
 
 	f.prompts = append(f.prompts, req.Prompt)
+	f.systems = append(f.systems, req.System)
 	answer := f.answers[min(f.calls, len(f.answers)-1)]
 	f.calls++
 

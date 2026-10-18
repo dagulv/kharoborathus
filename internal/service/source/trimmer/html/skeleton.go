@@ -268,7 +268,9 @@ func (r *renderer) line(n *skelNode, depth, run, longest int) {
 
 	b.WriteString(">")
 
+	// One capture has nothing to compare, so every text would read as unique.
 	switch count := r.presence[n.key]; {
+	case r.pages == 1:
 	case n.text != "" && r.textPages[n.text] < 2:
 		b.WriteString(" [unique]")
 	case count >= r.pages:
@@ -289,7 +291,7 @@ func (r *renderer) line(n *skelNode, depth, run, longest int) {
 		}
 	}
 
-	if n.subText > 0 && len(n.children) > 0 {
+	if n.subText > 0 && len(n.children) > 0 && r.pages > 1 {
 		fmt.Fprintf(b, " uniq:%.2f", float64(n.uniqText)/float64(n.subText))
 	}
 
