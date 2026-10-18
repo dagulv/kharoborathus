@@ -23,6 +23,20 @@ if [[ $# -gt 0 ]]; then
 	shift
 fi
 
+# Haloy passes a container only the env haloy.yaml names, so a key added to <target>/.env alone never reaches it.
+if [[ $command == deploy ]]; then
+	for target in "${targets[@]}"; do
+		[[ -f $root/$target/.env ]] || continue
+		missing=$(comm -23 \
+			<(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$root/$target/.env" | tr -d = | sort -u) \
+			<(yq ".targets.$target.env[].name" "$root/haloy.yaml" | sort -u))
+		if [[ -n $missing ]]; then
+			echo "$target/.env has keys haloy.yaml does not pass to $target:" $missing >&2
+			exit 1
+		fi
+	done
+fi
+
 for target in "${targets[@]}"; do
 	(cd "$root/$target" && haloy "$command" "$@" -c ../haloy.yaml -t "$target")
 done
