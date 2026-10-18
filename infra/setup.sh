@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Writes the dev vault's secrets into the repo root .env, so local services read them without secrets.sh: infra/dotenv.sh
+# Writes the dev vault's secrets into the repo root .env, so local services read them without secrets.sh: infra/setup.sh
 # Replaces only the vault's keys and keeps every other line. Rerun after a vault change.
 set -euo pipefail
 

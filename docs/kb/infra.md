@@ -75,7 +75,7 @@ Build notes:
 
 Secrets:
 
-- No prod secret sits in an env file. Each service's env file holds its safe values: user names, database names, hosts and ports. In dev, `infra/dotenv.sh` may write the dev vault's secrets into the root `.env`, which is gitignored and mode 600.
+- No prod secret sits in an env file. Each service's env file holds its safe values: user names, database names, hosts and ports. In dev, `infra/setup.sh` may write the dev vault's secrets into the root `.env`, which is gitignored and mode 600.
 - Secrets live in the `dev` and `prod` SOPS vaults, one Kubernetes `Secret` manifest per file, since that is the format `vault` manages. Only `data` and `stringData` are encrypted. Both vaults share one age key, kept in a Bitwarden custom field `AGE-SECRET-KEY`. `vault` requires a cluster name, so they name `none`.
 - `secrets.sh` unlocks Bitwarden with the master password, decrypts every file of one vault, or the one file named after a colon, in memory and exports its `stringData` keys, then locks Bitwarden and runs the command. The password and session go through env, never argv. A set `SOPS_AGE_KEY` skips Bitwarden and is unset before the command runs.
 - The Go app and Vite both let the process env win over their `.env`, and both expand `${POSTGRES_PASSWORD}` in a `.env` value from it. The dev Postgres container reads `POSTGRES_PASSWORD` from the process env too.

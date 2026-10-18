@@ -30,10 +30,10 @@ infra/secrets.sh dev go run ./cmd
 infra/secrets.sh dev pnpm -C frontend dev
 ```
 
-To skip the prompt in dev, `dotenv.sh` writes the dev vault's secrets into the root `.env` and keeps its other lines. Compose, the Go app and the admin read that file, so `docker compose up -d db`, `go run ./cmd` and `pnpm -C frontend dev` then work bare. Rerun it after a vault change:
+To skip the prompt in dev, `setup.sh` writes the dev vault's secrets into the root `.env` and keeps its other lines. Compose, the Go app and the admin read that file, so `docker compose up -d db`, `go run ./cmd` and `pnpm -C frontend dev` then work bare. Rerun it after a vault change:
 
 ```bash
-infra/dotenv.sh
+infra/setup.sh
 ```
 
 Change a secret from inside `infra/`:
