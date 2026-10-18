@@ -25,6 +25,7 @@ type Source struct {
 	CreatedAt  time.Time         `json:"createdAt"`
 	TargetTags []string          `json:"targetTags"`
 	Metadata   map[string]string `json:"metadata"` // maybe needed for rare occurrences (like login, disclaimers, etc)
+	Lang       string            `json:"-"`        // set on backfills, for posts that carry no language
 }
 
 type Filter struct {

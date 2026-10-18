@@ -108,6 +108,36 @@ func scanSource(row pgx.Row) (source Source, err error) {
 	return
 }
 
+// Only scraped sources are backfilled, so a proposed source waits for its promotion.
+func (s *Store) ListUnbackfilled(ctx context.Context, limit int) ([]Source, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT `+sourceColumns+` FROM sources
+		WHERE backfilled_at IS NULL AND enabled AND status = 'active' AND deleted_at IS NULL
+		ORDER BY created_at
+		LIMIT $1
+		`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("err query unbackfilled sources: %w", err)
+	}
+
+	sources, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Source, error) {
+		return scanSource(row)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("err scan unbackfilled sources: %w", err)
+	}
+
+	return sources, nil
+}
+
+func (s *Store) MarkBackfilled(ctx context.Context, id string) error {
+	if _, err := s.db.Exec(ctx, `UPDATE sources SET backfilled_at = now() WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("err mark backfilled: %w", err)
+	}
+
+	return nil
+}
+
 // A source must also fail for a day, so a short outage of the server's network cannot put every source to sleep for a probe interval.
 func (s *Store) RecordFetch(ctx context.Context, id string, ok bool, maxFailures int, minFailing time.Duration) error {
 	if ok {

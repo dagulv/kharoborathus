@@ -46,6 +46,7 @@ func initPipelines(ctx context.Context, in <-chan Source, s *Store, trim *Trim, 
 	pipelines := []Pipeline{
 		newPipeline(adapter.NewRSS(&s.feedStore, l), addSink(sinks, "rss"), s, trim, summarizer, calls),
 		newPipeline(adapter.NewPage(&s.feedStore, trim, l), addSink(sinks, "page"), s, trim, summarizer, calls),
+		newPipeline(adapter.NewWordPress(&s.feedStore, l), addSink(sinks, "wordpress"), s, trim, summarizer, calls),
 	}
 
 	go func() {
@@ -81,7 +82,7 @@ func addSink(sinks map[string]chan Source, name string) <-chan Source {
 }
 
 func Run(ctx context.Context, s *Store, syncs <-chan Source, trim *Trim, summarizer *robot.Summarizer, sched schedule.Schedule, l, calls *slog.Logger) error {
-	sources := continuousSources(ctx, s, syncs, sched, l)
+	sources := merge(ctx, continuousSources(ctx, s, syncs, sched, l), backfills(ctx, s, sched, l, calls))
 
 	pipelines := initPipelines(ctx, sources, s, trim, summarizer, l, calls)
 
@@ -357,6 +358,10 @@ func (p pipeline[T]) processFeed(ctx context.Context, l *slog.Logger, in <-chan 
 
 			parsed.SourceID = f.source.ID
 
+			if parsed.Lang == "" {
+				parsed.Lang = f.source.Lang
+			}
+
 			select {
 			case out <- parsed:
 			case <-ctx.Done():
@@ -468,12 +473,14 @@ func (p pipeline[T]) summarizeFeed(ctx context.Context, l *slog.Logger, in <-cha
 		defer close(out)
 
 		for f := range in {
-			if summary, err := p.summarizer.Summarize(ctx, p.calls.With("source_id", f.SourceID, "url", f.URL), f.Content); err == nil {
-				f.ShortContent = summary
-			} else if errors.Is(err, robotadapter.ErrUnavailable) {
-				l.Debug("summarize", "source", f.SourceID, "url", f.URL, "err", err)
-			} else {
-				l.Warn("summarize", "source", f.SourceID, "url", f.URL, "err", err)
+			if !f.SummaryPending {
+				if summary, err := p.summarizer.Summarize(ctx, p.calls.With("source_id", f.SourceID, "url", f.URL), f.Content); err == nil {
+					f.ShortContent = summary
+				} else if errors.Is(err, robotadapter.ErrUnavailable) {
+					l.Debug("summarize", "source", f.SourceID, "url", f.URL, "err", err)
+				} else {
+					l.Warn("summarize", "source", f.SourceID, "url", f.URL, "err", err)
+				}
 			}
 
 			select {
