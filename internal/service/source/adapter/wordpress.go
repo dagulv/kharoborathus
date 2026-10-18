@@ -297,11 +297,3 @@ func (p wordpressPost) document() rssDocument {
 
 	return doc
 }
-
-// A backfill brings up to thousands of posts at once, too many to summarize inline.
-func (r wordpress) ProcessFeed(ctx context.Context, data rssDocument) (feed.Feed, error) {
-	out, err := r.rss.ProcessFeed(ctx, data)
-	out.SummaryPending = true
-
-	return out, err
-}

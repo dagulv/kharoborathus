@@ -16,7 +16,7 @@ const (
 	summaryBatch    = 20
 )
 
-// RunSummaries summarizes the posts the pipeline left pending, a batch a minute while the LLM is open.
+// RunSummaries summarizes active posts, a batch a minute while the LLM is open.
 func RunSummaries(ctx context.Context, s *Store, summarizer *robot.Summarizer, sched schedule.Schedule, l, calls *slog.Logger) error {
 	for range sched.Tick(ctx, summaryInterval) {
 		if err := summarizePending(ctx, s, summarizer, l, calls); err != nil {

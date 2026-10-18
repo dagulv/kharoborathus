@@ -127,7 +127,7 @@ func app(ctx context.Context) (err error) {
 	}
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceStore, syncs, trim, summarizer, schedule.Always, l.WithGroup("sourced"), calls)
+		return source.Run(ctx, &sourceStore, syncs, trim, schedule.Always, l.WithGroup("sourced"), calls)
 	})
 
 	g.Go(func() error {

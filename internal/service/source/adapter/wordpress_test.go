@@ -138,9 +138,4 @@ func TestWordPressFetchesEveryPage(t *testing.T) {
 	if !slices.Equal(a.Authors, []string{"Olle"}) || !slices.Equal(a.Tags, []string{"Aktier & ekonomi", "fonder"}) {
 		t.Errorf("authors %v tags %v", a.Authors, a.Tags)
 	}
-
-	f, err := wp.ProcessFeed(context.Background(), a)
-	if err != nil || !f.SummaryPending {
-		t.Errorf("summary pending %v, %v", f.SummaryPending, err)
-	}
 }
