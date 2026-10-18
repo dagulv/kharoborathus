@@ -1,6 +1,8 @@
 package adapter
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -94,5 +96,21 @@ func TestSchemaOf(t *testing.T) {
 
 	if _, err = schemaOf(classification{}); err == nil {
 		t.Error("schemaOf(non pointer) = nil error, want error")
+	}
+}
+
+func TestParamsDisableThinking(t *testing.T) {
+	params, err := deepSeek{}.params(Request{Prompt: "hej"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(b), `"thinking":{"type":"disabled"}`) {
+		t.Errorf("thinking not disabled: %s", b)
 	}
 }

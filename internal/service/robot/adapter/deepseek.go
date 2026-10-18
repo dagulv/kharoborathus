@@ -155,10 +155,12 @@ func (d deepSeek) params(req Request) (params anthropic.MessageNewParams, err er
 		return params, errors.New("deepseek: no prompt")
 	}
 
+	// DeepSeek thinks by default. Thinking writes a reasoning chain first, ignores temperature and refuses a forced tool_choice.
 	params = anthropic.MessageNewParams{
 		Model:     anthropic.Model(cmp.Or(req.Model, ModelFlash)),
 		MaxTokens: maxTokens,
 		Messages:  []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(req.Prompt))},
+		Thinking:  anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}},
 	}
 
 	if req.System != "" {
