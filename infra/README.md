@@ -9,7 +9,7 @@ Secrets never sit in an env file. They live in two SOPS vaults under `secrets/`,
 | Service | Dev env | Prod env | Deploy Dockerfile |
 |---|---|---|---|
 | db | `docker/postgres/.env` | `infra/db/.env` | `infra/db/Dockerfile` |
-| api, the Go app | `.env` | `infra/api/.env` | `infra/api/Dockerfile` |
+| api, the Go app | `infra/api/.env` | `infra/api/.env` | `infra/api/Dockerfile` |
 | web, the admin | `frontend/.env` | `infra/web/.env` | `infra/web/Dockerfile` |
 
 Each has a `.env-sample` or `.env.example` beside it. The dev db also builds from `infra/db/Dockerfile`.
@@ -26,7 +26,7 @@ Each file is a Kubernetes `Secret` with the keys under `stringData`, since that 
 
 ```bash
 infra/secrets.sh dev docker compose up -d db
-infra/secrets.sh dev go run ./cmd
+infra/api/dev.sh
 infra/secrets.sh dev pnpm -C frontend dev
 ```
 
