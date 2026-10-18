@@ -165,7 +165,7 @@ export const getPost = query(uuid, async (id) => {
 	return post;
 });
 
-const ADAPTERS = ['rss'] as const;
+const ADAPTERS = ['rss', 'page'] as const;
 
 // Mirrors domain.BaseURL in the Go app
 function baseURL(url: URL) {

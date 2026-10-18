@@ -32,6 +32,7 @@
 				class="mt-1 w-full rounded border border-zinc-300 px-2 py-1.5 text-sm"
 			>
 				<option value="rss">rss</option>
+				<option value="page">page</option>
 			</select>
 			{#each adapter.issues() ?? [] as issue (issue.message)}
 				<span class="mt-1 block text-sm text-red-600">{issue.message}</span>
