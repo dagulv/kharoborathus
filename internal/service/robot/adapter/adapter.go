@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 )
@@ -16,12 +17,12 @@ var (
 
 type LLM interface {
 	Schedule() schedule.Schedule
-	Prompt(ctx context.Context, req Request) (string, error)
-	Unmarshal(ctx context.Context, req Request, out any) error
+	Prompt(ctx context.Context, l *slog.Logger, req Request) (string, error)
+	Unmarshal(ctx context.Context, l *slog.Logger, req Request, out any) error
 }
 
 type Classifier interface {
-	Noul(ctx context.Context, state any, questions map[string]NoulQuestion) (map[string]float64, error)
+	Noul(ctx context.Context, l *slog.Logger, state any, questions map[string]NoulQuestion) (map[string]float64, error)
 }
 
 type NoulQuestion struct {

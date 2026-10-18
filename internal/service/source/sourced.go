@@ -40,12 +40,12 @@ type Pipeline interface {
 	Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed
 }
 
-func initPipelines(ctx context.Context, in <-chan Source, s *Store, trim *Trim, summarizer *robot.Summarizer, l *slog.Logger) []Pipeline {
+func initPipelines(ctx context.Context, in <-chan Source, s *Store, trim *Trim, summarizer *robot.Summarizer, l, calls *slog.Logger) []Pipeline {
 	sinks := make(map[string]chan Source)
 
 	pipelines := []Pipeline{
-		newPipeline(adapter.NewRSS(&s.feedStore, l), addSink(sinks, "rss"), s, trim, summarizer),
-		newPipeline(adapter.NewPage(&s.feedStore, trim, l), addSink(sinks, "page"), s, trim, summarizer),
+		newPipeline(adapter.NewRSS(&s.feedStore, l), addSink(sinks, "rss"), s, trim, summarizer, calls),
+		newPipeline(adapter.NewPage(&s.feedStore, trim, l), addSink(sinks, "page"), s, trim, summarizer, calls),
 	}
 
 	go func() {
@@ -80,10 +80,10 @@ func addSink(sinks map[string]chan Source, name string) <-chan Source {
 	return c
 }
 
-func Run(ctx context.Context, s *Store, syncs <-chan Source, trim *Trim, summarizer *robot.Summarizer, sched schedule.Schedule, l *slog.Logger) error {
+func Run(ctx context.Context, s *Store, syncs <-chan Source, trim *Trim, summarizer *robot.Summarizer, sched schedule.Schedule, l, calls *slog.Logger) error {
 	sources := continuousSources(ctx, s, syncs, sched, l)
 
-	pipelines := initPipelines(ctx, sources, s, trim, summarizer, l)
+	pipelines := initPipelines(ctx, sources, s, trim, summarizer, l, calls)
 
 	feeds := make([]<-chan feed.Feed, 0, len(pipelines))
 
@@ -241,10 +241,11 @@ type pipeline[T any] struct {
 	store      *Store
 	trim       *Trim
 	summarizer *robot.Summarizer
+	calls      *slog.Logger
 }
 
-func newPipeline[T any](a adapter.Adapter[T], in <-chan Source, store *Store, trim *Trim, summarizer *robot.Summarizer) Pipeline {
-	return pipeline[T]{Adapter: a, in: in, store: store, trim: trim, summarizer: summarizer}
+func newPipeline[T any](a adapter.Adapter[T], in <-chan Source, store *Store, trim *Trim, summarizer *robot.Summarizer, calls *slog.Logger) Pipeline {
+	return pipeline[T]{Adapter: a, in: in, store: store, trim: trim, summarizer: summarizer, calls: calls}
 }
 
 func (p pipeline[T]) Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed {
@@ -266,7 +267,7 @@ func (p pipeline[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-c
 		defer close(out)
 
 		for source := range in {
-			dataset, err := p.FetchFromSource(ctx, source.URL)
+			dataset, err := p.FetchFromSource(ctx, p.calls.With("source_id", source.ID), source.URL)
 			if rerr := p.store.RecordFetch(ctx, source.ID, err == nil, maxFetchFailures, minFailing); rerr != nil {
 				l.Error("record fetch", "source", source.ID, "err", rerr)
 			}
@@ -324,7 +325,7 @@ func (p pipeline[T]) fetchContent(ctx context.Context, l *slog.Logger, in <-chan
 		defer close(out)
 
 		for f := range in {
-			data, err := p.FetchContent(ctx, f.data)
+			data, err := p.FetchContent(ctx, p.calls.With("source_id", f.source.ID), f.data)
 			if err != nil {
 				l.Debug("fetchContent", "source", f.source.ID, "url", f.source.URL, "err", err)
 				continue
@@ -403,7 +404,7 @@ func (p pipeline[T]) trimFeed(ctx context.Context, l *slog.Logger, in <-chan res
 			f := r.feed
 
 			if f.Page != nil {
-				f = p.trim.Apply(ctx, r.domain, f, f.Page)
+				f = p.trim.Apply(ctx, p.calls.With("source_id", f.SourceID), r.domain, f, f.Page)
 			}
 
 			if f.Content == "" {
@@ -467,7 +468,7 @@ func (p pipeline[T]) summarizeFeed(ctx context.Context, l *slog.Logger, in <-cha
 		defer close(out)
 
 		for f := range in {
-			if summary, err := p.summarizer.Summarize(ctx, f.Content); err == nil {
+			if summary, err := p.summarizer.Summarize(ctx, p.calls.With("source_id", f.SourceID, "url", f.URL), f.Content); err == nil {
 				f.ShortContent = summary
 			} else if errors.Is(err, robotadapter.ErrUnavailable) {
 				l.Debug("summarize", "source", f.SourceID, "url", f.URL, "err", err)

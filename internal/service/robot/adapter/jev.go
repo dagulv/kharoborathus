@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/config"
+	"github.com/dagulv/kharoborathus/internal/lib/logs"
 )
 
 const (
@@ -68,7 +69,7 @@ type jevResponse struct {
 	} `json:"usage"`
 }
 
-func (j jev) Noul(ctx context.Context, state any, questions map[string]NoulQuestion) (map[string]float64, error) {
+func (j jev) Noul(ctx context.Context, l *slog.Logger, state any, questions map[string]NoulQuestion) (map[string]float64, error) {
 	if len(questions) == 0 {
 		return map[string]float64{}, nil
 	}
@@ -81,7 +82,7 @@ func (j jev) Noul(ctx context.Context, state any, questions map[string]NoulQuest
 
 	var res jevResponse
 
-	if err := j.send(ctx, req, &res); err != nil {
+	if err := j.send(ctx, l, req, &res); err != nil {
 		return nil, err
 	}
 
@@ -106,7 +107,7 @@ func (j jev) Noul(ctx context.Context, state any, questions map[string]NoulQuest
 	return out, nil
 }
 
-func (j jev) send(ctx context.Context, body jevRequest, out *jevResponse) error {
+func (j jev) send(ctx context.Context, l *slog.Logger, body jevRequest, out *jevResponse) error {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -120,7 +121,7 @@ func (j jev) send(ctx context.Context, body jevRequest, out *jevResponse) error 
 	req.Header.Set("Authorization", "Bearer "+j.key)
 	req.Header.Set("Content-Type", "application/json")
 
-	res, err := j.client.Do(req)
+	res, err := logs.Client(j.client, l, "jev").Do(req)
 	if err != nil {
 		return err
 	}

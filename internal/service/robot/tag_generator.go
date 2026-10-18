@@ -3,6 +3,7 @@ package robot
 import (
 	"context"
 	_ "embed"
+	"log/slog"
 	"regexp"
 	"strings"
 	"text/template"
@@ -48,7 +49,7 @@ func NewTagGenerator(llm adapter.LLM) *TagGenerator {
 	return &TagGenerator{llm: llm}
 }
 
-func (g *TagGenerator) Generate(ctx context.Context, lang, markdown string, existing []string) ([]GeneratedTag, error) {
+func (g *TagGenerator) Generate(ctx context.Context, l *slog.Logger, lang, markdown string, existing []string) ([]GeneratedTag, error) {
 	if r := []rune(markdown); len(r) > maxGeneratorInput {
 		markdown = string(r[:maxGeneratorInput])
 	}
@@ -67,7 +68,7 @@ func (g *TagGenerator) Generate(ctx context.Context, lang, markdown string, exis
 
 	var answer tagGenerateAnswer
 
-	if err := g.llm.Unmarshal(ctx, adapter.Request{
+	if err := g.llm.Unmarshal(ctx, l, adapter.Request{
 		System:      strings.TrimSpace(tagGeneratePrompt),
 		Prompt:      prompt.String(),
 		Temperature: &temp,

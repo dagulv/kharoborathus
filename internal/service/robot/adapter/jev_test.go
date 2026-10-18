@@ -43,7 +43,7 @@ func TestJevNoul(t *testing.T) {
 		w.Write([]byte(`{"model":"jev-1.14.0","answers":{"tag_0":{"type":"noul","noul":0.93},"tag_1":{"type":"noul","noul":0.04}},"usage":{"input_tokens":360,"output_tokens":39}}`))
 	})
 
-	got, err := j.Noul(context.Background(), map[string]string{"title": "Volvo"}, map[string]NoulQuestion{
+	got, err := j.Noul(context.Background(), slog.New(slog.DiscardHandler), map[string]string{"title": "Volvo"}, map[string]NoulQuestion{
 		"tag_0": {Instructions: "Is it about investments?"},
 		"tag_1": {Instructions: "Is it about sports?", Criteria: &NoulCriteria{True: "a sport", False: "no sport"}},
 	})
@@ -73,7 +73,7 @@ func TestJevErrors(t *testing.T) {
 			w.Write([]byte(c.body))
 		})
 
-		if _, err := j.Noul(context.Background(), "x", map[string]NoulQuestion{"a": {Instructions: "?"}}); !errors.Is(err, c.want) {
+		if _, err := j.Noul(context.Background(), slog.New(slog.DiscardHandler), "x", map[string]NoulQuestion{"a": {Instructions: "?"}}); !errors.Is(err, c.want) {
 			t.Errorf("%s: got %v", name, err)
 		}
 	}
@@ -83,7 +83,7 @@ func TestJevErrors(t *testing.T) {
 		w.Write([]byte(`{"detail":"bad question"}`))
 	})
 
-	if _, err := j.Noul(context.Background(), "x", map[string]NoulQuestion{"a": {Instructions: "?"}}); err == nil || errors.Is(err, ErrUnavailable) {
+	if _, err := j.Noul(context.Background(), slog.New(slog.DiscardHandler), "x", map[string]NoulQuestion{"a": {Instructions: "?"}}); err == nil || errors.Is(err, ErrUnavailable) {
 		t.Errorf("422: got %v", err)
 	}
 }

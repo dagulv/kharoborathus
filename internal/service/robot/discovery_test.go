@@ -3,6 +3,7 @@ package robot
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -17,9 +18,11 @@ type fakeLLM struct {
 
 func (f *fakeLLM) Schedule() schedule.Schedule { return schedule.Always }
 
-func (f *fakeLLM) Prompt(context.Context, adapter.Request) (string, error) { return "", nil }
+func (f *fakeLLM) Prompt(context.Context, *slog.Logger, adapter.Request) (string, error) {
+	return "", nil
+}
 
-func (f *fakeLLM) Unmarshal(_ context.Context, req adapter.Request, out any) error {
+func (f *fakeLLM) Unmarshal(_ context.Context, _ *slog.Logger, req adapter.Request, out any) error {
 	f.req = req
 
 	b, err := json.Marshal(f.answer)
@@ -49,7 +52,7 @@ func TestKeywords(t *testing.T) {
 		{Entity: "", Action: "order", Query: "order"},
 	}}}
 
-	keywords, err := NewDiscoverer(llm).Keywords(context.Background(), article, []string{"acquisition", "contract"})
+	keywords, err := NewDiscoverer(llm).Keywords(context.Background(), slog.New(slog.DiscardHandler), article, []string{"acquisition", "contract"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +83,7 @@ func TestKeywords(t *testing.T) {
 func TestKeywordsNone(t *testing.T) {
 	llm := &fakeLLM{}
 
-	keywords, err := NewDiscoverer(llm).Keywords(context.Background(), article, nil)
+	keywords, err := NewDiscoverer(llm).Keywords(context.Background(), slog.New(slog.DiscardHandler), article, nil)
 	if err != nil || len(keywords) != 0 {
 		t.Fatalf("got %v, %v", keywords, err)
 	}

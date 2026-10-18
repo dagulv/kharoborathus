@@ -3,6 +3,7 @@ package robot
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ func TestGenerateTags(t *testing.T) {
 		{Key: "ipo", Term: "börsnotering"},
 	}}
 
-	tags, err := NewTagGenerator(&tagLLM{fakeLLM: llm, answer: answer}).Generate(context.Background(), "sv", "Volvo investerar.", []string{"investment", "bullish"})
+	tags, err := NewTagGenerator(&tagLLM{fakeLLM: llm, answer: answer}).Generate(context.Background(), slog.New(slog.DiscardHandler), "sv", "Volvo investerar.", []string{"investment", "bullish"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ type tagLLM struct {
 	answer tagGenerateAnswer
 }
 
-func (f *tagLLM) Unmarshal(ctx context.Context, req adapter.Request, out any) error {
+func (f *tagLLM) Unmarshal(ctx context.Context, _ *slog.Logger, req adapter.Request, out any) error {
 	f.fakeLLM.req = req
 
 	b, err := json.Marshal(f.answer)
@@ -71,7 +72,7 @@ func (f *tagLLM) Unmarshal(ctx context.Context, req adapter.Request, out any) er
 func TestTagGeneratePromptTopicOnly(t *testing.T) {
 	llm := &fakeLLM{}
 
-	if _, err := NewTagGenerator(&tagLLM{fakeLLM: llm}).Generate(context.Background(), "sv", "Volvo investerar.", nil); err != nil {
+	if _, err := NewTagGenerator(&tagLLM{fakeLLM: llm}).Generate(context.Background(), slog.New(slog.DiscardHandler), "sv", "Volvo investerar.", nil); err != nil {
 		t.Fatal(err)
 	}
 

@@ -12,7 +12,7 @@ func TestJevMock(t *testing.T) {
 
 	state := map[string]string{"title": "Volvo investerar", "article": "Volvo Cars investerar 10 miljarder. Marknaden är bearish."}
 
-	got, err := m.Noul(context.Background(), state, map[string]NoulQuestion{
+	got, err := m.Noul(context.Background(), slog.New(slog.DiscardHandler), state, map[string]NoulQuestion{
 		"investment": {Instructions: "Is this news article about investment (investment, investering)?"},
 		"bearish":    {Instructions: "Is this news article about bearish?"},
 		"sport":      {Instructions: "Is this news article about sport (sport, idrott)?"},
@@ -30,7 +30,7 @@ func TestJevMock(t *testing.T) {
 		}
 	}
 
-	if got, _ := m.Noul(context.Background(), "Ett avtal om investeringar.", map[string]NoulQuestion{"a": {Instructions: "Is this news article about investment (investering)?"}}); got["a"] != mockYes {
+	if got, _ := m.Noul(context.Background(), slog.New(slog.DiscardHandler), "Ett avtal om investeringar.", map[string]NoulQuestion{"a": {Instructions: "Is this news article about investment (investering)?"}}); got["a"] != mockYes {
 		t.Errorf("string state: %v", got)
 	}
 }

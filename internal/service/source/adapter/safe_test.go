@@ -19,11 +19,11 @@ func TestAdaptersRefusePrivate(t *testing.T) {
 
 	l := slog.New(slog.DiscardHandler)
 
-	if _, err := NewRSS(nil, l).FetchFromSource(context.Background(), srv.URL); !errors.Is(err, safehttp.ErrPrivateAddress) {
+	if _, err := NewRSS(nil, l).FetchFromSource(context.Background(), slog.New(slog.DiscardHandler), srv.URL); !errors.Is(err, safehttp.ErrPrivateAddress) {
 		t.Errorf("rss: %v", err)
 	}
 
-	if _, err := NewPage(nil, nil, l).FetchFromSource(context.Background(), srv.URL); !errors.Is(err, safehttp.ErrPrivateAddress) {
+	if _, err := NewPage(nil, nil, l).FetchFromSource(context.Background(), slog.New(slog.DiscardHandler), srv.URL); !errors.Is(err, safehttp.ErrPrivateAddress) {
 		t.Errorf("page: %v", err)
 	}
 }

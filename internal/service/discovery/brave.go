@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/config"
+	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/service/robot"
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 )
@@ -35,7 +37,7 @@ type Query struct {
 }
 
 type Searcher interface {
-	Search(ctx context.Context, q Query) ([]robot.SearchResult, error)
+	Search(ctx context.Context, l *slog.Logger, q Query) ([]robot.SearchResult, error)
 }
 
 type brave struct {
@@ -78,7 +80,7 @@ type braveResponse struct {
 	} `json:"news"`
 }
 
-func (b brave) Search(ctx context.Context, q Query) ([]robot.SearchResult, error) {
+func (b brave) Search(ctx context.Context, l *slog.Logger, q Query) ([]robot.SearchResult, error) {
 	params := url.Values{
 		"q":              {q.Q},
 		"country":        {"SE"},
@@ -100,7 +102,7 @@ func (b brave) Search(ctx context.Context, q Query) ([]robot.SearchResult, error
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Subscription-Token", b.key)
 
-	res, err := b.client.Do(req)
+	res, err := logs.Client(b.client, l, "brave").Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: err call brave: %w", adapter.ErrUnavailable, err)
 	}

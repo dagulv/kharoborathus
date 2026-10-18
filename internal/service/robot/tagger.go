@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"log/slog"
 	"maps"
 	"strings"
 	"text/template"
@@ -38,8 +39,8 @@ func NewTagger(classifier adapter.Classifier) *Tagger {
 	return &Tagger{classifier: classifier}
 }
 
-func (t *Tagger) Tags(ctx context.Context, title, markdown string, tags []Tag) ([]string, error) {
-	scores, _, err := t.classify(ctx, title, markdown, tags, nil)
+func (t *Tagger) Tags(ctx context.Context, l *slog.Logger, title, markdown string, tags []Tag) ([]string, error) {
+	scores, _, err := t.classify(ctx, l, title, markdown, tags, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +49,7 @@ func (t *Tagger) Tags(ctx context.Context, title, markdown string, tags []Tag) (
 }
 
 // Extra questions ride in the first batch, so they cost no extra request.
-func (t *Tagger) classify(ctx context.Context, title, markdown string, tags []Tag, extra map[string]adapter.NoulQuestion) (scores, extraScores map[string]float64, err error) {
+func (t *Tagger) classify(ctx context.Context, l *slog.Logger, title, markdown string, tags []Tag, extra map[string]adapter.NoulQuestion) (scores, extraScores map[string]float64, err error) {
 	if r := []rune(markdown); len(r) > maxTagState {
 		markdown = string(r[:maxTagState])
 	}
@@ -78,7 +79,7 @@ func (t *Tagger) classify(ctx context.Context, title, markdown string, tags []Ta
 			break
 		}
 
-		answers, err := t.classifier.Noul(ctx, state, questions)
+		answers, err := t.classifier.Noul(ctx, l, state, questions)
 		if err != nil {
 			return nil, nil, err
 		}

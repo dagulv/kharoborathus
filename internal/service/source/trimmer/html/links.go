@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 
@@ -112,7 +113,7 @@ func (t *htmlLinker) Links(rule LinkRule, listing trimmer.Sample) ([]string, err
 	return links, nil
 }
 
-func (t *htmlLinker) GenerateRuleset(ctx context.Context, samples []trimmer.Sample, fetch trimmer.Fetch) (LinkRule, error) {
+func (t *htmlLinker) GenerateRuleset(ctx context.Context, l *slog.Logger, samples []trimmer.Sample, fetch trimmer.Fetch) (LinkRule, error) {
 	if len(samples) < minListings {
 		return LinkRule{}, fmt.Errorf("trimmer: %d listings, at least %d needed", len(samples), minListings)
 	}
@@ -143,7 +144,7 @@ func (t *htmlLinker) GenerateRuleset(ctx context.Context, samples []trimmer.Samp
 
 		var rule LinkRule
 
-		if err := t.llm.Unmarshal(ctx, req, &rule); err != nil {
+		if err := t.llm.Unmarshal(ctx, l, req, &rule); err != nil {
 			if errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil {
 				return LinkRule{}, err
 			}

@@ -24,9 +24,9 @@ const (
 	gateMaxRate     = 0.2
 )
 
-func RunPromotion(ctx context.Context, s *Store, m *robot.TagMerger, t *robot.Tagger, l *slog.Logger) error {
+func RunPromotion(ctx context.Context, s *Store, m *robot.TagMerger, t *robot.Tagger, l, calls *slog.Logger) error {
 	for range schedule.Always.Tick(ctx, promoteInterval) {
-		if err := promoteTags(ctx, s, m, t, l); err != nil {
+		if err := promoteTags(ctx, s, m, t, l, calls); err != nil {
 			l.Error("promote tags", "err", err)
 		}
 	}
@@ -34,14 +34,14 @@ func RunPromotion(ctx context.Context, s *Store, m *robot.TagMerger, t *robot.Ta
 	return ctx.Err()
 }
 
-func promoteTags(ctx context.Context, s *Store, m *robot.TagMerger, t *robot.Tagger, l *slog.Logger) error {
+func promoteTags(ctx context.Context, s *Store, m *robot.TagMerger, t *robot.Tagger, l, calls *slog.Logger) error {
 	candidates, err := s.ListCandidates(ctx, supportWindow, supportPosts, supportDomains, maxCandidates)
 	if err != nil {
 		return fmt.Errorf("err list candidates: %w", err)
 	}
 
 	for _, c := range candidates {
-		err := promoteCandidate(ctx, s, m, t, l, c)
+		err := promoteCandidate(ctx, s, m, t, l, calls, c)
 
 		switch {
 		case errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil:
@@ -54,7 +54,9 @@ func promoteTags(ctx context.Context, s *Store, m *robot.TagMerger, t *robot.Tag
 	return nil
 }
 
-func promoteCandidate(ctx context.Context, s *Store, m *robot.TagMerger, t *robot.Tagger, l *slog.Logger, c Candidate) error {
+func promoteCandidate(ctx context.Context, s *Store, m *robot.TagMerger, t *robot.Tagger, l, calls *slog.Logger, c Candidate) error {
+	calls = calls.With("tag", c.Key)
+
 	terms := termsFor(c.Key, c.Terms)
 	candidate := robot.Tag{Key: c.Key, Terms: words(terms)}
 
@@ -63,7 +65,7 @@ func promoteCandidate(ctx context.Context, s *Store, m *robot.TagMerger, t *robo
 		return fmt.Errorf("err similar tags: %w", err)
 	}
 
-	duplicate, err := m.Duplicate(ctx, candidate, similar)
+	duplicate, err := m.Duplicate(ctx, calls, candidate, similar)
 	if err != nil {
 		return fmt.Errorf("err merge check: %w", err)
 	}
@@ -78,7 +80,7 @@ func promoteCandidate(ctx context.Context, s *Store, m *robot.TagMerger, t *robo
 		return fmt.Errorf("err supporting posts: %w", err)
 	}
 
-	matched, err := matching(ctx, t, candidate, supporting)
+	matched, err := matching(ctx, calls, t, candidate, supporting)
 	if err != nil {
 		return fmt.Errorf("err consistency check: %w", err)
 	}
@@ -93,7 +95,7 @@ func promoteCandidate(ctx context.Context, s *Store, m *robot.TagMerger, t *robo
 		return fmt.Errorf("err sample posts: %w", err)
 	}
 
-	hits, err := matching(ctx, t, candidate, sample)
+	hits, err := matching(ctx, calls, t, candidate, sample)
 	if err != nil {
 		return fmt.Errorf("err broadness check: %w", err)
 	}
@@ -111,11 +113,11 @@ func promoteCandidate(ctx context.Context, s *Store, m *robot.TagMerger, t *robo
 	return s.PromoteTag(ctx, p)
 }
 
-func matching(ctx context.Context, t *robot.Tagger, tag robot.Tag, posts []Post) ([]string, error) {
+func matching(ctx context.Context, calls *slog.Logger, t *robot.Tagger, tag robot.Tag, posts []Post) ([]string, error) {
 	var ids []string
 
 	for _, p := range posts {
-		keys, err := t.Tags(ctx, p.Title, p.Content, []robot.Tag{tag})
+		keys, err := t.Tags(ctx, calls.With("post_id", p.ID), p.Title, p.Content, []robot.Tag{tag})
 		if err != nil {
 			return nil, fmt.Errorf("err classify post %s: %w", p.ID, err)
 		}

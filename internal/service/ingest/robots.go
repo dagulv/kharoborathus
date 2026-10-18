@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/dagulv/kharoborathus/internal/lib/logs"
 )
 
 const (
@@ -41,13 +44,13 @@ func NewRobots(client *http.Client, p *pacer) *Robots {
 	return &Robots{client: client, pacer: p, cache: make(map[string]robotsEntry)}
 }
 
-func (r *Robots) Allowed(ctx context.Context, rawURL string) (bool, error) {
+func (r *Robots) Allowed(ctx context.Context, l *slog.Logger, rawURL string) (bool, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return false, fmt.Errorf("err parse url: %w", err)
 	}
 
-	rules, err := r.rules(ctx, u)
+	rules, err := r.rules(ctx, l, u)
 	if err != nil {
 		return false, err
 	}
@@ -55,7 +58,7 @@ func (r *Robots) Allowed(ctx context.Context, rawURL string) (bool, error) {
 	return rules.allowed(u.RequestURI()), nil
 }
 
-func (r *Robots) rules(ctx context.Context, u *url.URL) (robotsRules, error) {
+func (r *Robots) rules(ctx context.Context, l *slog.Logger, u *url.URL) (robotsRules, error) {
 	origin := strings.ToLower(u.Scheme + "://" + u.Host)
 
 	if e, ok := r.cache[origin]; ok && time.Since(e.fetchedAt) < robotsTTL {
@@ -73,7 +76,7 @@ func (r *Robots) rules(ctx context.Context, u *url.URL) (robotsRules, error) {
 
 	req.Header.Set("User-Agent", userAgent)
 
-	res, err := r.client.Do(req)
+	res, err := logs.Client(r.client, l, "robots").Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("err fetch robots.txt: %w", err)
 	}

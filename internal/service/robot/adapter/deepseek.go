@@ -16,6 +16,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/dagulv/kharoborathus/internal/lib/config"
+	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/invopop/jsonschema"
 )
@@ -60,14 +61,14 @@ func NewDeepSeek(env *config.Environment, l *slog.Logger) (LLM, error) {
 	}, nil
 }
 
-func (d deepSeek) Prompt(ctx context.Context, req Request) (_ string, err error) {
+func (d deepSeek) Prompt(ctx context.Context, l *slog.Logger, req Request) (_ string, err error) {
 	params, err := d.params(req)
 
 	if err != nil {
 		return
 	}
 
-	msg, err := d.send(ctx, params)
+	msg, err := d.send(ctx, l, params)
 
 	if err != nil {
 		return
@@ -84,7 +85,7 @@ func (d deepSeek) Prompt(ctx context.Context, req Request) (_ string, err error)
 	return text.String(), nil
 }
 
-func (d deepSeek) Unmarshal(ctx context.Context, req Request, out any) (err error) {
+func (d deepSeek) Unmarshal(ctx context.Context, l *slog.Logger, req Request, out any) (err error) {
 	params, err := d.params(req)
 
 	if err != nil {
@@ -103,7 +104,7 @@ func (d deepSeek) Unmarshal(ctx context.Context, req Request, out any) (err erro
 	params.Tools = []anthropic.ToolUnionParam{tool}
 	params.ToolChoice = anthropic.ToolChoiceParamOfTool(outputTool)
 
-	msg, err := d.send(ctx, params)
+	msg, err := d.send(ctx, l, params)
 
 	if err != nil {
 		return
@@ -122,12 +123,13 @@ func (d deepSeek) Unmarshal(ctx context.Context, req Request, out any) (err erro
 	return fmt.Errorf("deepseek: no %s call in response", outputTool)
 }
 
-func (d deepSeek) send(ctx context.Context, params anthropic.MessageNewParams) (msg *anthropic.Message, err error) {
+func (d deepSeek) send(ctx context.Context, l *slog.Logger, params anthropic.MessageNewParams) (msg *anthropic.Message, err error) {
 	if err = d.gate(); err != nil {
 		return
 	}
 
-	msg, err = d.client.Messages.New(ctx, params)
+	// Each retry is a request of its own, so each gets its own row.
+	msg, err = d.client.Messages.New(ctx, params, option.WithHTTPClient(logs.Client(&http.Client{}, l, "deepseek")))
 
 	if err != nil {
 		return nil, apiError(err)

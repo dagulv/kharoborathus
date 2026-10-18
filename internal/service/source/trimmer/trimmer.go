@@ -3,6 +3,7 @@ package trimmer
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 	"unicode/utf8"
 )
@@ -10,12 +11,12 @@ import (
 var ErrNoRule = errors.New("trimmer: no rule could be generated")
 
 type Trimmer[R any] interface {
-	GenerateRuleset(ctx context.Context, samples []Sample) (R, error)
+	GenerateRuleset(ctx context.Context, l *slog.Logger, samples []Sample) (R, error)
 	Trim(rule R, data []byte) (Extraction, error)
 }
 
 type Linker[R any] interface {
-	GenerateRuleset(ctx context.Context, samples []Sample, fetch Fetch) (R, error)
+	GenerateRuleset(ctx context.Context, l *slog.Logger, samples []Sample, fetch Fetch) (R, error)
 	Links(rule R, listing Sample) ([]string, error)
 }
 

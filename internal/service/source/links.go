@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	robotadapter "github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
@@ -15,7 +17,7 @@ import (
 
 var _ adapter.Linker = (*Trim)(nil)
 
-func (t *Trim) Links(ctx context.Context, url string, listing []byte) ([]string, error) {
+func (t *Trim) Links(ctx context.Context, l *slog.Logger, url string, listing []byte) ([]string, error) {
 	d, err := t.domainStore.GetOrCreateDomain(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("err get domain: %w", err)
@@ -25,7 +27,7 @@ func (t *Trim) Links(ctx context.Context, url string, listing []byte) ([]string,
 
 	rule, ok := ruleOf[html.LinkRule](d, linksFormat)
 	if !ok {
-		return t.withoutRule(ctx, d, sample), nil
+		return t.withoutRule(ctx, l.With("domain_id", d.ID), d, sample), nil
 	}
 
 	links, err := t.linker.Links(rule, sample)
@@ -36,19 +38,19 @@ func (t *Trim) Links(ctx context.Context, url string, listing []byte) ([]string,
 	return links, nil
 }
 
-func (t *Trim) withoutRule(ctx context.Context, d domain.Domain, sample trimmer.Sample) []string {
-	if links, ok := t.fromOneListing(ctx, d, sample); ok {
+func (t *Trim) withoutRule(ctx context.Context, l *slog.Logger, d domain.Domain, sample trimmer.Sample) []string {
+	if links, ok := t.fromOneListing(ctx, l, d, sample); ok {
 		return links
 	}
 
-	t.collectListing(ctx, d, sample)
+	t.collectListing(ctx, l, d, sample)
 
 	return nil
 }
 
 // A new source gets its posts on the first fetch. One listing cannot show which headlines change,
 // so a failure falls back to collecting listingSamples and is not tried again until a restart.
-func (t *Trim) fromOneListing(ctx context.Context, d domain.Domain, sample trimmer.Sample) ([]string, bool) {
+func (t *Trim) fromOneListing(ctx context.Context, l *slog.Logger, d domain.Domain, sample trimmer.Sample) ([]string, bool) {
 	t.mu.Lock()
 	skip := t.triedOne[d.ID] || time.Since(t.linksFailedAt[d.ID]) < retryGeneration
 	t.mu.Unlock()
@@ -65,7 +67,7 @@ func (t *Trim) fromOneListing(ctx context.Context, d domain.Domain, sample trimm
 
 	defer func() { <-t.generating }()
 
-	rule, err := t.linker.GenerateRuleset(ctx, []trimmer.Sample{sample}, t.fetchHTML)
+	rule, err := t.linker.GenerateRuleset(ctx, l, []trimmer.Sample{sample}, t.fetcher(l))
 	if errors.Is(err, robotadapter.ErrUnavailable) || ctx.Err() != nil {
 		return nil, false
 	}
@@ -94,12 +96,16 @@ func (t *Trim) fromOneListing(ctx context.Context, d domain.Domain, sample trimm
 	return links, true
 }
 
-func (t *Trim) fetchHTML(ctx context.Context, url string) ([]byte, error) {
-	return adapter.FetchHTML(ctx, t.client, url)
+func (t *Trim) fetcher(l *slog.Logger) trimmer.Fetch {
+	client := logs.Client(t.client, l, "trim")
+
+	return func(ctx context.Context, url string) ([]byte, error) {
+		return adapter.FetchHTML(ctx, client, url)
+	}
 }
 
 // Snapshots are spaced by listingGap so headlines change between them and show up as unique.
-func (t *Trim) collectListing(ctx context.Context, d domain.Domain, sample trimmer.Sample) {
+func (t *Trim) collectListing(ctx context.Context, l *slog.Logger, d domain.Domain, sample trimmer.Sample) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -130,12 +136,12 @@ func (t *Trim) collectListing(ctx context.Context, d domain.Domain, sample trimm
 	go func() {
 		defer func() { <-t.generating }()
 
-		t.generateLinks(ctx, d, samples)
+		t.generateLinks(ctx, l, d, samples)
 	}()
 }
 
-func (t *Trim) generateLinks(ctx context.Context, d domain.Domain, samples []trimmer.Sample) {
-	rule, err := t.linker.GenerateRuleset(ctx, samples, t.fetchHTML)
+func (t *Trim) generateLinks(ctx context.Context, l *slog.Logger, d domain.Domain, samples []trimmer.Sample) {
+	rule, err := t.linker.GenerateRuleset(ctx, l, samples, t.fetcher(l))
 
 	switch {
 	case errors.Is(err, robotadapter.ErrUnavailable) || ctx.Err() != nil:

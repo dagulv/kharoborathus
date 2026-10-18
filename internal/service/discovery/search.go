@@ -29,7 +29,7 @@ const (
 
 var errSearchWasted = errors.New("discovery: paid search wasted")
 
-func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f *robot.ResultFilter, sched schedule.Schedule, l *slog.Logger) error {
+func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f *robot.ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
 	var pausedUntil time.Time
 	var pause time.Duration
 
@@ -38,7 +38,7 @@ func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f
 			continue
 		}
 
-		err := searchEvents(ctx, s, sw, sched, se, f, l)
+		err := searchEvents(ctx, s, sw, sched, se, f, l, calls)
 		if errors.Is(err, errSearchWasted) {
 			pause = nextPause(pause)
 			pausedUntil = time.Now().Add(pause)
@@ -57,7 +57,7 @@ func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f
 	return ctx.Err()
 }
 
-func searchEvents(ctx context.Context, s *Store, sw *switches.Store, sched schedule.Schedule, se Searcher, f *robot.ResultFilter, l *slog.Logger) error {
+func searchEvents(ctx context.Context, s *Store, sw *switches.Store, sched schedule.Schedule, se Searcher, f *robot.ResultFilter, l, calls *slog.Logger) error {
 	on, err := sw.Enabled(ctx, switches.SearchDiscovery)
 	if err != nil || !on {
 		return err
@@ -94,6 +94,8 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, sched sched
 	}()
 
 	for _, item := range items {
+		il := calls.With("discovery_event_id", item.ID)
+
 		done, err := s.Searched(ctx, item.Entity, item.Action, dedupeWindow)
 		if err != nil {
 			return err
@@ -114,7 +116,7 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, sched sched
 			return nil
 		}
 
-		results, err := se.Search(ctx, Query{Q: item.Query, Lang: item.Lang})
+		results, err := se.Search(ctx, il, Query{Q: item.Query, Lang: item.Lang})
 		if errors.Is(err, errSearchRejected) {
 			l.Warn("search rejected", "item", item.ID, "err", err)
 
@@ -139,7 +141,7 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, sched sched
 			aiCalls++
 		}
 
-		kept, err := f.Keep(ctx, item.Entity, item.Action, results)
+		kept, err := f.Keep(ctx, il, item.Entity, item.Action, results)
 		if err != nil || ctx.Err() != nil {
 			return recordWasted(ctx, s, item, len(results), err)
 		}

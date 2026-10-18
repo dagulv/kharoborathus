@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -26,7 +27,7 @@ func TestGatePasses(t *testing.T) {
 		swedenQuestion:                   true,
 	}}
 
-	v, err := NewTagger(c).Gate(context.Background(), "Volvo köper", "Volvo köper Northvolt.", gateTags)
+	v, err := NewTagger(c).Gate(context.Background(), slog.New(slog.DiscardHandler), "Volvo köper", "Volvo köper Northvolt.", gateTags)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +51,7 @@ func TestGateNeedsGateTag(t *testing.T) {
 		swedenQuestion:                   true,
 	}}
 
-	v, err := NewTagger(c).Gate(context.Background(), "Sverige", "Om Sverige.", gateTags)
+	v, err := NewTagger(c).Gate(context.Background(), slog.New(slog.DiscardHandler), "Sverige", "Om Sverige.", gateTags)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +64,7 @@ func TestGateNeedsGateTag(t *testing.T) {
 func TestGateNeedsArticle(t *testing.T) {
 	c := &fakeClassifier{yes: map[string]bool{acquisitionQuestion: true}}
 
-	v, err := NewTagger(c).Gate(context.Background(), "Förvärv", "Lista över förvärv.", gateTags)
+	v, err := NewTagger(c).Gate(context.Background(), slog.New(slog.DiscardHandler), "Förvärv", "Lista över förvärv.", gateTags)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +83,7 @@ func TestGateBatches(t *testing.T) {
 
 	c := &fakeClassifier{}
 
-	if _, err := NewTagger(c).Gate(context.Background(), "t", "a", tags); err != nil {
+	if _, err := NewTagger(c).Gate(context.Background(), slog.New(slog.DiscardHandler), "t", "a", tags); err != nil {
 		t.Fatal(err)
 	}
 

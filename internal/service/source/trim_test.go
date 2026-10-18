@@ -23,11 +23,11 @@ type idleLLM struct{}
 
 func (idleLLM) Schedule() schedule.Schedule { return schedule.Always }
 
-func (idleLLM) Prompt(context.Context, adapter.Request) (string, error) {
+func (idleLLM) Prompt(context.Context, *slog.Logger, adapter.Request) (string, error) {
 	return "", adapter.ErrUnavailable
 }
 
-func (idleLLM) Unmarshal(context.Context, adapter.Request, any) error {
+func (idleLLM) Unmarshal(context.Context, *slog.Logger, adapter.Request, any) error {
 	return adapter.ErrUnavailable
 }
 
@@ -35,12 +35,12 @@ func TestCollectEvictsOldestDomain(t *testing.T) {
 	tr := NewTrim(nil, idleLLM{}, slog.New(slog.DiscardHandler))
 
 	for i := range maxSampleDomains + 1 {
-		tr.collect(context.Background(), domain.Domain{ID: strconv.Itoa(i)}, trimmer.Sample{URL: fmt.Sprintf("https://d%d.example/a", i)})
+		tr.collect(context.Background(), slog.New(slog.DiscardHandler), domain.Domain{ID: strconv.Itoa(i)}, trimmer.Sample{URL: fmt.Sprintf("https://d%d.example/a", i)})
 	}
 
 	// A new sample for domain 1 makes domain 2 the oldest.
-	tr.collect(context.Background(), domain.Domain{ID: "1"}, trimmer.Sample{URL: "https://d1.example/b"})
-	tr.collect(context.Background(), domain.Domain{ID: "new"}, trimmer.Sample{URL: "https://new.example/a"})
+	tr.collect(context.Background(), slog.New(slog.DiscardHandler), domain.Domain{ID: "1"}, trimmer.Sample{URL: "https://d1.example/b"})
+	tr.collect(context.Background(), slog.New(slog.DiscardHandler), domain.Domain{ID: "new"}, trimmer.Sample{URL: "https://new.example/a"})
 
 	if len(tr.samples) != maxSampleDomains {
 		t.Errorf("%d domains sampled", len(tr.samples))
@@ -69,7 +69,7 @@ type failingLinker struct {
 	calls int
 }
 
-func (f *failingLinker) GenerateRuleset(context.Context, []trimmer.Sample, trimmer.Fetch) (html.LinkRule, error) {
+func (f *failingLinker) GenerateRuleset(context.Context, *slog.Logger, []trimmer.Sample, trimmer.Fetch) (html.LinkRule, error) {
 	f.calls++
 	return html.LinkRule{}, f.err
 }
@@ -86,7 +86,7 @@ func TestLinksTriesOneListingFirst(t *testing.T) {
 	d := domain.Domain{ID: "d"}
 	sample := trimmer.Sample{URL: "https://d.example/"}
 
-	if links := tr.withoutRule(context.Background(), d, sample); links != nil {
+	if links := tr.withoutRule(context.Background(), slog.New(slog.DiscardHandler), d, sample); links != nil {
 		t.Errorf("links %v", links)
 	}
 
@@ -96,7 +96,7 @@ func TestLinksTriesOneListingFirst(t *testing.T) {
 
 	// A failed single listing falls back to collecting, so it is not tried again.
 	tr.listedAt[d.ID] = time.Time{}
-	tr.withoutRule(context.Background(), d, sample)
+	tr.withoutRule(context.Background(), slog.New(slog.DiscardHandler), d, sample)
 
 	if linker.calls != 1 || len(tr.listings[d.ID]) != 2 {
 		t.Errorf("%d generations, %d listings kept", linker.calls, len(tr.listings[d.ID]))
@@ -110,8 +110,8 @@ func TestLinksRetriesOneListingWhenUnavailable(t *testing.T) {
 
 	d := domain.Domain{ID: "d"}
 
-	tr.withoutRule(context.Background(), d, trimmer.Sample{URL: "https://d.example/"})
-	tr.withoutRule(context.Background(), d, trimmer.Sample{URL: "https://d.example/"})
+	tr.withoutRule(context.Background(), slog.New(slog.DiscardHandler), d, trimmer.Sample{URL: "https://d.example/"})
+	tr.withoutRule(context.Background(), slog.New(slog.DiscardHandler), d, trimmer.Sample{URL: "https://d.example/"})
 
 	if linker.calls != 2 {
 		t.Errorf("%d generations", linker.calls)

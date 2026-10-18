@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"log/slog"
 	"strings"
 	"unicode/utf8"
 
@@ -28,14 +29,14 @@ func NewSummarizer(llm adapter.LLM) *Summarizer {
 	return &Summarizer{llm: llm}
 }
 
-func (s *Summarizer) Summarize(ctx context.Context, markdown string) (string, error) {
+func (s *Summarizer) Summarize(ctx context.Context, l *slog.Logger, markdown string) (string, error) {
 	if r := []rune(markdown); len(r) > maxSummaryInput {
 		markdown = string(r[:maxSummaryInput])
 	}
 
 	temp := 0.3
 
-	summary, err := s.llm.Prompt(ctx, adapter.Request{
+	summary, err := s.llm.Prompt(ctx, l, adapter.Request{
 		System:      strings.TrimSpace(summaryPrompt),
 		Prompt:      markdown,
 		Temperature: &temp,

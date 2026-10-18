@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/source/trimmer"
@@ -13,7 +14,7 @@ var ErrAbstained = errors.New("trimmer: model abstained")
 
 var temperatures = []float64{0.2, 0.6, 1.0}
 
-func (t *htmlTrimmer) GenerateRuleset(ctx context.Context, samples []trimmer.Sample) (Rule, error) {
+func (t *htmlTrimmer) GenerateRuleset(ctx context.Context, l *slog.Logger, samples []trimmer.Sample) (Rule, error) {
 	if need := minSkeletonPage + minHeldOut; len(samples) < need {
 		return Rule{}, fmt.Errorf("trimmer: %d sample pages, at least %d needed", len(samples), need)
 	}
@@ -50,7 +51,7 @@ func (t *htmlTrimmer) GenerateRuleset(ctx context.Context, samples []trimmer.Sam
 
 		var rule Rule
 
-		if err := t.llm.Unmarshal(ctx, req, &rule); err != nil {
+		if err := t.llm.Unmarshal(ctx, l, req, &rule); err != nil {
 			if errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil {
 				return Rule{}, err
 			}

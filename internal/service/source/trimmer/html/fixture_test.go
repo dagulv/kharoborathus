@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -84,9 +85,11 @@ type fakeLLM struct {
 
 func (f *fakeLLM) Schedule() schedule.Schedule { return schedule.Always }
 
-func (f *fakeLLM) Prompt(context.Context, adapter.Request) (string, error) { return "", nil }
+func (f *fakeLLM) Prompt(context.Context, *slog.Logger, adapter.Request) (string, error) {
+	return "", nil
+}
 
-func (f *fakeLLM) Unmarshal(_ context.Context, req adapter.Request, out any) error {
+func (f *fakeLLM) Unmarshal(_ context.Context, _ *slog.Logger, req adapter.Request, out any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

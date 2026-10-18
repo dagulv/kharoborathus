@@ -3,6 +3,7 @@ package html
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -59,7 +60,7 @@ func TestGenerateRuleset(t *testing.T) {
 	llm := &fakeLLM{answers: []any{weaker, invented, goodRule()}}
 	tr := New(llm, "")
 
-	rule, err := tr.GenerateRuleset(context.Background(), pages(s, 0, 8))
+	rule, err := tr.GenerateRuleset(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 8))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,12 +75,12 @@ func TestGenerateRuleset(t *testing.T) {
 
 	llm = &fakeLLM{answers: []any{invented, Rule{Include: nil, Reasoning: "no clear container"}}}
 
-	if _, err := New(llm, "").GenerateRuleset(context.Background(), pages(s, 0, 8)); !errors.Is(err, trimmer.ErrNoRule) ||
+	if _, err := New(llm, "").GenerateRuleset(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 8)); !errors.Is(err, trimmer.ErrNoRule) ||
 		!errors.Is(err, ErrSelectorUngrounded) || !errors.Is(err, ErrAbstained) {
 		t.Errorf("no usable candidate: %v", err)
 	}
 
-	if _, err := tr.GenerateRuleset(context.Background(), pages(s, 0, 7)); err == nil {
+	if _, err := tr.GenerateRuleset(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 7)); err == nil {
 		t.Error("generated without enough held out pages")
 	}
 }

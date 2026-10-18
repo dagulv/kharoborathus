@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -50,7 +51,7 @@ func TestBraveSearch(t *testing.T) {
 		}`))
 	})
 
-	got, err := b.Search(context.Background(), Query{Q: "Volvo köper Northvolt", Lang: "sv"})
+	got, err := b.Search(context.Background(), slog.New(slog.DiscardHandler), Query{Q: "Volvo köper Northvolt", Lang: "sv"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestBraveOtherLanguage(t *testing.T) {
 		w.Write([]byte(`{}`))
 	})
 
-	if got, err := b.Search(context.Background(), Query{Q: "x", Lang: "de"}); err != nil || len(got) != 0 {
+	if got, err := b.Search(context.Background(), slog.New(slog.DiscardHandler), Query{Q: "x", Lang: "de"}); err != nil || len(got) != 0 {
 		t.Errorf("got %v, %v", got, err)
 	}
 }
@@ -103,7 +104,7 @@ func TestBraveErrors(t *testing.T) {
 			w.WriteHeader(status)
 		})
 
-		_, err := b.Search(context.Background(), Query{Q: "x"})
+		_, err := b.Search(context.Background(), slog.New(slog.DiscardHandler), Query{Q: "x"})
 
 		switch {
 		case err == nil:
@@ -121,7 +122,7 @@ func TestBraveUnreadable(t *testing.T) {
 		w.Write([]byte(`{"web": {"results": [{"url": 1}]}}`))
 	})
 
-	if _, err := b.Search(context.Background(), Query{Q: "x"}); !errors.Is(err, errSearchUnreadable) {
+	if _, err := b.Search(context.Background(), slog.New(slog.DiscardHandler), Query{Q: "x"}); !errors.Is(err, errSearchUnreadable) {
 		t.Errorf("got %v", err)
 	}
 }
@@ -132,7 +133,7 @@ func TestBraveInvalidToken(t *testing.T) {
 		w.Write([]byte(`{"type":"ErrorResponse","error":{"status":422,"code":"SUBSCRIPTION_TOKEN_INVALID","detail":"The provided subscription token is invalid."}}`))
 	})
 
-	_, err := b.Search(context.Background(), Query{Q: "x"})
+	_, err := b.Search(context.Background(), slog.New(slog.DiscardHandler), Query{Q: "x"})
 	if err == nil || errors.Is(err, errSearchRejected) {
 		t.Errorf("got %v", err)
 	}

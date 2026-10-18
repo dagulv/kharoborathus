@@ -70,7 +70,7 @@ func NewTrim(domains *domain.Store, llm adapter.LLM, l *slog.Logger) *Trim {
 	}
 }
 
-func (t *Trim) Apply(ctx context.Context, d domain.Domain, f feed.Feed, page []byte) feed.Feed {
+func (t *Trim) Apply(ctx context.Context, l *slog.Logger, d domain.Domain, f feed.Feed, page []byte) feed.Feed {
 	rule, ok := ruleOf[html.Rule](d, trimFormat)
 
 	if e, err := t.html.Trim(rule, page); err != nil {
@@ -82,13 +82,13 @@ func (t *Trim) Apply(ctx context.Context, d domain.Domain, f feed.Feed, page []b
 	}
 
 	if !ok {
-		t.collect(ctx, d, trimmer.Sample{URL: f.URL, Data: page})
+		t.collect(ctx, l.With("domain_id", d.ID), d, trimmer.Sample{URL: f.URL, Data: page})
 	}
 
 	return f
 }
 
-func (t *Trim) collect(ctx context.Context, d domain.Domain, sample trimmer.Sample) {
+func (t *Trim) collect(ctx context.Context, l *slog.Logger, d domain.Domain, sample trimmer.Sample) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -131,7 +131,7 @@ func (t *Trim) collect(ctx context.Context, d domain.Domain, sample trimmer.Samp
 	go func() {
 		defer func() { <-t.generating }()
 
-		t.generate(ctx, d, samples)
+		t.generate(ctx, l, d, samples)
 	}()
 }
 
@@ -148,8 +148,8 @@ func (t *Trim) evictOldestSamples() {
 	delete(t.sampledAt, oldest)
 }
 
-func (t *Trim) generate(ctx context.Context, d domain.Domain, samples []trimmer.Sample) {
-	rule, err := t.html.GenerateRuleset(ctx, samples)
+func (t *Trim) generate(ctx context.Context, l *slog.Logger, d domain.Domain, samples []trimmer.Sample) {
+	rule, err := t.html.GenerateRuleset(ctx, l, samples)
 
 	switch {
 	case errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil:

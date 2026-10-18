@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
@@ -23,11 +24,11 @@ const (
 	maxPromotionsPerWeek = 5
 )
 
-func RunLifecycle(ctx context.Context, s *Store, sw *switches.Store, l *slog.Logger) error {
+func RunLifecycle(ctx context.Context, s *Store, sw *switches.Store, l, calls *slog.Logger) error {
 	client := safehttp.NewClient(homepageTimeout)
 
 	for range schedule.Always.Tick(ctx, lifecycleInterval) {
-		if err := lifecycle(ctx, s, sw, client, l); err != nil {
+		if err := lifecycle(ctx, s, sw, client, l, calls); err != nil {
 			l.Error("source lifecycle", "err", err)
 		}
 	}
@@ -35,20 +36,20 @@ func RunLifecycle(ctx context.Context, s *Store, sw *switches.Store, l *slog.Log
 	return ctx.Err()
 }
 
-func lifecycle(ctx context.Context, s *Store, sw *switches.Store, client *http.Client, l *slog.Logger) error {
+func lifecycle(ctx context.Context, s *Store, sw *switches.Store, client *http.Client, l, calls *slog.Logger) error {
 	dormant, err := s.MarkDormant(ctx, dormancyWindow)
 	if err != nil {
 		return err
 	}
 
-	promoted, err := promote(ctx, s, sw, client, l)
+	promoted, err := promote(ctx, s, sw, client, l, calls)
 
 	l.Info("source lifecycle", "dormant", dormant, "promoted", promoted)
 
 	return err
 }
 
-func promote(ctx context.Context, s *Store, sw *switches.Store, client *http.Client, l *slog.Logger) (promoted int, err error) {
+func promote(ctx context.Context, s *Store, sw *switches.Store, client *http.Client, l, calls *slog.Logger) (promoted int, err error) {
 	on, err := sw.Enabled(ctx, switches.SourcePromotion)
 	if err != nil || !on {
 		return 0, err
@@ -70,7 +71,7 @@ func promote(ctx context.Context, s *Store, sw *switches.Store, client *http.Cli
 			break
 		}
 
-		page, final, err := adapter.FetchPage(ctx, client, c.URL)
+		page, final, err := adapter.FetchPage(ctx, logs.Client(client, calls.With("source_id", c.ID), "homepage"), c.URL)
 		if err != nil {
 			l.Warn("fetch homepage", "source", c.ID, "url", c.URL, "err", err)
 			continue

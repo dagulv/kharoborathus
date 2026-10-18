@@ -2,6 +2,7 @@ package robot
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ var searchResults = []SearchResult{
 func TestKeep(t *testing.T) {
 	llm := &fakeLLM{answer: filterAnswer{Keep: []int{2, 0, 2, 7, -1}}}
 
-	got, err := NewResultFilter(llm).Keep(context.Background(), "Volvo", "acquisition", searchResults)
+	got, err := NewResultFilter(llm).Keep(context.Background(), slog.New(slog.DiscardHandler), "Volvo", "acquisition", searchResults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func TestKeep(t *testing.T) {
 func TestKeepNoResults(t *testing.T) {
 	llm := &fakeLLM{}
 
-	got, err := NewResultFilter(llm).Keep(context.Background(), "Volvo", "acquisition", nil)
+	got, err := NewResultFilter(llm).Keep(context.Background(), slog.New(slog.DiscardHandler), "Volvo", "acquisition", nil)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("got %v, %v", got, err)
 	}

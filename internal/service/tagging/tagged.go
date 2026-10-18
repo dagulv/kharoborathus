@@ -21,9 +21,9 @@ const (
 	englishLang  = "en"
 )
 
-func Run(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error {
+func Run(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGenerator, t *robot.Tagger, l, calls *slog.Logger) error {
 	for range schedule.Always.Tick(ctx, tickInterval) {
-		if err := tagPosts(ctx, s, sw, g, t, l); err != nil {
+		if err := tagPosts(ctx, s, sw, g, t, l, calls); err != nil {
 			l.Error("tag posts", "err", err)
 		}
 	}
@@ -31,7 +31,7 @@ func Run(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGenerato
 	return ctx.Err()
 }
 
-func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGenerator, t *robot.Tagger, l *slog.Logger) error {
+func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGenerator, t *robot.Tagger, l, calls *slog.Logger) error {
 	shadow, err := sw.Enabled(ctx, switches.ShadowGate)
 	if err != nil {
 		return err
@@ -51,6 +51,7 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 	}()
 
 	for _, post := range posts {
+		pl := calls.With("post_id", post.ID)
 		lang := normalizeLang(post.Lang)
 
 		v, err := s.Vocabulary(ctx)
@@ -60,7 +61,7 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 
 		// Only trusted posts shape the vocabulary, but every post is still classified.
 		if post.Trusted {
-			err = generateTags(ctx, s, g, v, lang, post)
+			err = generateTags(ctx, pl, s, g, v, lang, post)
 			aiCalls++
 		}
 
@@ -87,7 +88,7 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 			continue
 		}
 
-		keys, err := t.Tags(ctx, post.Title, post.Content, tags)
+		keys, err := t.Tags(ctx, pl, post.Title, post.Content, tags)
 		aiCalls++
 
 		var gatePassed *bool
@@ -113,8 +114,8 @@ func tagPosts(ctx context.Context, s *Store, sw *switches.Store, g *robot.TagGen
 	return nil
 }
 
-func generateTags(ctx context.Context, s *Store, g *robot.TagGenerator, v Vocabulary, lang string, post Post) error {
-	generated, err := g.Generate(ctx, lang, post.Content, v.ActiveKeys())
+func generateTags(ctx context.Context, l *slog.Logger, s *Store, g *robot.TagGenerator, v Vocabulary, lang string, post Post) error {
+	generated, err := g.Generate(ctx, l, lang, post.Content, v.ActiveKeys())
 	if err != nil {
 		return fmt.Errorf("err generate tags: %w", err)
 	}

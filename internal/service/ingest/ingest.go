@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
@@ -53,6 +54,7 @@ type Ingester struct {
 	pacer      *pacer
 	robots     *Robots
 	l          *slog.Logger
+	calls      *slog.Logger
 }
 
 type result struct {
@@ -63,7 +65,7 @@ type result struct {
 	aiCalls  int
 }
 
-func NewIngester(s *Store, sw *switches.Store, tags *tagging.Store, feeds *feed.Store, domains *domain.Store, trim *source.Trim, tagger *robot.Tagger, summarizer *robot.Summarizer, l *slog.Logger) *Ingester {
+func NewIngester(s *Store, sw *switches.Store, tags *tagging.Store, feeds *feed.Store, domains *domain.Store, trim *source.Trim, tagger *robot.Tagger, summarizer *robot.Summarizer, l, calls *slog.Logger) *Ingester {
 	client := safehttp.NewClient(fetchTimeout)
 	p := newPacer(domainGap)
 
@@ -81,6 +83,7 @@ func NewIngester(s *Store, sw *switches.Store, tags *tagging.Store, feeds *feed.
 		pacer:      p,
 		robots:     NewRobots(client, p),
 		l:          l,
+		calls:      calls,
 	}
 }
 
@@ -130,7 +133,7 @@ func (in *Ingester) tick(ctx context.Context) error {
 	}()
 
 	for _, link := range links {
-		res, err := in.process(ctx, link, tags)
+		res, err := in.process(ctx, in.calls.With("link_event_id", link.ID), link, tags)
 		aiCalls += res.aiCalls
 
 		switch {
@@ -165,7 +168,7 @@ func (in *Ingester) tick(ctx context.Context) error {
 }
 
 // process returns the link's final status, or an error to retry it on a later tick.
-func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (res result, err error) {
+func (in *Ingester) process(ctx context.Context, l *slog.Logger, link Link, tags []robot.Tag) (res result, err error) {
 	base, err := domain.BaseURL(link.URL)
 	if err != nil {
 		res.status, res.reason = statusFailed, "bad url"
@@ -183,7 +186,7 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 		return res, nil
 	}
 
-	allowed, err := in.robots.Allowed(ctx, link.URL)
+	allowed, err := in.robots.Allowed(ctx, l, link.URL)
 	if errors.Is(err, safehttp.ErrPrivateAddress) {
 		res.status, res.reason = statusFailed, "private address"
 		return res, nil
@@ -202,7 +205,7 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 		return res, err
 	}
 
-	page, finalURL, err := sourceadapter.FetchPage(ctx, in.client, link.URL)
+	page, finalURL, err := sourceadapter.FetchPage(ctx, logs.Client(in.client, l, "ingest"), link.URL)
 	if err != nil {
 		return res, err
 	}
@@ -220,7 +223,7 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 
 	res.domainID = d.ID
 
-	f := in.trim.Apply(ctx, d, feed.Feed{URL: finalURL, DomainID: d.ID, Lang: pageLang(page)}, page)
+	f := in.trim.Apply(ctx, l, d, feed.Feed{URL: finalURL, DomainID: d.ID, Lang: pageLang(page)}, page)
 
 	if f.Content == "" {
 		res.status, res.reason = statusRejected, "no content"
@@ -255,7 +258,7 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 
 	res.aiCalls++
 
-	v, err := in.tagger.Gate(ctx, f.Title, f.Content, tags)
+	v, err := in.tagger.Gate(ctx, l, f.Title, f.Content, tags)
 	if err != nil {
 		return res, fmt.Errorf("%w: %w", errGate, err)
 	}
@@ -269,7 +272,7 @@ func (in *Ingester) process(ctx context.Context, link Link, tags []robot.Tag) (r
 
 	res.aiCalls++
 
-	if summary, err := in.summarizer.Summarize(ctx, f.Content); err == nil {
+	if summary, err := in.summarizer.Summarize(ctx, l, f.Content); err == nil {
 		f.ShortContent = summary
 	} else if !errors.Is(err, adapter.ErrUnavailable) {
 		in.l.Warn("summarize", "url", link.URL, "err", err)

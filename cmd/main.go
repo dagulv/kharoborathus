@@ -14,6 +14,7 @@ import (
 
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
+	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/discovery"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
@@ -49,6 +50,9 @@ func app(ctx context.Context) (err error) {
 
 	l := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
+	// Third-party requests, one row each in the logs table.
+	calls := slog.New(logs.NewHandler(db, l.WithGroup("logs")))
+
 	feedStore := feed.NewStore(db)
 	domainStore := domain.NewStore(db)
 	sourceStore := source.NewStore(db, feedStore, domainStore)
@@ -77,7 +81,7 @@ func app(ctx context.Context) (err error) {
 	tagMerger := robot.NewTagMerger(classifier)
 	resultFilter := robot.NewResultFilter(llm)
 	searcher, searchErr := discovery.NewBrave(env)
-	ingester := ingest.NewIngester(&ingestStore, &switchStore, &taggingStore, &feedStore, &domainStore, trim, tagger, summarizer, l.WithGroup("ingest"))
+	ingester := ingest.NewIngester(&ingestStore, &switchStore, &taggingStore, &feedStore, &domainStore, trim, tagger, summarizer, l.WithGroup("ingest"), calls)
 
 	syncs := make(chan source.Source, source.SyncQueue)
 
@@ -106,19 +110,19 @@ func app(ctx context.Context) (err error) {
 	}
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceStore, syncs, trim, summarizer, schedule.Always, l.WithGroup("sourced"))
+		return source.Run(ctx, &sourceStore, syncs, trim, summarizer, schedule.Always, l.WithGroup("sourced"), calls)
 	})
 
 	g.Go(func() error {
-		return source.RunLifecycle(ctx, &sourceStore, &switchStore, l.WithGroup("lifecycle"))
+		return source.RunLifecycle(ctx, &sourceStore, &switchStore, l.WithGroup("lifecycle"), calls)
 	})
 
 	g.Go(func() error {
-		return tagging.Run(ctx, &taggingStore, &switchStore, tagGenerator, tagger, l.WithGroup("tagging"))
+		return tagging.Run(ctx, &taggingStore, &switchStore, tagGenerator, tagger, l.WithGroup("tagging"), calls)
 	})
 
 	g.Go(func() error {
-		return tagging.RunPromotion(ctx, &taggingStore, tagMerger, tagger, l.WithGroup("promotion"))
+		return tagging.RunPromotion(ctx, &taggingStore, tagMerger, tagger, l.WithGroup("promotion"), calls)
 	})
 
 	g.Go(func() error {
@@ -126,7 +130,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return discovery.Run(ctx, &discoveryStore, discoverer, llm.Schedule(), l.WithGroup("discovery"))
+		return discovery.Run(ctx, &discoveryStore, discoverer, llm.Schedule(), l.WithGroup("discovery"), calls)
 	})
 
 	g.Go(func() error {
@@ -140,7 +144,7 @@ func app(ctx context.Context) (err error) {
 			return nil
 		}
 
-		return discovery.RunSearch(ctx, &discoveryStore, &switchStore, searcher, resultFilter, llm.Schedule(), l.WithGroup("search"))
+		return discovery.RunSearch(ctx, &discoveryStore, &switchStore, searcher, resultFilter, llm.Schedule(), l.WithGroup("search"), calls)
 	})
 
 	g.Go(func() error {

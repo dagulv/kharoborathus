@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"log/slog"
 	"strings"
 	"text/template"
 
@@ -30,7 +31,7 @@ func NewTagMerger(classifier adapter.Classifier) *TagMerger {
 	return &TagMerger{classifier: classifier}
 }
 
-func (m *TagMerger) Duplicate(ctx context.Context, candidate Tag, existing []Tag) (string, error) {
+func (m *TagMerger) Duplicate(ctx context.Context, l *slog.Logger, candidate Tag, existing []Tag) (string, error) {
 	if len(existing) == 0 {
 		return "", nil
 	}
@@ -47,7 +48,7 @@ func (m *TagMerger) Duplicate(ctx context.Context, candidate Tag, existing []Tag
 		questions[fmt.Sprintf("tag_%d", i)] = adapter.NoulQuestion{Instructions: b.String(), Criteria: &tagMergeCriteria}
 	}
 
-	answers, err := m.classifier.Noul(ctx, map[string]any{"key": candidate.Key, "terms": candidate.Terms}, questions)
+	answers, err := m.classifier.Noul(ctx, l, map[string]any{"key": candidate.Key, "terms": candidate.Terms}, questions)
 	if err != nil {
 		return "", fmt.Errorf("err tag merge answer: %w", err)
 	}

@@ -30,7 +30,7 @@ func NewJevMock(l *slog.Logger) Classifier {
 	return jevMock{l: l}
 }
 
-func (m jevMock) Noul(ctx context.Context, state any, questions map[string]NoulQuestion) (map[string]float64, error) {
+func (m jevMock) Noul(ctx context.Context, _ *slog.Logger, state any, questions map[string]NoulQuestion) (map[string]float64, error) {
 	b, err := json.Marshal(state)
 	if err != nil {
 		return nil, err

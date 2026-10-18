@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -63,11 +64,11 @@ func TestRobotsAllowed(t *testing.T) {
 	srv, requests := robotsServer(t, http.StatusOK, "User-agent: *\nDisallow: /private")
 	r := NewRobots(srv.Client(), newPacer(0))
 
-	if ok, err := r.Allowed(context.Background(), srv.URL+"/private/1"); err != nil || ok {
+	if ok, err := r.Allowed(context.Background(), slog.New(slog.DiscardHandler), srv.URL+"/private/1"); err != nil || ok {
 		t.Errorf("private: %v %v", ok, err)
 	}
 
-	if ok, err := r.Allowed(context.Background(), srv.URL+"/news/1"); err != nil || !ok {
+	if ok, err := r.Allowed(context.Background(), slog.New(slog.DiscardHandler), srv.URL+"/news/1"); err != nil || !ok {
 		t.Errorf("news: %v %v", ok, err)
 	}
 
@@ -79,7 +80,7 @@ func TestRobotsAllowed(t *testing.T) {
 func TestRobotsMissing(t *testing.T) {
 	srv, _ := robotsServer(t, http.StatusNotFound, "")
 
-	if ok, err := NewRobots(srv.Client(), newPacer(0)).Allowed(context.Background(), srv.URL+"/x"); err != nil || !ok {
+	if ok, err := NewRobots(srv.Client(), newPacer(0)).Allowed(context.Background(), slog.New(slog.DiscardHandler), srv.URL+"/x"); err != nil || !ok {
 		t.Errorf("got %v %v", ok, err)
 	}
 }
@@ -89,7 +90,7 @@ func TestRobotsServerError(t *testing.T) {
 	r := NewRobots(srv.Client(), newPacer(0))
 
 	for range 2 {
-		if _, err := r.Allowed(context.Background(), srv.URL+"/x"); err == nil {
+		if _, err := r.Allowed(context.Background(), slog.New(slog.DiscardHandler), srv.URL+"/x"); err == nil {
 			t.Error("no error")
 		}
 	}

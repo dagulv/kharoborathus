@@ -3,6 +3,7 @@ package robot
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
@@ -15,7 +16,7 @@ type scoreClassifier struct {
 	err      error
 }
 
-func (f *scoreClassifier) Noul(_ context.Context, state any, questions map[string]adapter.NoulQuestion) (map[string]float64, error) {
+func (f *scoreClassifier) Noul(_ context.Context, _ *slog.Logger, state any, questions map[string]adapter.NoulQuestion) (map[string]float64, error) {
 	f.requests = append(f.requests, questions)
 	f.state = state
 
@@ -41,7 +42,7 @@ func TestDuplicateTag(t *testing.T) {
 		"Does this tag name the same concept as acquisition (acquisition, förvärv)?":        0.1,
 	}}
 
-	key, err := NewTagMerger(c).Duplicate(context.Background(), candidateTag, []Tag{
+	key, err := NewTagMerger(c).Duplicate(context.Background(), slog.New(slog.DiscardHandler), candidateTag, []Tag{
 		{Key: "acquisition", Terms: []string{"acquisition", "förvärv"}},
 		{Key: "capital_raise", Terms: []string{"capital raise", "nyemission"}},
 		{Key: "investment", Terms: []string{"investering", "investment"}},
@@ -75,7 +76,7 @@ func TestDuplicateTagBelowThreshold(t *testing.T) {
 		"Does this tag name the same concept as investment (investering, investment)?": 0.7,
 	}}
 
-	key, err := NewTagMerger(c).Duplicate(context.Background(), candidateTag, []Tag{
+	key, err := NewTagMerger(c).Duplicate(context.Background(), slog.New(slog.DiscardHandler), candidateTag, []Tag{
 		{Key: "investment", Terms: []string{"investering", "investment"}},
 	})
 	if err != nil {
@@ -90,7 +91,7 @@ func TestDuplicateTagBelowThreshold(t *testing.T) {
 func TestDuplicateTagNoExisting(t *testing.T) {
 	c := &scoreClassifier{}
 
-	key, err := NewTagMerger(c).Duplicate(context.Background(), candidateTag, nil)
+	key, err := NewTagMerger(c).Duplicate(context.Background(), slog.New(slog.DiscardHandler), candidateTag, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestDuplicateTagNoExisting(t *testing.T) {
 func TestDuplicateTagUnavailable(t *testing.T) {
 	c := &scoreClassifier{err: adapter.ErrUnavailable}
 
-	if _, err := NewTagMerger(c).Duplicate(context.Background(), candidateTag, []Tag{{Key: "investment"}}); !errors.Is(err, adapter.ErrUnavailable) {
+	if _, err := NewTagMerger(c).Duplicate(context.Background(), slog.New(slog.DiscardHandler), candidateTag, []Tag{{Key: "investment"}}); !errors.Is(err, adapter.ErrUnavailable) {
 		t.Errorf("err %v", err)
 	}
 }

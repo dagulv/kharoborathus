@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -46,7 +47,7 @@ func NewResultFilter(llm adapter.LLM) *ResultFilter {
 	return &ResultFilter{llm: llm}
 }
 
-func (f *ResultFilter) Keep(ctx context.Context, entity, action string, results []SearchResult) ([]string, error) {
+func (f *ResultFilter) Keep(ctx context.Context, l *slog.Logger, entity, action string, results []SearchResult) ([]string, error) {
 	if len(results) == 0 {
 		return nil, nil
 	}
@@ -66,7 +67,7 @@ func (f *ResultFilter) Keep(ctx context.Context, entity, action string, results 
 
 	var answer filterAnswer
 
-	if err := f.llm.Unmarshal(ctx, adapter.Request{
+	if err := f.llm.Unmarshal(ctx, l, adapter.Request{
 		System:      strings.TrimSpace(searchFilterPrompt),
 		Prompt:      string(b),
 		Temperature: &temp,

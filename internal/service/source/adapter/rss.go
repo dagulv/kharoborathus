@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/mmcdole/gofeed"
@@ -26,27 +27,24 @@ type rssDocument struct {
 
 type rss struct {
 	client    *http.Client
-	fp        *gofeed.Parser
 	feedStore *feed.Store
 	l         *slog.Logger
 }
 
 func NewRSS(feedStore *feed.Store, l *slog.Logger) Adapter[rssDocument] {
-	client := safehttp.NewClient(time.Second * 20)
-
-	fp := gofeed.NewParser()
-	fp.Client = client
-
 	return rss{
-		client:    client,
-		fp:        fp,
+		client:    safehttp.NewClient(time.Second * 20),
 		feedStore: feedStore,
 		l:         l,
 	}
 }
 
-func (r rss) FetchFromSource(ctx context.Context, url string) (<-chan rssDocument, error) {
-	f, err := r.fp.ParseURLWithContext(url, ctx)
+func (r rss) FetchFromSource(ctx context.Context, l *slog.Logger, url string) (<-chan rssDocument, error) {
+	// A parser per call, since its client logs to this call's logger.
+	fp := gofeed.NewParser()
+	fp.Client = logs.Client(r.client, l, "rss")
+
+	f, err := fp.ParseURLWithContext(url, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("err parse rss: %w", err)
 	}
@@ -102,7 +100,7 @@ func (r rss) Filter(ctx context.Context, data rssDocument) (bool, error) {
 	return !exists, nil
 }
 
-func (r rss) FetchContent(ctx context.Context, data rssDocument) (rssDocument, error) {
+func (r rss) FetchContent(ctx context.Context, _ *slog.Logger, data rssDocument) (rssDocument, error) {
 	return data, nil
 }
 

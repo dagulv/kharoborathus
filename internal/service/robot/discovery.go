@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"log/slog"
 	"strings"
 	"text/template"
 	"unicode/utf8"
@@ -47,7 +48,7 @@ func NewDiscoverer(llm adapter.LLM) *Discoverer {
 	return &Discoverer{llm: llm}
 }
 
-func (d *Discoverer) Keywords(ctx context.Context, markdown string, gateKeys []string) ([]Keyword, error) {
+func (d *Discoverer) Keywords(ctx context.Context, l *slog.Logger, markdown string, gateKeys []string) ([]Keyword, error) {
 	if r := []rune(markdown); len(r) > maxDiscoveryInput {
 		markdown = string(r[:maxDiscoveryInput])
 	}
@@ -65,7 +66,7 @@ func (d *Discoverer) Keywords(ctx context.Context, markdown string, gateKeys []s
 
 	var answer discoveryAnswer
 
-	if err := d.llm.Unmarshal(ctx, adapter.Request{
+	if err := d.llm.Unmarshal(ctx, l, adapter.Request{
 		System:      strings.TrimSpace(discoveryPrompt),
 		Prompt:      prompt.String(),
 		Temperature: &temp,

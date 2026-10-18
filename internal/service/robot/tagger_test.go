@@ -3,6 +3,7 @@ package robot
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"testing"
 
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
@@ -14,7 +15,7 @@ type fakeClassifier struct {
 	yes      map[string]bool
 }
 
-func (f *fakeClassifier) Noul(_ context.Context, state any, questions map[string]adapter.NoulQuestion) (map[string]float64, error) {
+func (f *fakeClassifier) Noul(_ context.Context, _ *slog.Logger, state any, questions map[string]adapter.NoulQuestion) (map[string]float64, error) {
 	f.requests = append(f.requests, questions)
 	f.state = state
 
@@ -46,7 +47,7 @@ func TestTags(t *testing.T) {
 		"Is this news article about filler-59?":                            true,
 	}}
 
-	keys, err := NewTagger(c).Tags(context.Background(), "Volvo investerar", "Volvo Cars investerar.", tags)
+	keys, err := NewTagger(c).Tags(context.Background(), slog.New(slog.DiscardHandler), "Volvo investerar", "Volvo Cars investerar.", tags)
 	if err != nil {
 		t.Fatal(err)
 	}

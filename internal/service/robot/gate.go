@@ -3,6 +3,7 @@ package robot
 import (
 	"context"
 	_ "embed"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -26,8 +27,8 @@ type Verdict struct {
 	Passed  bool               `json:"-"`
 }
 
-func (t *Tagger) Gate(ctx context.Context, title, markdown string, tags []Tag) (Verdict, error) {
-	scores, extra, err := t.classify(ctx, title, markdown, tags, map[string]adapter.NoulQuestion{
+func (t *Tagger) Gate(ctx context.Context, l *slog.Logger, title, markdown string, tags []Tag) (Verdict, error) {
+	scores, extra, err := t.classify(ctx, l, title, markdown, tags, map[string]adapter.NoulQuestion{
 		articleID: {Instructions: strings.TrimSpace(articlePrompt), Criteria: &articleCriteria},
 	})
 	if err != nil {
