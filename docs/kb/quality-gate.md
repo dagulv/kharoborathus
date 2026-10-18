@@ -23,14 +23,15 @@ Nothing yet. Today the pipeline summarizes every post inline in [sourced.go](../
 2. The quality worker takes up to 20 `pending` posts a minute, oldest first.
 3. It asks Jev the `article` question from [gate.go](../../internal/service/robot/gate.go) alone, on title and markdown.
 4. A score of at least the threshold sets `active`. A lower score sets `rejected`.
-5. While Jev is unavailable the tick stops and posts stay `pending`.
-6. Ingest inserts discovered posts as `active`, since `Tagger.Gate` already asked the same question. It no longer summarizes inline.
-7. Four workers run side by side on `active` posts. Each tracks its own checked table:
+5. While Jev is unavailable the tick stops and posts stay `pending`. Any other error skips the post, which stays `pending` for the next tick. An error never hides a post.
+6. With the mocked classifier every pending post becomes `active`, since the mock cannot judge quality.
+7. Ingest inserts discovered posts as `active`, since `Tagger.Gate` already asked the same question. It no longer summarizes inline.
+8. Four workers run side by side on `active` posts. Each tracks its own checked table:
    - Summary, off peak, through `summary_checked`.
    - Tagging, through `tag_checked`.
    - Discovery, through `discover_checked`.
    - Link extraction, through `link_checked`.
-8. A post shows its excerpt until its summary lands.
+9. A post shows its excerpt until its summary lands.
 
 Rules:
 
@@ -38,6 +39,7 @@ Rules:
 - Duplicate linking, source revive and source silence still count every post. A source that posts only junk stays active.
 - The quality pass rate does not flag sources for now. It could later, like the shadow gate does.
 - The shadow gate runs as before, on `active` posts only.
+- The tag broadness sample reads `active` posts only.
 - Existing posts become `active` without a check. Their summaries are kept.
 - `sources.status` and `tags.status` share the column name, so queries joining them must qualify `p.status`.
 - `summary_pending` is dropped in a later migration, after the new binary runs. Migrations deploy apart from the app, and the old binary still writes the column.
