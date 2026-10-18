@@ -114,6 +114,10 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
+		return source.RunSummaries(ctx, &sourceStore, summarizer, llm.Schedule(), l.WithGroup("summaries"), calls)
+	})
+
+	g.Go(func() error {
 		return source.RunLifecycle(ctx, &sourceStore, &switchStore, l.WithGroup("lifecycle"), calls)
 	})
 
