@@ -6,7 +6,7 @@ services:
       dockerfile: infra/db/Dockerfile
     restart: unless-stopped
     env_file:
-      - docker/postgres/.env
+      - infra/db/.env
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run through infra/secrets.sh dev, since .env holds no secrets}
     ports:
