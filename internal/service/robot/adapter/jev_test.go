@@ -17,7 +17,7 @@ func testJev(t *testing.T, handler http.HandlerFunc) jev {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	return jev{client: srv.Client(), url: srv.URL, key: "secret", model: JevLatest, l: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	return jev{client: srv.Client(), url: srv.URL, key: "secret", model: JevModel, l: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
 func TestJevNoul(t *testing.T) {
@@ -32,7 +32,7 @@ func TestJevNoul(t *testing.T) {
 		}
 
 		q := req["questions"].(map[string]any)["tag_0"].(map[string]any)
-		if req["model"] != JevLatest || q["type"] != "noul" || q["instructions"] != "Is it about investments?" || req["state"].(map[string]any)["title"] != "Volvo" {
+		if req["model"] != JevModel || q["type"] != "noul" || q["instructions"] != "Is it about investments?" || req["state"].(map[string]any)["title"] != "Volvo" {
 			t.Errorf("body %v", req)
 		}
 
@@ -40,7 +40,7 @@ func TestJevNoul(t *testing.T) {
 			t.Error("empty criteria sent")
 		}
 
-		w.Write([]byte(`{"model":"jev-1.13.0","answers":{"tag_0":{"type":"noul","noul":0.93},"tag_1":{"type":"noul","noul":0.04}},"usage":{"input_tokens":360,"output_tokens":39}}`))
+		w.Write([]byte(`{"model":"jev-1.14.0","answers":{"tag_0":{"type":"noul","noul":0.93},"tag_1":{"type":"noul","noul":0.04}},"usage":{"input_tokens":360,"output_tokens":39}}`))
 	})
 
 	got, err := j.Noul(context.Background(), map[string]string{"title": "Volvo"}, map[string]NoulQuestion{

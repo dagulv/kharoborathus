@@ -16,7 +16,7 @@ import (
 
 const (
 	jevURL              = "https://api.typesafe.ai/v1/systemone"
-	JevLatest           = "jev-latest"
+	JevModel            = "jev-1.14.0"
 	jevTimeout          = time.Minute
 	statusJevOverloaded = 529
 )
@@ -40,7 +40,7 @@ func NewJev(env *config.Environment, l *slog.Logger) (Classifier, error) {
 		client: &http.Client{Timeout: jevTimeout},
 		url:    jevURL,
 		key:    env.TypesafeAPIKey,
-		model:  JevLatest,
+		model:  JevModel,
 		l:      l,
 	}, nil
 }
