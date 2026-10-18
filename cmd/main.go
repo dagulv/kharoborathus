@@ -135,6 +135,14 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
+		if mocked {
+			l.Warn("quality gate passes every post, the mocked classifier cannot judge quality")
+		}
+
+		return source.RunQuality(ctx, &sourceStore, tagger, mocked, l.WithGroup("quality"), calls)
+	})
+
+	g.Go(func() error {
 		return source.RunLifecycle(ctx, &sourceStore, &switchStore, l.WithGroup("lifecycle"), calls)
 	})
 
