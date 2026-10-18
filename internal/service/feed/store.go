@@ -138,11 +138,11 @@ func InsertFeed(ctx context.Context, tx pgx.Tx, feed Feed) (out Feed, err error)
 	hash := sha256.Sum256([]byte(feed.Content))
 
 	out, err = scanFeed(tx.QueryRow(ctx, `
-		INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, content, tags, authors, posted_at, content_hash, simhash, summary_pending, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), COALESCE($9::text[], '{}'), $10, $11, $12, $13, $14)
+		INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, content, tags, authors, posted_at, content_hash, simhash, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), COALESCE($9::text[], '{}'), $10, $11, $12, $13)
 		ON CONFLICT (url) DO NOTHING
 		RETURNING `+feedColumns,
-		feed.SourceID, feed.DomainID, feed.URL, feed.Lang, feed.Title, feed.ShortContent, feed.Content, feed.Tags, feed.Authors, feed.PostedAt, hash[:], textSimhash(feed.Content), feed.SummaryPending, status,
+		feed.SourceID, feed.DomainID, feed.URL, feed.Lang, feed.Title, feed.ShortContent, feed.Content, feed.Tags, feed.Authors, feed.PostedAt, hash[:], textSimhash(feed.Content), status,
 	))
 	if err != nil {
 		return out, err
@@ -191,7 +191,14 @@ func (s *Store) HasDuplicate(ctx context.Context, content string) (bool, error) 
 }
 
 func (s *Store) ListPendingSummaries(ctx context.Context, limit int) ([]Feed, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+feedColumns+` FROM posts WHERE summary_pending ORDER BY created_at LIMIT $1`, limit)
+	rows, err := s.db.Query(ctx, `
+		SELECT `+feedColumns+`
+		FROM posts p
+		WHERE p.status = 'active'
+			AND NOT EXISTS (SELECT 1 FROM summary_checked c WHERE c.post_id = p.id)
+		ORDER BY p.created_at
+		LIMIT $1
+		`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("err query pending summaries: %w", err)
 	}
@@ -208,14 +215,17 @@ func (s *Store) ListPendingSummaries(ctx context.Context, limit int) ([]Feed, er
 
 // An empty summary keeps the excerpt, so a post the summarizer cannot handle still leaves the queue.
 func (s *Store) CompleteSummary(ctx context.Context, id, summary string) error {
-	if _, err := s.db.Exec(ctx, `
-		UPDATE posts SET short_content = coalesce(nullif($2, ''), short_content), summary_pending = false
-		WHERE id = $1
-		`, id, summary); err != nil {
-		return fmt.Errorf("err complete summary: %w", err)
-	}
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE posts SET short_content = coalesce(nullif($2, ''), short_content) WHERE id = $1`, id, summary); err != nil {
+			return fmt.Errorf("err complete summary: %w", err)
+		}
 
-	return nil
+		if _, err := tx.Exec(ctx, `INSERT INTO summary_checked (post_id) VALUES ($1) ON CONFLICT (post_id) DO NOTHING`, id); err != nil {
+			return fmt.Errorf("err mark summarized: %w", err)
+		}
+
+		return nil
+	})
 }
 
 // Stored as the uint64 bit pattern, so half of all hashes are negative. Only bits are compared.
