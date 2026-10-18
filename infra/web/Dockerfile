@@ -14,7 +14,7 @@ COPY tsconfig.json vite.config.ts ./
 COPY src src
 COPY static static
 # Route analysis validates env at build time. The real value is read at runtime.
-RUN POSTGRES_CONNECTION_STRING=postgresql://build@localhost/build ADMIN_USER=build ADMIN_PASSWORD=build pnpm build
+RUN POSTGRES_CONNECTION_STRING=postgresql://build@localhost/build ADMIN_TOKEN=build pnpm build
 
 FROM node:24-alpine
 WORKDIR /app

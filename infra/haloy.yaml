@@ -74,9 +74,6 @@ targets:
       - name: POSTGRES_CONNECTION_STRING
         from:
           env: POSTGRES_CONNECTION_STRING
-      - name: ADMIN_USER
+      - name: ADMIN_TOKEN
         from:
-          env: ADMIN_USER
-      - name: ADMIN_PASSWORD
-        from:
-          env: ADMIN_PASSWORD
+          env: ADMIN_TOKEN

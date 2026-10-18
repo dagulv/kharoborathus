@@ -16,7 +16,7 @@ Each has a `.env-sample` or `.env.example` beside it. The dev db also builds fro
 
 | Vault | File | Keys |
 |---|---|---|
-| dev | `kharoborathus/app.yaml` | `POSTGRES_PASSWORD`, `ADMIN_PASSWORD`, `DEEPSEEK_API_KEY`, `TYPESAFE_API_KEY`, `BRAVE_API_KEY` |
+| dev | `kharoborathus/app.yaml` | `POSTGRES_PASSWORD`, `ADMIN_TOKEN`, `DEEPSEEK_API_KEY`, `TYPESAFE_API_KEY`, `BRAVE_API_KEY` |
 | prod | `kharoborathus/app.yaml` | The dev keys plus `POSTGRES_CONNECTION_STRING` |
 | prod | `kharoborathus/tofu.yaml` | `UPCLOUD_TOKEN`, `TF_VAR_state_passphrase` |
 
@@ -89,7 +89,7 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
    for t in db api web; do cp infra/$t/.env.example infra/$t/.env; done
    ```
 
-   Generate `POSTGRES_PASSWORD` with `openssl rand -hex 32` and put the same value in `POSTGRES_CONNECTION_STRING`. Characters like `/`, `@` or `$` break the URL or get expanded. Generate `ADMIN_PASSWORD` the same way: basic auth has no rate limit or lockout, so only its length stops guessing.
+   Generate `POSTGRES_PASSWORD` with `openssl rand -hex 32` and put the same value in `POSTGRES_CONNECTION_STRING`. Characters like `/`, `@` or `$` break the URL or get expanded. Generate `ADMIN_TOKEN` the same way: the login has no rate limit or lockout, so only its length stops guessing.
 
 8. Deploy the database first, then the rest once its logs say it accepts connections:
 
