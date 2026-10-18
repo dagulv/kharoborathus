@@ -17,6 +17,17 @@ func TestListingRoute(t *testing.T) {
 			return
 		}
 
+		if r.URL.Path == "/wp-json/wp/v2/posts" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-WP-Total", "420")
+			w.Write([]byte(`[{"id":1}]`))
+			return
+		}
+
+		if r.URL.Path == "/wp" {
+			w.Header().Set("Link", `</wp-json/>; rel="https://api.w.org/"`)
+		}
+
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte(`<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head></html>`))
 	}))
@@ -26,6 +37,7 @@ func TestListingRoute(t *testing.T) {
 
 	cases := []struct{ path, want string }{
 		{"/blog", `{"candidates":[{"adapter":"rss","url":"` + site.URL + `/feed.xml","title":"Blogg","items":2,"latest":"2026-09-16T00:00:00Z"},{"adapter":"page","url":"` + site.URL + `/blog"}]}`},
+		{"/wp", `{"candidates":[{"adapter":"rss","url":"` + site.URL + `/feed.xml","title":"Blogg","items":2,"latest":"2026-09-16T00:00:00Z"},{"adapter":"page","url":"` + site.URL + `/wp"}],"wordpress":{"posts":"` + site.URL + `/wp-json/wp/v2/posts","total":420}}`},
 		{"/feed.xml", `{"candidates":[{"adapter":"rss","url":"` + site.URL + `/feed.xml","title":"Blogg","items":2,"latest":"2026-09-16T00:00:00Z"}]}`},
 	}
 

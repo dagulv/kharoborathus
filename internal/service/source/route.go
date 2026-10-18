@@ -11,6 +11,7 @@ import (
 
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
+	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -19,6 +20,11 @@ const SyncQueue = 16
 const discoverTimeout = time.Minute
 
 const invalidTextRepresentation = "22P02"
+
+type listing struct {
+	Candidates []Candidate       `json:"candidates"`
+	WordPress  adapter.WordPress `json:"wordpress,omitzero"`
+}
 
 func Routes(mux *http.ServeMux, s *Store, syncs chan<- Source, l, calls *slog.Logger) {
 	mux.HandleFunc("POST /sources/{id}/sync", syncSource(s, syncs, l))
@@ -38,15 +44,23 @@ func listingRoute(client *http.Client, l, calls *slog.Logger) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), discoverTimeout)
 		defer cancel()
 
-		candidates, err := discover(ctx, logs.Client(client, calls.With("url", u), "homepage"), u)
+		c := logs.Client(client, calls.With("url", u), "homepage")
+
+		candidates, err := discover(ctx, c, u)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 
+		// Informs the admin only. The backfill checks the chosen listing itself once the source is scraped.
+		wp, err := adapter.FindWordPress(ctx, c, u)
+		if err != nil {
+			l.Warn("find wordpress", "url", u, "err", err)
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 
-		if err := json.MarshalWrite(w, map[string][]Candidate{"candidates": candidates}); err != nil {
+		if err := json.MarshalWrite(w, listing{Candidates: candidates, WordPress: wp}); err != nil {
 			l.Error("write listing", "url", u, "err", err)
 		}
 	}
