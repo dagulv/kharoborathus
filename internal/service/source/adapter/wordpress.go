@@ -15,6 +15,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
+	"github.com/dagulv/kharoborathus/internal/lib/pace"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/mmcdole/gofeed"
@@ -35,7 +36,11 @@ type WordPress struct {
 }
 
 // FindWordPress returns the REST API behind the page or feed at rawURL, or a zero WordPress when there is none.
-func FindWordPress(ctx context.Context, client *http.Client, rawURL string) (WordPress, error) {
+func FindWordPress(ctx context.Context, client *http.Client, pacer *pace.Pacer, rawURL string) (WordPress, error) {
+	if err := pacer.Wait(ctx, rawURL); err != nil {
+		return WordPress{}, err
+	}
+
 	res, err := fetch(ctx, client, rawURL, anyAccept)
 	if err != nil {
 		return WordPress{}, fmt.Errorf("err fetch: %w", err)
@@ -51,7 +56,13 @@ func FindWordPress(ctx context.Context, client *http.Client, rawURL string) (Wor
 		return WordPress{}, err
 	}
 
-	probe, err := fetch(ctx, client, withQuery(posts, "per_page", "1", "_fields", "id"), "application/json")
+	probeURL := withQuery(posts, "per_page", "1", "_fields", "id")
+
+	if err := pacer.Wait(ctx, probeURL); err != nil {
+		return WordPress{}, err
+	}
+
+	probe, err := fetch(ctx, client, probeURL, "application/json")
 	if err != nil {
 		return WordPress{}, fmt.Errorf("err probe posts: %w", err)
 	}
@@ -171,9 +182,10 @@ type wordpress struct {
 	rss
 }
 
-func NewWordPress(feedStore *feed.Store, l *slog.Logger) Adapter[rssDocument] {
+func NewWordPress(feedStore *feed.Store, pacer *pace.Pacer, l *slog.Logger) Adapter[rssDocument] {
 	return wordpress{rss{
 		client:    safehttp.NewClient(time.Second * 20),
+		pacer:     pacer,
 		feedStore: feedStore,
 		l:         l,
 	}}
@@ -226,12 +238,18 @@ func (r wordpress) FetchFromSource(ctx context.Context, l *slog.Logger, posts st
 }
 
 func (r wordpress) page(ctx context.Context, client *http.Client, posts *url.URL, page int) ([]rssDocument, int, error) {
-	res, err := fetch(ctx, client, withQuery(posts,
+	pageURL := withQuery(posts,
 		"per_page", strconv.Itoa(wordpressPageSize),
 		"page", strconv.Itoa(page),
 		"_embed", "author,wp:term",
 		"_fields", "link,date_gmt,title,content,_links,_embedded",
-	), "application/json")
+	)
+
+	if err := r.pacer.Wait(ctx, pageURL); err != nil {
+		return nil, 0, err
+	}
+
+	res, err := fetch(ctx, client, pageURL, "application/json")
 	if err != nil {
 		return nil, 0, err
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
+	"github.com/dagulv/kharoborathus/internal/lib/pace"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/mmcdole/gofeed"
@@ -27,13 +28,15 @@ type rssDocument struct {
 
 type rss struct {
 	client    *http.Client
+	pacer     *pace.Pacer
 	feedStore *feed.Store
 	l         *slog.Logger
 }
 
-func NewRSS(feedStore *feed.Store, l *slog.Logger) Adapter[rssDocument] {
+func NewRSS(feedStore *feed.Store, pacer *pace.Pacer, l *slog.Logger) Adapter[rssDocument] {
 	return rss{
 		client:    safehttp.NewClient(time.Second * 20),
+		pacer:     pacer,
 		feedStore: feedStore,
 		l:         l,
 	}
@@ -43,6 +46,10 @@ func (r rss) FetchFromSource(ctx context.Context, l *slog.Logger, url string) (<
 	// A parser per call, since its client logs to this call's logger.
 	fp := gofeed.NewParser()
 	fp.Client = logs.Client(r.client, l, "rss")
+
+	if err := r.pacer.Wait(ctx, url); err != nil {
+		return nil, err
+	}
 
 	f, err := fp.ParseURLWithContext(url, ctx)
 	if err != nil {

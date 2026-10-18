@@ -53,7 +53,7 @@ func listingRoute(client *http.Client, l, calls *slog.Logger) http.HandlerFunc {
 		}
 
 		// Informs the admin only. The backfill checks the chosen listing itself once the source is scraped.
-		wp, err := adapter.FindWordPress(ctx, c, u)
+		wp, err := adapter.FindWordPress(ctx, c, nil, u)
 		if err != nil {
 			l.Warn("find wordpress", "url", u, "err", err)
 		}

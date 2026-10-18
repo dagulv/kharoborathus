@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
+	"github.com/dagulv/kharoborathus/internal/lib/pace"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
@@ -14,7 +15,7 @@ const backfillBatch = 10
 
 // backfills checks every scraped source once for a WordPress REST API and sends each one found
 // to the wordpress pipeline, which reads the whole archive. Posts already stored are skipped there.
-func backfills(ctx context.Context, s *Store, sched schedule.Schedule, l, calls *slog.Logger) <-chan Source {
+func backfills(ctx context.Context, s *Store, sched schedule.Schedule, pacer *pace.Pacer, l, calls *slog.Logger) <-chan Source {
 	out := make(chan Source)
 	client := safehttp.NewClient(homepageTimeout)
 
@@ -29,7 +30,7 @@ func backfills(ctx context.Context, s *Store, sched schedule.Schedule, l, calls 
 			}
 
 			for _, source := range sources {
-				wp, err := adapter.FindWordPress(ctx, logs.Client(client, calls.With("source_id", source.ID), "wordpress"), source.URL)
+				wp, err := adapter.FindWordPress(ctx, logs.Client(client, calls.With("source_id", source.ID), "wordpress"), pacer, source.URL)
 
 				// Marked before the backfill runs, so a failing site is not checked every minute and a
 				// restart does not repeat it. Clearing backfilled_at runs it again.

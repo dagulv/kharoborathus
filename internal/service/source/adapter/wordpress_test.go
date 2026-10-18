@@ -9,6 +9,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/dagulv/kharoborathus/internal/lib/pace"
 )
 
 func wordpressServer(t *testing.T, root string) *httptest.Server {
@@ -78,7 +80,7 @@ func TestFindWordPress(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			srv := wordpressServer(t, c.root)
 
-			wp, err := FindWordPress(context.Background(), srv.Client(), srv.URL+c.path)
+			wp, err := FindWordPress(context.Background(), srv.Client(), nil, srv.URL+c.path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -94,7 +96,7 @@ func TestFindWordPress(t *testing.T) {
 func TestFindWordPressNone(t *testing.T) {
 	srv := wordpressServer(t, "/wp-json/")
 
-	wp, err := FindWordPress(context.Background(), srv.Client(), srv.URL+"/plain")
+	wp, err := FindWordPress(context.Background(), srv.Client(), nil, srv.URL+"/plain")
 	if err != nil || wp != (WordPress{}) {
 		t.Errorf("got %+v, %v", wp, err)
 	}
@@ -104,7 +106,10 @@ func TestWordPressFetchesEveryPage(t *testing.T) {
 	srv := wordpressServer(t, "/wp-json/")
 	l := slog.New(slog.DiscardHandler)
 
-	wp := wordpress{rss{client: srv.Client(), l: l}}
+	gap := 50 * time.Millisecond
+	wp := wordpress{rss{client: srv.Client(), pacer: pace.New(gap), l: l}}
+
+	start := time.Now()
 
 	docs, err := wp.FetchFromSource(context.Background(), l, srv.URL+"/wp-json/wp/v2/posts")
 	if err != nil {
@@ -118,6 +123,10 @@ func TestWordPressFetchesEveryPage(t *testing.T) {
 
 	if len(got) != 3 || got[2].URL != "https://x.example/c" {
 		t.Fatalf("got %+v", got)
+	}
+
+	if elapsed := time.Since(start); elapsed < gap {
+		t.Errorf("two pages took %v, want at least %v apart", elapsed, gap)
 	}
 
 	a := got[0]

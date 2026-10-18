@@ -10,6 +10,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
+	"github.com/dagulv/kharoborathus/internal/lib/pace"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 )
@@ -28,14 +29,16 @@ type pageDocument struct {
 
 type page struct {
 	client    *http.Client
+	pacer     *pace.Pacer
 	feedStore *feed.Store
 	linker    Linker
 	l         *slog.Logger
 }
 
-func NewPage(feedStore *feed.Store, linker Linker, l *slog.Logger) Adapter[pageDocument] {
+func NewPage(feedStore *feed.Store, linker Linker, pacer *pace.Pacer, l *slog.Logger) Adapter[pageDocument] {
 	return page{
 		client:    safehttp.NewClient(time.Second * 20),
+		pacer:     pacer,
 		feedStore: feedStore,
 		linker:    linker,
 		l:         l,
@@ -43,6 +46,10 @@ func NewPage(feedStore *feed.Store, linker Linker, l *slog.Logger) Adapter[pageD
 }
 
 func (r page) FetchFromSource(ctx context.Context, l *slog.Logger, rawURL string) (<-chan pageDocument, error) {
+	if err := r.pacer.Wait(ctx, rawURL); err != nil {
+		return nil, err
+	}
+
 	listing, err := FetchHTML(ctx, logs.Client(r.client, l, "page"), rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("err fetch listing: %w", err)
@@ -87,6 +94,10 @@ func (r page) Filter(ctx context.Context, data pageDocument) (bool, error) {
 }
 
 func (r page) FetchContent(ctx context.Context, l *slog.Logger, data pageDocument) (pageDocument, error) {
+	if err := r.pacer.Wait(ctx, data.URL); err != nil {
+		return data, err
+	}
+
 	page, err := FetchHTML(ctx, logs.Client(r.client, l, "page"), data.URL)
 	if err != nil {
 		return data, fmt.Errorf("err fetch article: %w", err)

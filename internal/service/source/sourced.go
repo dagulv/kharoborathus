@@ -15,6 +15,7 @@ import (
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/dagulv/kharoborathus/internal/lib/iterx"
+	"github.com/dagulv/kharoborathus/internal/lib/pace"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
@@ -34,19 +35,22 @@ const (
 	maxFetchFailures = 10
 	minFailing       = 24 * time.Hour
 	probeInterval    = 7 * 24 * time.Hour
+
+	// Between requests to one host, shared by every adapter and the backfill check.
+	hostGap = 5 * time.Second
 )
 
 type Pipeline interface {
 	Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed
 }
 
-func initPipelines(ctx context.Context, in <-chan Source, s *Store, trim *Trim, summarizer *robot.Summarizer, l, calls *slog.Logger) []Pipeline {
+func initPipelines(ctx context.Context, in <-chan Source, s *Store, trim *Trim, summarizer *robot.Summarizer, pacer *pace.Pacer, l, calls *slog.Logger) []Pipeline {
 	sinks := make(map[string]chan Source)
 
 	pipelines := []Pipeline{
-		newPipeline(adapter.NewRSS(&s.feedStore, l), addSink(sinks, "rss"), s, trim, summarizer, calls),
-		newPipeline(adapter.NewPage(&s.feedStore, trim, l), addSink(sinks, "page"), s, trim, summarizer, calls),
-		newPipeline(adapter.NewWordPress(&s.feedStore, l), addSink(sinks, "wordpress"), s, trim, summarizer, calls),
+		newPipeline(adapter.NewRSS(&s.feedStore, pacer, l), addSink(sinks, "rss"), s, trim, summarizer, calls),
+		newPipeline(adapter.NewPage(&s.feedStore, trim, pacer, l), addSink(sinks, "page"), s, trim, summarizer, calls),
+		newPipeline(adapter.NewWordPress(&s.feedStore, pacer, l), addSink(sinks, "wordpress"), s, trim, summarizer, calls),
 	}
 
 	go func() {
@@ -82,9 +86,11 @@ func addSink(sinks map[string]chan Source, name string) <-chan Source {
 }
 
 func Run(ctx context.Context, s *Store, syncs <-chan Source, trim *Trim, summarizer *robot.Summarizer, sched schedule.Schedule, l, calls *slog.Logger) error {
-	sources := merge(ctx, continuousSources(ctx, s, syncs, sched, l), backfills(ctx, s, sched, l, calls))
+	pacer := pace.New(hostGap)
 
-	pipelines := initPipelines(ctx, sources, s, trim, summarizer, l, calls)
+	sources := merge(ctx, continuousSources(ctx, s, syncs, sched, l), backfills(ctx, s, sched, pacer, l, calls))
+
+	pipelines := initPipelines(ctx, sources, s, trim, summarizer, pacer, l, calls)
 
 	feeds := make([]<-chan feed.Feed, 0, len(pipelines))
 
