@@ -27,7 +27,8 @@ func (s *Store) ListUndiscoveredPosts(ctx context.Context, limit int) iter.Seq2[
 		rows, err := s.db.Query(ctx, `
 			SELECT p.id, p.content
 			FROM posts p
-			WHERE NOT EXISTS (SELECT 1 FROM discover_checked c WHERE c.post_id = p.id)
+			WHERE p.status = 'active'
+				AND NOT EXISTS (SELECT 1 FROM discover_checked c WHERE c.post_id = p.id)
 			ORDER BY p.created_at
 			LIMIT $1
 			`, limit)

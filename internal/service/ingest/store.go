@@ -25,6 +25,7 @@ func (s *Store) ListUnscannedPosts(ctx context.Context, windowDays, limit int) (
 		JOIN sources s ON s.id = p.source_id
 		JOIN domains d ON d.id = p.domain_id
 		WHERE s.status IN ('active', 'dormant')
+			AND p.status = 'active'
 			AND s.enabled
 			AND p.created_at > now() - make_interval(days => $1)
 			AND NOT EXISTS (SELECT 1 FROM link_checked c WHERE c.post_id = p.id)

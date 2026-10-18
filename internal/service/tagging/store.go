@@ -48,7 +48,8 @@ func (s *Store) ListUntaggedPosts(ctx context.Context, limit int) iter.Seq2[Post
 			SELECT p.id, p.lang, p.title, p.content, s.target_tags, s.enabled AND s.status IN ('active', 'dormant')
 			FROM posts p
 			JOIN sources s ON s.id = p.source_id
-			WHERE NOT EXISTS (SELECT 1 FROM tag_checked c WHERE c.post_id = p.id)
+			WHERE p.status = 'active'
+				AND NOT EXISTS (SELECT 1 FROM tag_checked c WHERE c.post_id = p.id)
 			ORDER BY p.created_at
 			LIMIT $1
 			`, limit)
@@ -313,6 +314,7 @@ func (s *Store) ListRecentPosts(ctx context.Context, days, limit int) ([]Post, e
 		FROM posts p
 		JOIN sources s ON s.id = p.source_id
 		WHERE p.created_at > now() - make_interval(days => $1)
+			AND p.status = 'active'
 			AND s.status IN ('active', 'dormant')
 			AND s.enabled
 			-- Discovered posts passed the gate, so they would skew the broadness sample.
