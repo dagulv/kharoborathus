@@ -36,6 +36,7 @@ Rules:
 
 - No worker that calls DeepSeek reads a `pending` or `rejected` post. Summaries, tags, events and links never come from junk.
 - Duplicate linking, source revive and source silence still count every post. A source that posts only junk stays active.
+- The quality pass rate does not flag sources for now. It could later, like the shadow gate does.
 - The shadow gate runs as before, on `active` posts only.
 - Existing posts become `active` without a check. Their summaries are kept.
 - `sources.status` and `tags.status` share the column name, so queries joining them must qualify `p.status`.
@@ -78,4 +79,4 @@ ALTER TABLE posts DROP COLUMN IF EXISTS summary_pending;
 
 ## Open questions
 
-- Should a low quality pass rate flag a source, like the shadow gate does?
+- None.
