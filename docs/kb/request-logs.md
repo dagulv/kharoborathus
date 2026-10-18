@@ -23,7 +23,7 @@ Every outbound request, to DeepSeek, Jev, Brave or a scraped site, becomes one r
 
 Columns:
 
-- `type` is the record message. One value per client: `deepseek`, `jev`, `brave`, `rss`, `page` (listings and articles), `trim` (link rule checks), `ingest`, `robots`, `homepage` (promotion).
+- `type` is the record message. One value per client: `deepseek`, `jev`, `brave`, `rss`, `page` (listings and articles), `trim` (link rule checks), `ingest`, `robots`, `homepage` (promotion and adding a page source in admin).
 - `request` holds method, url and body. Headers are never stored, since they carry the API keys.
 - `response` holds the body as far as the caller read it. JSON bodies are stored as JSON so they can be queried, anything else as a string.
 - `level` is `INFO`, `WARN` for a 4xx or 5xx status, `ERROR` when no response came.

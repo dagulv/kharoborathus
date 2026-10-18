@@ -209,8 +209,22 @@ export const createSource = form(
 			)
 		];
 
+		let listing: { adapter: string; url: string } = { adapter, url };
+
+		// Like promotion in the Go app, a page that links to a feed becomes an rss source.
+		if (adapter === 'page') {
+			const res = await fetch(`${API_URL}/listing?url=${encodeURIComponent(url)}`).catch(() => {
+				error(502, 'Go app unreachable');
+			});
+
+			if (!res.ok) invalid(issue.url(`Could not fetch the page: ${(await res.text()).trim()}`));
+
+			listing = await res.json();
+		}
+
 		const sql = db();
-		const [existing] = await sql`SELECT 1 FROM sources WHERE url = ${url} AND deleted_at IS NULL`;
+		const [existing] =
+			await sql`SELECT 1 FROM sources WHERE url = ${listing.url} AND deleted_at IS NULL`;
 		if (existing) invalid(issue.url('A source with this URL already exists'));
 
 		await sql.begin(async (tx) => {
@@ -223,7 +237,7 @@ export const createSource = form(
 
 			await tx`
 				INSERT INTO sources (domain_id, adapter, url, enabled, rate, target_tags)
-				VALUES (${domain.id}, ${adapter}, ${url}, true, ${rate}, ${tags}::text[])
+				VALUES (${domain.id}, ${listing.adapter}, ${listing.url}, true, ${rate}, ${tags}::text[])
 			`;
 		});
 
