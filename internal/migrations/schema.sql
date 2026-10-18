@@ -227,3 +227,18 @@ CREATE TABLE IF NOT EXISTS switches (
 );
 
 INSERT INTO switches (key) VALUES ('shadow_gate'), ('discovered_ingest'), ('search_discovery'), ('source_promotion') ON CONFLICT (key) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- The cookie holds the token, only its sha256 is stored.
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash BYTEA PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
