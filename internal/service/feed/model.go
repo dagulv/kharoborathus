@@ -6,6 +6,12 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/query"
 )
 
+const (
+	StatusPending  = "pending"
+	StatusActive   = "active"
+	StatusRejected = "rejected"
+)
+
 // Feed also stores Raw HTML Content on S3 at /feeds/<id>/content
 type Feed struct {
 	ID           string   `json:"id"`
@@ -24,6 +30,8 @@ type Feed struct {
 	Page      []byte    `json:"-"` // Article html already fetched by the adapter, trim skips refetching it
 	// Left to the background summarizer, see source.RunSummaries.
 	SummaryPending bool `json:"-"`
+	// Empty inserts as pending, see source.RunQuality.
+	Status string `json:"-"`
 }
 
 type Filter struct {
