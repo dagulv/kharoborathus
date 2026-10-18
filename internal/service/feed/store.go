@@ -44,7 +44,7 @@ func NewStore(db *database.Database) Store {
 func (s *Store) ListPosts(ctx context.Context, filter Filter) iter.Seq2[Feed, error] {
 	return func(yield func(Feed, error) bool) {
 		args := []any{filter.GetLimit(), filter.GetOffset()}
-		var conds []string
+		conds := []string{`p.status = 'active'`}
 
 		col, dir := filter.GetSort()
 
@@ -74,10 +74,7 @@ func (s *Store) ListPosts(ctx context.Context, filter Filter) iter.Seq2[Feed, er
 			)`, len(args)))
 		}
 
-		var where string
-		if len(conds) > 0 {
-			where = "WHERE " + strings.Join(conds, " AND ")
-		}
+		where := "WHERE " + strings.Join(conds, " AND ")
 
 		query := fmt.Sprintf(
 			`SELECT %s FROM posts p %s ORDER BY p.%s %s LIMIT $1 OFFSET $2`,
@@ -110,7 +107,7 @@ func (s *Store) ListPosts(ctx context.Context, filter Filter) iter.Seq2[Feed, er
 }
 
 func (s *Store) GetFeed(ctx context.Context, id string) (Feed, error) {
-	return scanFeed(s.db.QueryRow(ctx, `SELECT `+feedColumns+` FROM posts WHERE id = $1`, id))
+	return scanFeed(s.db.QueryRow(ctx, `SELECT `+feedColumns+` FROM posts WHERE id = $1 AND status = 'active'`, id))
 }
 
 func (s *Store) FeedExists(ctx context.Context, url string) (exists bool, err error) {
@@ -133,14 +130,19 @@ func InsertFeed(ctx context.Context, tx pgx.Tx, feed Feed) (out Feed, err error)
 		feed.PostedAt = time.Now()
 	}
 
+	status := StatusPending
+	if feed.Status != "" {
+		status = feed.Status
+	}
+
 	hash := sha256.Sum256([]byte(feed.Content))
 
 	out, err = scanFeed(tx.QueryRow(ctx, `
-		INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, content, tags, authors, posted_at, content_hash, simhash, summary_pending)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), COALESCE($9::text[], '{}'), $10, $11, $12, $13)
+		INSERT INTO posts (source_id, domain_id, url, lang, title, short_content, content, tags, authors, posted_at, content_hash, simhash, summary_pending, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), COALESCE($9::text[], '{}'), $10, $11, $12, $13, $14)
 		ON CONFLICT (url) DO NOTHING
 		RETURNING `+feedColumns,
-		feed.SourceID, feed.DomainID, feed.URL, feed.Lang, feed.Title, feed.ShortContent, feed.Content, feed.Tags, feed.Authors, feed.PostedAt, hash[:], textSimhash(feed.Content), feed.SummaryPending,
+		feed.SourceID, feed.DomainID, feed.URL, feed.Lang, feed.Title, feed.ShortContent, feed.Content, feed.Tags, feed.Authors, feed.PostedAt, hash[:], textSimhash(feed.Content), feed.SummaryPending, status,
 	))
 	if err != nil {
 		return out, err
@@ -245,4 +247,28 @@ func scanFeed(row pgx.Row) (feed Feed, err error) {
 	)
 
 	return
+}
+
+func (s *Store) ListPendingQuality(ctx context.Context, limit int) ([]Feed, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+feedColumns+` FROM posts WHERE status = 'pending' ORDER BY created_at LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("err query pending quality: %w", err)
+	}
+
+	feeds, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Feed, error) {
+		return scanFeed(row)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("err scan pending quality: %w", err)
+	}
+
+	return feeds, nil
+}
+
+func (s *Store) SetStatus(ctx context.Context, id, status string) error {
+	if _, err := s.db.Exec(ctx, `UPDATE posts SET status = $2 WHERE id = $1`, id, status); err != nil {
+		return fmt.Errorf("err set post status: %w", err)
+	}
+
+	return nil
 }

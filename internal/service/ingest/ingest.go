@@ -279,6 +279,7 @@ func (in *Ingester) process(ctx context.Context, l *slog.Logger, link Link, tags
 	}
 
 	f.Tags = v.Keys
+	f.Status = feed.StatusActive
 
 	_, err = in.store.Accept(ctx, link, d.BaseURL, f, v)
 	if errors.Is(err, errSourceDisabled) {
