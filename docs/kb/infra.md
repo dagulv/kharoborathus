@@ -33,7 +33,7 @@ Layout:
 2. `infra/haloy.yaml` holds the production stack and its domains. `infra/haloy.sh` runs one Haloy command per target.
 3. `infra/.sops.yaml` and `infra/secrets/{dev,prod}/vault.sealed` hold the encrypted secrets. `infra/secrets.sh` runs a command with one vault's secrets in its environment.
 4. `infra/<service>/` holds each service's deploy `Dockerfile` and prod `.env`, for `db`, `api` and `web`. `infra/db/Dockerfile` builds the database with the Swedish dictionary and `schema.sql`, for dev too. The `api` and `web` images build from the repo root and from `frontend/`.
-5. Dev reads each service's `infra/<service>/.env` too, with the root `.env` over it for secrets and dev overrides. The Go config and the admin's Vite config also read `infra/db/.env` under their own file for the database names, and compose reads `infra/db/.env` for the container and the root `.env` for the password.
+5. Dev reads each service's `infra/<service>/.env` too, with the root `.env` over it for secrets and dev overrides. The Go config and the admin's Vite config also read `infra/db/.env` under their own file for the database names, and compose reads `infra/db/.env` for the container and the root `.env` for the password. When nothing sets `POSTGRES_CONNECTION_STRING`, both apps build it from the user, password and database at `localhost:5432`.
 
 Server:
 

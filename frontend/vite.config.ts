@@ -13,6 +13,15 @@ export default defineConfig(({ mode }) => {
 		}
 	}
 
+	// Like the Go app, build the connection string from its parts when nothing sets it.
+	const get = (key: string) => root[key] ?? process.env[key] ?? 'postgres';
+	if (
+		root.POSTGRES_CONNECTION_STRING === undefined &&
+		process.env.POSTGRES_CONNECTION_STRING === undefined
+	) {
+		process.env.POSTGRES_CONNECTION_STRING = `postgresql://${get('POSTGRES_USER')}:${get('POSTGRES_PASSWORD')}@localhost:5432/${get('POSTGRES_DB')}?sslmode=disable`;
+	}
+
 	return {
 		plugins: [
 			tailwindcss(),
