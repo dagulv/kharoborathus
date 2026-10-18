@@ -65,7 +65,7 @@ ALTER TABLE sources ADD COLUMN failing_since TIMESTAMPTZ;
 ALTER TABLE sources ADD COLUMN promoted_at TIMESTAMPTZ;
 ```
 
-Until the first deploy these go straight into `schema.sql`. `fetch_failures` resets on a successful fetch. `origin` is defined in [trust-model](trust-model.md). `flagged_at` is defined in [classifier-gate](classifier-gate.md).
+These are in `001_init.sql`. `fetch_failures` resets on a successful fetch. `origin` is defined in [trust-model](trust-model.md). `flagged_at` is defined in [classifier-gate](classifier-gate.md).
 
 ## Defaults
 

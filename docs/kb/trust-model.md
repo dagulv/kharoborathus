@@ -29,7 +29,7 @@ Rules:
 
 ## Schema changes
 
-`origin` is in [schema.sql](../../internal/migrations/schema.sql).
+`origin` is in [001_init.sql](../../internal/migrations/001_init.sql).
 
 Source `status` is defined in [source-lifecycle](source-lifecycle.md).
 

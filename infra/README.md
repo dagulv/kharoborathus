@@ -26,11 +26,12 @@ Each file is a Kubernetes `Secret` with the keys under `stringData`, since that 
 
 ```bash
 infra/secrets.sh dev docker compose up -d db
+infra/secrets.sh dev go run ./cmd migrate
 infra/secrets.sh dev go run ./cmd
 infra/secrets.sh dev pnpm -C frontend dev
 ```
 
-To skip the prompt in dev, `setup.sh` writes the dev vault's secrets into the root `.env` and keeps its other lines. Compose, the Go app and the admin read that file, so `docker compose up -d db`, `go run ./cmd` and `pnpm -C frontend dev` then work bare. Rerun it after a vault change:
+To skip the prompt in dev, `setup.sh` writes the dev vault's secrets into the root `.env` and keeps its other lines. Compose, the Go app and the admin read that file, so `docker compose up -d db`, `go run ./cmd migrate`, `go run ./cmd` and `pnpm -C frontend dev` then work bare. Rerun it after a vault change:
 
 ```bash
 infra/setup.sh
@@ -91,7 +92,7 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
 
    Generate `POSTGRES_PASSWORD` with `openssl rand -hex 32` and put the same value in `POSTGRES_CONNECTION_STRING`. Characters like `/`, `@` or `$` break the URL or get expanded.
 
-8. Deploy the database first, then the rest once its logs say it accepts connections:
+8. Deploy the database first, then the rest once its logs say it accepts connections. The database starts empty and `api` needs the schema, so migrate in between. Prod has no migrate step yet: it is planned as a CI job.
 
    ```bash
    infra/secrets.sh prod:app infra/haloy.sh deploy db
@@ -105,7 +106,8 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
 
 - Redeploy with `infra/secrets.sh prod:app infra/haloy.sh deploy api web`. Images build locally and upload to the server. Leave `db` out unless its image changed.
 - Logs: `infra/secrets.sh prod:app infra/haloy.sh logs api`. `infra/secrets.sh prod:app infra/haloy.sh rollback-targets api` lists deployment IDs, and `infra/secrets.sh prod:app infra/haloy.sh rollback api -- <id>` rolls back to one.
-- `schema.sql` runs only on an empty database volume. Schema changes after the first deploy need migrations.
+- Schema changes go in a new numbered file in `internal/migrations`. Never edit a file that has been applied. `go run ./cmd migrate` applies pending files with tern and records the version in `schema_version`. Tern runs each file through Go's `text/template`, so `{{` in SQL breaks it.
+- A dev volume created before the migrations existed has the schema but no `schema_version`, so `migrate` fails on it. Recreate it once with `docker compose down -v`.
 - Add an admin user with `POSTGRES_CONNECTION_STRING=<conn> pnpm user:add <email>` from `frontend`. It prints a generated password: the login has no rate limit or lockout, so only its length stops guessing.
 - Every switch starts off. Turn them on in the admin under Switches.
 - `tofu apply` never replaces the server: it has `prevent_destroy`, and edits to `cloud-init.yaml` or the SSH key are ignored for the existing server.

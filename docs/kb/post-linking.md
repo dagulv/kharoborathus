@@ -53,7 +53,7 @@ Unchanged for now. Grouped or flat presentation is a later frontend decision.
 
 ## Schema changes
 
-Both are in [schema.sql](../../internal/migrations/schema.sql):
+Both are in [001_init.sql](../../internal/migrations/001_init.sql):
 
 ```sql
 simhash BIGINT, -- on posts

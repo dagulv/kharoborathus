@@ -12,7 +12,7 @@ Runs the whole stack on one UpCloud VPS. OpenTofu creates the server and cloud-i
 - [infra/tofu](../../infra/tofu) creates the server. It has not been applied or run through `tofu validate` yet.
 - [infra/haloy.yaml](../../infra/haloy.yaml) runs the stack. It passes `haloy validate-config` but has not been deployed. The admin's auth hook answered 401 without credentials and 200 on `/healthz` in a local run.
 - [infra/README.md](../../infra/README.md) lists the first-time steps.
-- [docker-compose.yaml](../../docker-compose.yaml) runs the dev database, now with `schema.sql` baked into the image.
+- [docker-compose.yaml](../../docker-compose.yaml) runs the dev database, with the Swedish dictionary baked into the image. `go run ./cmd migrate` creates the schema.
 
 ## Design
 
@@ -32,7 +32,7 @@ Layout:
 1. `infra/tofu` holds the OpenTofu config and the cloud-init template.
 2. `infra/haloy.yaml` holds the production stack and its domains. `infra/haloy.sh` runs one Haloy command per target.
 3. `infra/.sops.yaml` and `infra/secrets/{dev,prod}/vault.sealed` hold the encrypted secrets. `infra/secrets.sh` runs a command with one vault's secrets in its environment.
-4. `infra/<service>/` holds each service's deploy `Dockerfile` and prod `.env`, for `db`, `api` and `web`. `infra/db/Dockerfile` builds the database with the Swedish dictionary and `schema.sql`, for dev too. The `api` and `web` images build from the repo root and from `frontend/`.
+4. `infra/<service>/` holds each service's deploy `Dockerfile` and prod `.env`, for `db`, `api` and `web`. `infra/db/Dockerfile` builds the database with the Swedish dictionary, for dev too. The `api` and `web` images build from the repo root and from `frontend/`.
 5. Dev reads each service's `infra/<service>/.env` too, with the root `.env` over it for secrets and dev overrides. The Go config and the admin's Vite config also read `infra/db/.env` under their own file for the database names, and compose reads `infra/db/.env` for the container and the root `.env` for the password. When nothing sets `POSTGRES_CONNECTION_STRING`, both apps build it from the user, password and database at `localhost:5432`.
 
 Server:
@@ -48,7 +48,7 @@ Server:
 
 Why not the UpCloud firewall: it is stateless on public interfaces. Scraping arbitrary sites would need rules that accept any inbound packet from ports 80 and 443. ufw is stateful.
 
-Why not managed Postgres: `schema.sql` needs the `sv_se` ispell dictionary files in the server's `tsearch_data` directory. A managed service cannot load them.
+Why not managed Postgres: the schema needs the `sv_se` ispell dictionary files in the server's `tsearch_data` directory. A managed service cannot load them.
 
 Routing in Haloy:
 
@@ -66,7 +66,7 @@ Deploy:
 2. `haloy server add` registers the server with the token cloud-init left in the deploy user's home.
 3. `secrets.sh prod:app haloy.sh deploy <target>...` builds the images locally and uploads them to haloyd, so no registry is needed. The `db` target is protected and deploys only by name.
 4. Haloy has no per-target env file. It reads the working directory's `.env`, and a `.env.<target>` only for targets named with `-t`, all into one process env. So `haloy.sh` runs Haloy once per target from `infra/<target>/`, and each target resolves only its own env. Haloy passes a container only the values `haloy.yaml` names, so `haloy.sh deploy` refuses a target whose `.env` holds a key that `haloy.yaml` does not pass. Every Haloy command that loads the config resolves all its env values, including `logs` and `status`. Haloy also loads `infra/.env` and `.env.local` from the working directory, `infra/` and `~/.config/haloy`, and `.env.local` overrides the vault. `.gitignore` keeps every `.env.*` except `.env.example` out of git, and none of those files should exist here.
-5. Postgres runs `schema.sql` on its first start with an empty volume. Later schema changes need migrations, see [rollout](rollout.md).
+5. The database starts empty. `kharoborathus migrate` applies the numbered files in `internal/migrations` with tern. Prod has no migrate step yet: it is planned as a CI job, see [rollout](rollout.md).
 
 Build notes:
 

@@ -42,7 +42,7 @@ ALTER TABLE posts ADD COLUMN summary_pending BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX posts_summary_pending_idx ON posts (created_at) WHERE summary_pending;
 ```
 
-Until the first deploy these go straight into `schema.sql`.
+These are in `001_init.sql`.
 
 ## Defaults
 

@@ -45,8 +45,8 @@ Migration steps:
 
 - **Phase 1:** existing tags start `enabled` and `active`. The first broadness run sets `gate` and `match_rate`. Existing sentiment tags stay and end up with `gate = false`.
 - **Phase 1:** every source is manual, so every post is trusted. Trust checks arrive in phase 4 together with `origin` and source `status`, which existing sources get from column defaults.
-- **Every phase:** until the first deploy, schema changes go straight into `schema.sql` and databases are recreated from it.
-- **Phases 2, 4, 5 and 6:** `schema.sql` inserts the phase's switch row with `ON CONFLICT DO NOTHING`, so a rerun never resets your choice.
+- **Every phase:** before migrations existed, schema changes went straight into `schema.sql`, which is now the `001_init.sql` baseline. New changes go in a new numbered file in `internal/migrations` and run with `kharoborathus migrate`.
+- **Phases 2, 4, 5 and 6:** `001_init.sql` inserts the phase's switch row with `ON CONFLICT DO NOTHING`, so a rerun never resets your choice.
 
 Monitoring:
 
