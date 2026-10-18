@@ -21,6 +21,7 @@ Grow beyond hand-picked sources without losing quality. Scale slowly and prefer 
 | [Post linking](post-linking.md)           | done   | Every relation between posts: discovered, duplicate_of and same_event.                                 |
 | [Rollout](rollout.md)                     | done   | Six phases in build order, admin switches for data-dependent features, migration steps and monitoring. |
 | [Infra](infra.md)                         | done   | One UpCloud VPS with OpenTofu, cloud-init and Haloy.                                                   |
+| [Request logs](request-logs.md)           | done   | Every third-party request as a row in `logs`, written by a slog handler.                               |
 
 ## Flow
 
