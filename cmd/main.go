@@ -98,7 +98,7 @@ func app(ctx context.Context) (err error) {
 	tagMerger := robot.NewTagMerger(classifier)
 	resultFilter := robot.NewResultFilter(llm)
 	searcher, searchErr := discovery.NewBrave(env)
-	ingester := ingest.NewIngester(&ingestStore, &switchStore, &taggingStore, &feedStore, &domainStore, trim, tagger, summarizer, l.WithGroup("ingest"), calls)
+	ingester := ingest.NewIngester(&ingestStore, &switchStore, &taggingStore, &feedStore, &domainStore, trim, tagger, l.WithGroup("ingest"), calls)
 
 	syncs := make(chan source.Source, source.SyncQueue)
 
@@ -127,11 +127,19 @@ func app(ctx context.Context) (err error) {
 	}
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceStore, syncs, trim, summarizer, schedule.Always, l.WithGroup("sourced"), calls)
+		return source.Run(ctx, &sourceStore, syncs, trim, schedule.Always, l.WithGroup("sourced"), calls)
 	})
 
 	g.Go(func() error {
 		return source.RunSummaries(ctx, &sourceStore, summarizer, llm.Schedule(), l.WithGroup("summaries"), calls)
+	})
+
+	g.Go(func() error {
+		if mocked {
+			l.Warn("quality gate passes every post, the mocked classifier cannot judge quality")
+		}
+
+		return source.RunQuality(ctx, &sourceStore, tagger, mocked, l.WithGroup("quality"), calls)
 	})
 
 	g.Go(func() error {

@@ -1,7 +1,7 @@
 # Trust model
 
 **Status:** done
-**Related:** [classifier-gate](classifier-gate.md), [tag-lifecycle](tag-lifecycle.md), [source-lifecycle](source-lifecycle.md)
+**Related:** [classifier-gate](classifier-gate.md), [tag-lifecycle](tag-lifecycle.md), [source-lifecycle](source-lifecycle.md), [quality-gate](quality-gate.md)
 
 ## Summary
 
@@ -19,7 +19,7 @@ Trust belongs to sources. An enabled source with `status = 'active'` or `'dorman
 | Posts ingested | Always | Only if they pass the [gate](classifier-gate.md) |
 | Posts propose new tags | Yes | No |
 | Posts seed link extraction and search | Yes | No |
-| Quality check | Shadow gate, demoted on drift | Hard gate on every post |
+| Quality check | Quality gate on every post, shadow gate, demoted on drift | Hard gate on every post |
 
 Rules:
 

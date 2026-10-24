@@ -11,7 +11,7 @@ A feed shows only its newest posts. A WordPress site also serves its whole archi
 
 - [wordpress.go](../../internal/service/source/adapter/wordpress.go) finds the API and reads every post.
 - [backfill.go](../../internal/service/source/backfill.go) checks each scraped source once and sends WordPress ones to the `wordpress` pipeline in [sourced.go](../../internal/service/source/sourced.go).
-- [summaries.go](../../internal/service/source/summaries.go) summarizes backfilled posts in the background.
+- [summaries.go](../../internal/service/source/summaries.go) summarizes active posts in the background, backfilled or not.
 - The admin source check shows the post total, see [route.go](../../internal/service/source/route.go).
 
 ## Design
@@ -21,8 +21,8 @@ A feed shows only its newest posts. A WordPress site also serves its whole archi
 3. It probes `wp/v2/posts?per_page=1`, whose `X-WP-Total` header gives the post total.
 4. It sets `backfilled_at`, then sends a copy of the source with adapter `wordpress` and the posts endpoint as URL.
 5. The `wordpress` adapter pages through the API, 20 posts per request, newest first, until `X-WP-TotalPages`. Requests to one host go at least 5 seconds apart, so 420 posts take about 2 minutes. `_embed=author,wp:term` gives author and category names.
-6. The pipeline skips posts already stored, like any other source, and inserts the rest with `summary_pending`.
-7. `RunSummaries` summarizes 20 pending posts a minute while DeepSeek is off peak. Until then a post shows its excerpt.
+6. The pipeline skips posts already stored, like any other source, and inserts the rest as pending for the [quality gate](quality-gate.md).
+7. `RunSummaries` summarizes 20 active posts a minute while DeepSeek is off peak. Until then a post shows its excerpt.
 
 Rules:
 
@@ -42,7 +42,7 @@ ALTER TABLE posts ADD COLUMN summary_pending BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX posts_summary_pending_idx ON posts (created_at) WHERE summary_pending;
 ```
 
-These are in `001_init.sql`.
+These are in `001_init.sql`. `summary_pending` is replaced by `summary_checked`, see [quality gate](quality-gate.md).
 
 ## Defaults
 

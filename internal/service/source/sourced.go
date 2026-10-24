@@ -19,8 +19,6 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
-	"github.com/dagulv/kharoborathus/internal/service/robot"
-	robotadapter "github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
 	"golang.org/x/net/html"
 )
@@ -44,13 +42,13 @@ type Pipeline interface {
 	Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed
 }
 
-func initPipelines(ctx context.Context, in <-chan Source, s *Store, trim *Trim, summarizer *robot.Summarizer, pacer *pace.Pacer, l, calls *slog.Logger) []Pipeline {
+func initPipelines(ctx context.Context, in <-chan Source, s *Store, trim *Trim, pacer *pace.Pacer, l, calls *slog.Logger) []Pipeline {
 	sinks := make(map[string]chan Source)
 
 	pipelines := []Pipeline{
-		newPipeline(adapter.NewRSS(&s.feedStore, pacer, l), addSink(sinks, "rss"), s, trim, summarizer, calls),
-		newPipeline(adapter.NewPage(&s.feedStore, trim, pacer, l), addSink(sinks, "page"), s, trim, summarizer, calls),
-		newPipeline(adapter.NewWordPress(&s.feedStore, pacer, l), addSink(sinks, "wordpress"), s, trim, summarizer, calls),
+		newPipeline(adapter.NewRSS(&s.feedStore, pacer, l), addSink(sinks, "rss"), s, trim, calls),
+		newPipeline(adapter.NewPage(&s.feedStore, trim, pacer, l), addSink(sinks, "page"), s, trim, calls),
+		newPipeline(adapter.NewWordPress(&s.feedStore, pacer, l), addSink(sinks, "wordpress"), s, trim, calls),
 	}
 
 	go func() {
@@ -85,12 +83,12 @@ func addSink(sinks map[string]chan Source, name string) <-chan Source {
 	return c
 }
 
-func Run(ctx context.Context, s *Store, syncs <-chan Source, trim *Trim, summarizer *robot.Summarizer, sched schedule.Schedule, l, calls *slog.Logger) error {
+func Run(ctx context.Context, s *Store, syncs <-chan Source, trim *Trim, sched schedule.Schedule, l, calls *slog.Logger) error {
 	pacer := pace.New(hostGap)
 
 	sources := merge(ctx, continuousSources(ctx, s, syncs, sched, l), backfills(ctx, s, sched, pacer, l, calls))
 
-	pipelines := initPipelines(ctx, sources, s, trim, summarizer, pacer, l, calls)
+	pipelines := initPipelines(ctx, sources, s, trim, pacer, l, calls)
 
 	feeds := make([]<-chan feed.Feed, 0, len(pipelines))
 
@@ -244,15 +242,14 @@ type resolved struct {
 type pipeline[T any] struct {
 	adapter.Adapter[T]
 
-	in         <-chan Source
-	store      *Store
-	trim       *Trim
-	summarizer *robot.Summarizer
-	calls      *slog.Logger
+	in    <-chan Source
+	store *Store
+	trim  *Trim
+	calls *slog.Logger
 }
 
-func newPipeline[T any](a adapter.Adapter[T], in <-chan Source, store *Store, trim *Trim, summarizer *robot.Summarizer, calls *slog.Logger) Pipeline {
-	return pipeline[T]{Adapter: a, in: in, store: store, trim: trim, summarizer: summarizer, calls: calls}
+func newPipeline[T any](a adapter.Adapter[T], in <-chan Source, store *Store, trim *Trim, calls *slog.Logger) Pipeline {
+	return pipeline[T]{Adapter: a, in: in, store: store, trim: trim, calls: calls}
 }
 
 func (p pipeline[T]) Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed {
@@ -262,9 +259,8 @@ func (p pipeline[T]) Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed {
 	feeds := fanOut(ctx, workers, content, l, p.processFeed)
 	fresh := fanOut(ctx, workers, feeds, l, p.resolveFeed)
 	trimmed := fanOut(ctx, workers, fresh, l, p.trimFeed)
-	converted := fanOut(ctx, workers, trimmed, l, p.markdownFeed)
 
-	return fanOut(ctx, workers, converted, l, p.summarizeFeed)
+	return fanOut(ctx, workers, trimmed, l, p.markdownFeed)
 }
 
 func (p pipeline[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-chan Source) <-chan fetched[T] {
@@ -470,34 +466,6 @@ func Markdown(f feed.Feed) (feed.Feed, error) {
 	f.Content = md
 
 	return f, nil
-}
-
-func (p pipeline[T]) summarizeFeed(ctx context.Context, l *slog.Logger, in <-chan feed.Feed) <-chan feed.Feed {
-	out := make(chan feed.Feed)
-
-	go func() {
-		defer close(out)
-
-		for f := range in {
-			if !f.SummaryPending {
-				if summary, err := p.summarizer.Summarize(ctx, p.calls.With("source_id", f.SourceID, "url", f.URL), f.Content); err == nil {
-					f.ShortContent = summary
-				} else if errors.Is(err, robotadapter.ErrUnavailable) {
-					l.Debug("summarize", "source", f.SourceID, "url", f.URL, "err", err)
-				} else {
-					l.Warn("summarize", "source", f.SourceID, "url", f.URL, "err", err)
-				}
-			}
-
-			select {
-			case out <- f:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return out
 }
 
 func fanOut[In, Out any](ctx context.Context, n int, in <-chan In, l *slog.Logger, stage func(context.Context, *slog.Logger, <-chan In) <-chan Out) <-chan Out {
