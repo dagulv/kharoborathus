@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -16,12 +15,11 @@ import (
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/dagulv/kharoborathus/internal/lib/iterx"
 	"github.com/dagulv/kharoborathus/internal/lib/pace"
+	"github.com/dagulv/kharoborathus/internal/lib/pipeline"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
-	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/source/model"
-	"github.com/dagulv/kharoborathus/internal/service/source/plugin"
 	"golang.org/x/net/html"
 )
 
@@ -39,17 +37,17 @@ const (
 	domainInterval = 5 * time.Second
 )
 
-type Sinker interface {
+type Fetcher interface {
 	Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed
 }
 
-func initSinks(ctx context.Context, in <-chan model.Source, s *Store, trim *Trim, pacer *pace.Pacer, l, calls *slog.Logger) []Sinker {
+func initFetchers(ctx context.Context, in <-chan model.Source, s *Store, trim *Trim, pacer *pace.Pacer, l, calls *slog.Logger) []Fetcher {
 	ins := make(map[string]chan model.Source)
 
-	sinks := []Sinker{
-		newSink(adapter.NewRSS(&s.feedStore, pacer, l), addIn(ins, "rss"), s, trim, calls),
-		newSink(adapter.NewPage(&s.feedStore, trim, pacer, l), addIn(ins, "page"), s, trim, calls),
-		newSink(adapter.NewWordPress(&s.feedStore, pacer, l), addIn(ins, "wordpress"), s, trim, calls),
+	fetchers := []Fetcher{
+		newFetcher(adapter.NewRSS(&s.feedStore, pacer, l), addIn(ins, "rss"), s, calls),
+		newFetcher(adapter.NewPage(&s.feedStore, trim, pacer, l), addIn(ins, "page"), s, calls),
+		newFetcher(adapter.NewWordPress(&s.feedStore, pacer, l), addIn(ins, "wordpress"), s, calls),
 	}
 
 	go func() {
@@ -74,7 +72,7 @@ func initSinks(ctx context.Context, in <-chan model.Source, s *Store, trim *Trim
 		}
 	}()
 
-	return sinks
+	return fetchers
 }
 
 func addIn(sinks map[string]chan model.Source, name string) <-chan model.Source {
@@ -87,33 +85,23 @@ func addIn(sinks map[string]chan model.Source, name string) <-chan model.Source 
 func Run(ctx context.Context, s *Store, syncs <-chan model.Source, trim *Trim, sched schedule.Schedule, l, calls *slog.Logger) error {
 	pacer := pace.New(domainInterval)
 
-	sources := merge(ctx, continuousSources(ctx, s, syncs, sched, l), backfills(ctx, s, sched, pacer, l, calls))
+	sources := pipeline.Merge(ctx, continuousSources(ctx, s, syncs, sched, l), backfills(ctx, s, sched, pacer, l, calls))
 
-	sinks := initSinks(ctx, sources, s, trim, pacer, l, calls)
+	fetchers := initFetchers(ctx, sources, s, trim, pacer, l, calls)
 
-	feeds := make([]<-chan feed.Feed, 0, len(sinks))
+	feeds := make([]<-chan feed.Feed, 0, len(fetchers))
 
-	for _, s := range sinks {
-		feeds = append(feeds, s.Run(ctx, l))
+	for _, f := range fetchers {
+		feeds = append(feeds, f.Run(ctx, l))
 	}
 
-	for f := range merge(ctx, feeds...) {
-		_, err := s.feedStore.CreateFeed(ctx, f)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
+	p := processor{store: s, trim: trim, calls: calls}
 
-		if err != nil {
-			l.Error("create feed", "source", f.SourceID, "url", f.URL, "err", err)
-			continue
-		}
+	pipe := pipeline.New[feed.Feed]().
+		Next(workers, p.process).
+		WithSink(p.save)
 
-		if err := s.Revive(ctx, f.SourceID); err != nil {
-			l.Error("revive source", "source", f.SourceID, "err", err)
-		}
-	}
-
-	return ctx.Err()
+	return pipe.Run(ctx, l, pipeline.Merge(ctx, feeds...))
 }
 
 func continuousSources(ctx context.Context, s *Store, syncs <-chan model.Source, sched schedule.Schedule, l *slog.Logger) <-chan model.Source {
@@ -235,54 +223,26 @@ type fetched[T any] struct {
 	data   T
 }
 
-type resolved struct {
-	feed   feed.Feed
-	domain domain.Domain
-}
-
-type sink[T any] struct {
+type fetcher[T any] struct {
 	adapter.Adapter[T]
 
 	in    <-chan model.Source
 	store *Store
-	trim  *Trim
 	calls *slog.Logger
 }
 
-func newSink[T any](a adapter.Adapter[T], in <-chan model.Source, store *Store, trim *Trim, calls *slog.Logger) Sinker {
-	return sink[T]{Adapter: a, in: in, store: store, trim: trim, calls: calls}
+func newFetcher[T any](a adapter.Adapter[T], in <-chan model.Source, store *Store, calls *slog.Logger) Fetcher {
+	return fetcher[T]{Adapter: a, in: in, store: store, calls: calls}
 }
 
-func (p sink[T]) Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed {
-	data := fanOut(ctx, workers, p.in, l, p.fetchFromSource)
-	filtered := fanOut(ctx, workers, data, l, p.filter)
-	content := fanOut(ctx, workers, filtered, l, p.fetchContent)
-	feeds := fanOut(ctx, workers, content, l, p.processFeed)
-	fresh := fanOut(ctx, workers, feeds, l, p.resolveFeed)
-	trimmed := fanOut(ctx, workers, fresh, l, p.trimFeed)
-
-	pipes := plugin.NewPipeline[model.Source]().
-		NextCh(5, p.fetchFromSource).
-		Next(5, func(ctx context.Context, l *slog.Logger, f fetched[T]) (fetched[T], error) {
-			data, err := p.FetchContent(ctx, p.calls.With("source_id", f.source.ID), f.data)
-			if err != nil {
-				return fetched[T]{}, err
-			}
-			return fetched[T]{source: f.source, data: data}, nil
-		}).
-		Next(5, func(ctx context.Context, l *slog.Logger, f fetched[T]) {})
-
-	pgn := plugin.NewPlugin(
-		p.in,
-		pipes,
-		nil,
-	)
-	_ = pgn
-
-	return fanOut(ctx, workers, trimmed, l, p.markdownFeed)
+func (p fetcher[T]) Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed {
+	return pipeline.New[model.Source]().
+		NextCh(workers, p.fetchFromSource).
+		Next(workers, p.fetchFeed).
+		Stream(ctx, l, p.in)
 }
 
-func (p sink[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-chan model.Source) <-chan fetched[T] {
+func (p fetcher[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-chan model.Source) <-chan fetched[T] {
 	out := make(chan fetched[T])
 
 	go func() {
@@ -300,6 +260,16 @@ func (p sink[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-chan 
 			}
 
 			for data := range dataset {
+				keep, err := p.Filter(ctx, data)
+				if err != nil {
+					l.Error("filter", "source", source.ID, "url", source.URL, "err", err)
+					continue
+				}
+
+				if !keep {
+					continue
+				}
+
 				select {
 				case out <- fetched[T]{source: source, data: data}:
 				case <-ctx.Done():
@@ -312,164 +282,75 @@ func (p sink[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-chan 
 	return out
 }
 
-func (p sink[T]) filter(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan fetched[T] {
-	out := make(chan fetched[T])
+func (p fetcher[T]) fetchFeed(ctx context.Context, l *slog.Logger, f fetched[T]) (feed.Feed, error) {
+	data, err := p.FetchContent(ctx, p.calls.With("source_id", f.source.ID), f.data)
+	if err != nil {
+		l.Debug("fetchContent", "source", f.source.ID, "url", f.source.URL, "err", err)
+		return feed.Feed{}, pipeline.ErrSkip
+	}
 
-	go func() {
-		defer close(out)
+	parsed, err := p.ProcessFeed(ctx, data)
+	if err != nil {
+		l.Error("processFeed", "source", f.source.ID, "url", f.source.URL, "err", err)
+		return feed.Feed{}, pipeline.ErrSkip
+	}
 
-		for f := range in {
-			keep, err := p.Filter(ctx, f.data)
-			if err != nil {
-				l.Error("filter", "source", f.source.ID, "url", f.source.URL, "err", err)
-				continue
-			}
+	parsed.SourceID = f.source.ID
 
-			if !keep {
-				continue
-			}
+	if parsed.Lang == "" {
+		parsed.Lang = f.source.Lang
+	}
 
-			select {
-			case out <- f:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return out
+	return parsed, nil
 }
 
-func (p sink[T]) fetchContent(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan fetched[T] {
-	out := make(chan fetched[T])
-
-	go func() {
-		defer close(out)
-
-		for f := range in {
-			data, err := p.FetchContent(ctx, p.calls.With("source_id", f.source.ID), f.data)
-			if err != nil {
-				l.Debug("fetchContent", "source", f.source.ID, "url", f.source.URL, "err", err)
-				continue
-			}
-
-			select {
-			case out <- fetched[T]{source: f.source, data: data}:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return out
+type processor struct {
+	store *Store
+	trim  *Trim
+	calls *slog.Logger
 }
 
-func (p sink[T]) processFeed(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan feed.Feed {
-	out := make(chan feed.Feed)
+func (p processor) process(ctx context.Context, l *slog.Logger, f feed.Feed) (feed.Feed, error) {
+	d, err := p.store.domainStore.GetOrCreateDomain(ctx, f.URL)
+	if err != nil {
+		l.Error("get domain", "source", f.SourceID, "url", f.URL, "err", err)
+		return feed.Feed{}, pipeline.ErrSkip
+	}
 
-	go func() {
-		defer close(out)
+	f.DomainID = d.ID
 
-		for f := range in {
-			parsed, err := p.ProcessFeed(ctx, f.data)
-			if err != nil {
-				l.Error("processFeed", "source", f.source.ID, "url", f.source.URL, "err", err)
-				continue
-			}
+	if f.Page != nil {
+		f = p.trim.Apply(ctx, p.calls.With("source_id", f.SourceID), d, f, f.Page)
+	}
 
-			parsed.SourceID = f.source.ID
+	if f.Content == "" {
+		l.Debug("no content", "source", f.SourceID, "url", f.URL)
+		return feed.Feed{}, pipeline.ErrSkip
+	}
 
-			if parsed.Lang == "" {
-				parsed.Lang = f.source.Lang
-			}
+	md, err := Markdown(f)
+	if err != nil {
+		l.Error("convert to markdown", "source", f.SourceID, "url", f.URL, "err", err)
+	}
 
-			select {
-			case out <- parsed:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return out
+	return md, nil
 }
 
-func (p sink[T]) resolveFeed(ctx context.Context, l *slog.Logger, in <-chan feed.Feed) <-chan resolved {
-	out := make(chan resolved)
+func (p processor) save(ctx context.Context, f feed.Feed) error {
+	_, err := p.store.feedStore.CreateFeed(ctx, f)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
 
-	go func() {
-		defer close(out)
+	if err != nil {
+		return fmt.Errorf("err create feed %s: %w", f.URL, err)
+	}
 
-		for f := range in {
-			d, err := p.store.domainStore.GetOrCreateDomain(ctx, f.URL)
-			if err != nil {
-				l.Error("get domain", "source", f.SourceID, "url", f.URL, "err", err)
-				continue
-			}
+	if err := p.store.Revive(ctx, f.SourceID); err != nil {
+		return fmt.Errorf("err revive source %s: %w", f.SourceID, err)
+	}
 
-			f.DomainID = d.ID
-
-			select {
-			case out <- resolved{feed: f, domain: d}:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return out
-}
-
-func (p sink[T]) trimFeed(ctx context.Context, l *slog.Logger, in <-chan resolved) <-chan feed.Feed {
-	out := make(chan feed.Feed)
-
-	go func() {
-		defer close(out)
-
-		for r := range in {
-			f := r.feed
-
-			if f.Page != nil {
-				f = p.trim.Apply(ctx, p.calls.With("source_id", f.SourceID), r.domain, f, f.Page)
-			}
-
-			if f.Content == "" {
-				l.Debug("no content", "source", f.SourceID, "url", f.URL)
-				continue
-			}
-
-			select {
-			case out <- f:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return out
-}
-
-func (p sink[T]) markdownFeed(ctx context.Context, l *slog.Logger, in <-chan feed.Feed) <-chan feed.Feed {
-	out := make(chan feed.Feed)
-
-	go func() {
-		defer close(out)
-
-		for f := range in {
-			md, err := Markdown(f)
-			if err != nil {
-				l.Error("convert to markdown", "source", f.SourceID, "url", f.URL, "err", err)
-			}
-
-			select {
-			case out <- md:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return out
+	return nil
 }
 
 func Markdown(f feed.Feed) (feed.Feed, error) {
@@ -485,44 +366,6 @@ func Markdown(f feed.Feed) (feed.Feed, error) {
 	f.Content = md
 
 	return f, nil
-}
-
-func fanOut[In, Out any](ctx context.Context, n int, in <-chan In, l *slog.Logger, stage func(context.Context, *slog.Logger, <-chan In) <-chan Out) <-chan Out {
-	outs := make([]<-chan Out, n)
-
-	for i := range outs {
-		outs[i] = stage(ctx, l, in)
-	}
-
-	return merge(ctx, outs...)
-}
-
-func merge[T any](ctx context.Context, chans ...<-chan T) <-chan T {
-	out := make(chan T)
-
-	var wg sync.WaitGroup
-	wg.Add(len(chans))
-
-	for _, c := range chans {
-		go func() {
-			defer wg.Done()
-
-			for v := range c {
-				select {
-				case out <- v:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-	}
-
-	go func() {
-		wg.Wait()
-		close(out)
-	}()
-
-	return out
 }
 
 func excerpt(content string) string {
