@@ -9,14 +9,15 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
+	"github.com/dagulv/kharoborathus/internal/service/source/model"
 )
 
 const backfillBatch = 10
 
 // backfills checks every scraped source once for a WordPress REST API and sends each one found
 // to the wordpress pipeline, which reads the whole archive. Posts already stored are skipped there.
-func backfills(ctx context.Context, s *Store, sched schedule.Schedule, pacer *pace.Pacer, l, calls *slog.Logger) <-chan Source {
-	out := make(chan Source)
+func backfills(ctx context.Context, s *Store, sched schedule.Schedule, pacer *pace.Pacer, l, calls *slog.Logger) <-chan model.Source {
+	out := make(chan model.Source)
 	client := safehttp.NewClient(homepageTimeout)
 
 	go func() {

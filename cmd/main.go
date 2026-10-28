@@ -24,6 +24,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/service/robot"
 	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 	"github.com/dagulv/kharoborathus/internal/service/source"
+	"github.com/dagulv/kharoborathus/internal/service/source/model"
 	"github.com/dagulv/kharoborathus/internal/service/switches"
 	"github.com/dagulv/kharoborathus/internal/service/tagging"
 	"golang.org/x/sync/errgroup"
@@ -100,7 +101,7 @@ func app(ctx context.Context) (err error) {
 	searcher, searchErr := discovery.NewBrave(env)
 	ingester := ingest.NewIngester(&ingestStore, &switchStore, &taggingStore, &feedStore, &domainStore, trim, tagger, l.WithGroup("ingest"), calls)
 
-	syncs := make(chan source.Source, source.SyncQueue)
+	syncs := make(chan model.Source, source.SyncQueue)
 
 	mux := http.NewServeMux()
 	feed.Routes(mux, feedStore, l.WithGroup("feed"))

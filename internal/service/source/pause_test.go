@@ -3,6 +3,8 @@ package source
 import (
 	"testing"
 	"time"
+
+	"github.com/dagulv/kharoborathus/internal/service/source/model"
 )
 
 func TestClipPauses(t *testing.T) {
@@ -11,7 +13,7 @@ func TestClipPauses(t *testing.T) {
 
 	paused := map[string]time.Time{"revived": week, "dormant": week, "active": now.Add(5 * time.Minute)}
 
-	clipPauses(paused, []Source{
+	clipPauses(paused, []model.Source{
 		{ID: "revived", Rate: 15},
 		{ID: "dormant", Rate: int(probeInterval / time.Minute)},
 		{ID: "active", Rate: 15},

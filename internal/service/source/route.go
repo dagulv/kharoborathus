@@ -12,6 +12,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
+	"github.com/dagulv/kharoborathus/internal/service/source/model"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -26,7 +27,7 @@ type listing struct {
 	WordPress  adapter.WordPress `json:"wordpress,omitzero"`
 }
 
-func Routes(mux *http.ServeMux, s *Store, syncs chan<- Source, l, calls *slog.Logger) {
+func Routes(mux *http.ServeMux, s *Store, syncs chan<- model.Source, l, calls *slog.Logger) {
 	mux.HandleFunc("POST /sources/{id}/sync", syncSource(s, syncs, l))
 	mux.HandleFunc("GET /listing", listingRoute(safehttp.NewClient(homepageTimeout), l, calls))
 }
@@ -66,7 +67,7 @@ func listingRoute(client *http.Client, l, calls *slog.Logger) http.HandlerFunc {
 	}
 }
 
-func syncSource(s *Store, syncs chan<- Source, l *slog.Logger) http.HandlerFunc {
+func syncSource(s *Store, syncs chan<- model.Source, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		source, err := s.GetSource(r.Context(), r.PathValue("id"))
 		if err != nil {
@@ -81,7 +82,7 @@ func syncSource(s *Store, syncs chan<- Source, l *slog.Logger) http.HandlerFunc 
 			return
 		}
 
-		if source.Status != StatusActive || !source.Enabled {
+		if source.Status != model.StatusActive || !source.Enabled {
 			http.Error(w, "source not active or disabled", http.StatusConflict)
 			return
 		}
