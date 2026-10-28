@@ -9,6 +9,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
+	"github.com/dagulv/kharoborathus/internal/service/source/model"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -39,8 +40,8 @@ func NewStore(db *database.Database, feedStore feed.Store, domainStore domain.St
 	}
 }
 
-func (s *Store) ListSources(ctx context.Context, filter Filter) iter.Seq2[Source, error] {
-	return func(yield func(Source, error) bool) {
+func (s *Store) ListSources(ctx context.Context, filter model.Filter) iter.Seq2[model.Source, error] {
+	return func(yield func(model.Source, error) bool) {
 		args := []any{filter.GetLimit(), filter.GetOffset()}
 		where := `WHERE deleted_at IS NULL`
 
@@ -63,7 +64,7 @@ func (s *Store) ListSources(ctx context.Context, filter Filter) iter.Seq2[Source
 
 		rows, err := s.db.Query(ctx, query, args...)
 		if err != nil {
-			yield(Source{}, err)
+			yield(model.Source{}, err)
 			return
 		}
 		defer rows.Close()
@@ -71,7 +72,7 @@ func (s *Store) ListSources(ctx context.Context, filter Filter) iter.Seq2[Source
 		for rows.Next() {
 			source, err := scanSource(rows)
 			if err != nil {
-				yield(Source{}, err)
+				yield(model.Source{}, err)
 				return
 			}
 
@@ -81,16 +82,16 @@ func (s *Store) ListSources(ctx context.Context, filter Filter) iter.Seq2[Source
 		}
 
 		if err := rows.Err(); err != nil {
-			yield(Source{}, err)
+			yield(model.Source{}, err)
 		}
 	}
 }
 
-func (s *Store) GetSource(ctx context.Context, id string) (Source, error) {
+func (s *Store) GetSource(ctx context.Context, id string) (model.Source, error) {
 	return scanSource(s.db.QueryRow(ctx, `SELECT `+sourceColumns+` FROM sources WHERE id = $1 AND deleted_at IS NULL`, id))
 }
 
-func scanSource(row pgx.Row) (source Source, err error) {
+func scanSource(row pgx.Row) (source model.Source, err error) {
 	err = row.Scan(
 		&source.ID,
 		&source.DomainID,
@@ -109,7 +110,7 @@ func scanSource(row pgx.Row) (source Source, err error) {
 }
 
 // Only scraped sources are backfilled, so a proposed source waits for its promotion.
-func (s *Store) ListUnbackfilled(ctx context.Context, limit int) ([]Source, error) {
+func (s *Store) ListUnbackfilled(ctx context.Context, limit int) ([]model.Source, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT `+sourceColumns+` FROM sources
 		WHERE backfilled_at IS NULL AND enabled AND status = 'active' AND deleted_at IS NULL
@@ -120,7 +121,7 @@ func (s *Store) ListUnbackfilled(ctx context.Context, limit int) ([]Source, erro
 		return nil, fmt.Errorf("err query unbackfilled sources: %w", err)
 	}
 
-	sources, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Source, error) {
+	sources, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (model.Source, error) {
 		return scanSource(row)
 	})
 	if err != nil {

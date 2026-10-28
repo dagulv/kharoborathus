@@ -20,6 +20,8 @@ import (
 	"github.com/dagulv/kharoborathus/internal/service/domain"
 	"github.com/dagulv/kharoborathus/internal/service/feed"
 	"github.com/dagulv/kharoborathus/internal/service/source/adapter"
+	"github.com/dagulv/kharoborathus/internal/service/source/model"
+	"github.com/dagulv/kharoborathus/internal/service/source/plugin"
 	"golang.org/x/net/html"
 )
 
@@ -34,32 +36,31 @@ const (
 	minFailing       = 24 * time.Hour
 	probeInterval    = 7 * 24 * time.Hour
 
-	// Between requests to one host, shared by every adapter and the backfill check.
-	hostGap = 5 * time.Second
+	domainInterval = 5 * time.Second
 )
 
-type Pipeline interface {
+type Sinker interface {
 	Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed
 }
 
-func initPipelines(ctx context.Context, in <-chan Source, s *Store, trim *Trim, pacer *pace.Pacer, l, calls *slog.Logger) []Pipeline {
-	sinks := make(map[string]chan Source)
+func initSinks(ctx context.Context, in <-chan model.Source, s *Store, trim *Trim, pacer *pace.Pacer, l, calls *slog.Logger) []Sinker {
+	ins := make(map[string]chan model.Source)
 
-	pipelines := []Pipeline{
-		newPipeline(adapter.NewRSS(&s.feedStore, pacer, l), addSink(sinks, "rss"), s, trim, calls),
-		newPipeline(adapter.NewPage(&s.feedStore, trim, pacer, l), addSink(sinks, "page"), s, trim, calls),
-		newPipeline(adapter.NewWordPress(&s.feedStore, pacer, l), addSink(sinks, "wordpress"), s, trim, calls),
+	sinks := []Sinker{
+		newSink(adapter.NewRSS(&s.feedStore, pacer, l), addIn(ins, "rss"), s, trim, calls),
+		newSink(adapter.NewPage(&s.feedStore, trim, pacer, l), addIn(ins, "page"), s, trim, calls),
+		newSink(adapter.NewWordPress(&s.feedStore, pacer, l), addIn(ins, "wordpress"), s, trim, calls),
 	}
 
 	go func() {
 		defer func() {
-			for _, c := range sinks {
+			for _, c := range ins {
 				close(c)
 			}
 		}()
 
 		for s := range in {
-			c, ok := sinks[s.Adapter]
+			c, ok := ins[s.Adapter]
 			if !ok {
 				l.Error("unknown adapter", "adapter", s.Adapter, "source", s.ID)
 				continue
@@ -73,27 +74,27 @@ func initPipelines(ctx context.Context, in <-chan Source, s *Store, trim *Trim, 
 		}
 	}()
 
-	return pipelines
+	return sinks
 }
 
-func addSink(sinks map[string]chan Source, name string) <-chan Source {
-	c := make(chan Source)
+func addIn(sinks map[string]chan model.Source, name string) <-chan model.Source {
+	c := make(chan model.Source)
 	sinks[name] = c
 
 	return c
 }
 
-func Run(ctx context.Context, s *Store, syncs <-chan Source, trim *Trim, sched schedule.Schedule, l, calls *slog.Logger) error {
-	pacer := pace.New(hostGap)
+func Run(ctx context.Context, s *Store, syncs <-chan model.Source, trim *Trim, sched schedule.Schedule, l, calls *slog.Logger) error {
+	pacer := pace.New(domainInterval)
 
 	sources := merge(ctx, continuousSources(ctx, s, syncs, sched, l), backfills(ctx, s, sched, pacer, l, calls))
 
-	pipelines := initPipelines(ctx, sources, s, trim, pacer, l, calls)
+	sinks := initSinks(ctx, sources, s, trim, pacer, l, calls)
 
-	feeds := make([]<-chan feed.Feed, 0, len(pipelines))
+	feeds := make([]<-chan feed.Feed, 0, len(sinks))
 
-	for _, p := range pipelines {
-		feeds = append(feeds, p.Run(ctx, l))
+	for _, s := range sinks {
+		feeds = append(feeds, s.Run(ctx, l))
 	}
 
 	for f := range merge(ctx, feeds...) {
@@ -115,8 +116,8 @@ func Run(ctx context.Context, s *Store, syncs <-chan Source, trim *Trim, sched s
 	return ctx.Err()
 }
 
-func continuousSources(ctx context.Context, s *Store, syncs <-chan Source, sched schedule.Schedule, l *slog.Logger) <-chan Source {
-	out := make(chan Source)
+func continuousSources(ctx context.Context, s *Store, syncs <-chan model.Source, sched schedule.Schedule, l *slog.Logger) <-chan model.Source {
+	out := make(chan model.Source)
 
 	go func() {
 		defer close(out)
@@ -125,9 +126,9 @@ func continuousSources(ctx context.Context, s *Store, syncs <-chan Source, sched
 
 		paused := make(map[string]time.Time)
 		var lastInterval time.Time
-		sources := make([]Source, 0)
+		sources := make([]model.Source, 0)
 
-		dispatch := func(source Source) bool {
+		dispatch := func(source model.Source) bool {
 			select {
 			case out <- source:
 				paused[source.ID] = time.Now().Add(time.Duration(source.Rate) * time.Minute)
@@ -186,7 +187,7 @@ func continuousSources(ctx context.Context, s *Store, syncs <-chan Source, sched
 }
 
 // A revived source must not keep the week-long pause of the probe that revived it.
-func clipPauses(paused map[string]time.Time, sources []Source, now time.Time) {
+func clipPauses(paused map[string]time.Time, sources []model.Source, now time.Time) {
 	for _, source := range sources {
 		limit := now.Add(time.Duration(source.Rate) * time.Minute)
 
@@ -196,12 +197,12 @@ func clipPauses(paused map[string]time.Time, sources []Source, now time.Time) {
 	}
 }
 
-func enabledSources(ctx context.Context, s *Store) ([]Source, error) {
-	var sources []Source
+func enabledSources(ctx context.Context, s *Store) ([]model.Source, error) {
+	var sources []model.Source
 
-	for _, status := range []string{StatusActive, StatusDormant} {
+	for _, status := range []string{model.StatusActive, model.StatusDormant} {
 		for offset := 0; ; offset += sourcePage {
-			page, err := iterx.Collect(s.ListSources(ctx, Filter{
+			page, err := iterx.Collect(s.ListSources(ctx, model.Filter{
 				Limit:   strconv.Itoa(sourcePage),
 				Offset:  strconv.Itoa(offset),
 				OrderBy: "id",
@@ -213,7 +214,7 @@ func enabledSources(ctx context.Context, s *Store) ([]Source, error) {
 			}
 
 			for _, source := range page {
-				if source.Status == StatusDormant {
+				if source.Status == model.StatusDormant {
 					source.Rate = int(probeInterval / time.Minute)
 				}
 
@@ -230,7 +231,7 @@ func enabledSources(ctx context.Context, s *Store) ([]Source, error) {
 }
 
 type fetched[T any] struct {
-	source Source
+	source model.Source
 	data   T
 }
 
@@ -239,20 +240,20 @@ type resolved struct {
 	domain domain.Domain
 }
 
-type pipeline[T any] struct {
+type sink[T any] struct {
 	adapter.Adapter[T]
 
-	in    <-chan Source
+	in    <-chan model.Source
 	store *Store
 	trim  *Trim
 	calls *slog.Logger
 }
 
-func newPipeline[T any](a adapter.Adapter[T], in <-chan Source, store *Store, trim *Trim, calls *slog.Logger) Pipeline {
-	return pipeline[T]{Adapter: a, in: in, store: store, trim: trim, calls: calls}
+func newSink[T any](a adapter.Adapter[T], in <-chan model.Source, store *Store, trim *Trim, calls *slog.Logger) Sinker {
+	return sink[T]{Adapter: a, in: in, store: store, trim: trim, calls: calls}
 }
 
-func (p pipeline[T]) Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed {
+func (p sink[T]) Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed {
 	data := fanOut(ctx, workers, p.in, l, p.fetchFromSource)
 	filtered := fanOut(ctx, workers, data, l, p.filter)
 	content := fanOut(ctx, workers, filtered, l, p.fetchContent)
@@ -260,10 +261,28 @@ func (p pipeline[T]) Run(ctx context.Context, l *slog.Logger) <-chan feed.Feed {
 	fresh := fanOut(ctx, workers, feeds, l, p.resolveFeed)
 	trimmed := fanOut(ctx, workers, fresh, l, p.trimFeed)
 
+	pipes := plugin.NewPipeline[model.Source]().
+		NextCh(5, p.fetchFromSource).
+		Next(5, func(ctx context.Context, l *slog.Logger, f fetched[T]) (fetched[T], error) {
+			data, err := p.FetchContent(ctx, p.calls.With("source_id", f.source.ID), f.data)
+			if err != nil {
+				return fetched[T]{}, err
+			}
+			return fetched[T]{source: f.source, data: data}, nil
+		}).
+		Next(5, func(ctx context.Context, l *slog.Logger, f fetched[T]) {})
+
+	pgn := plugin.NewPlugin(
+		p.in,
+		pipes,
+		nil,
+	)
+	_ = pgn
+
 	return fanOut(ctx, workers, trimmed, l, p.markdownFeed)
 }
 
-func (p pipeline[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-chan Source) <-chan fetched[T] {
+func (p sink[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-chan model.Source) <-chan fetched[T] {
 	out := make(chan fetched[T])
 
 	go func() {
@@ -293,7 +312,7 @@ func (p pipeline[T]) fetchFromSource(ctx context.Context, l *slog.Logger, in <-c
 	return out
 }
 
-func (p pipeline[T]) filter(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan fetched[T] {
+func (p sink[T]) filter(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan fetched[T] {
 	out := make(chan fetched[T])
 
 	go func() {
@@ -321,7 +340,7 @@ func (p pipeline[T]) filter(ctx context.Context, l *slog.Logger, in <-chan fetch
 	return out
 }
 
-func (p pipeline[T]) fetchContent(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan fetched[T] {
+func (p sink[T]) fetchContent(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan fetched[T] {
 	out := make(chan fetched[T])
 
 	go func() {
@@ -345,7 +364,7 @@ func (p pipeline[T]) fetchContent(ctx context.Context, l *slog.Logger, in <-chan
 	return out
 }
 
-func (p pipeline[T]) processFeed(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan feed.Feed {
+func (p sink[T]) processFeed(ctx context.Context, l *slog.Logger, in <-chan fetched[T]) <-chan feed.Feed {
 	out := make(chan feed.Feed)
 
 	go func() {
@@ -375,7 +394,7 @@ func (p pipeline[T]) processFeed(ctx context.Context, l *slog.Logger, in <-chan 
 	return out
 }
 
-func (p pipeline[T]) resolveFeed(ctx context.Context, l *slog.Logger, in <-chan feed.Feed) <-chan resolved {
+func (p sink[T]) resolveFeed(ctx context.Context, l *slog.Logger, in <-chan feed.Feed) <-chan resolved {
 	out := make(chan resolved)
 
 	go func() {
@@ -401,7 +420,7 @@ func (p pipeline[T]) resolveFeed(ctx context.Context, l *slog.Logger, in <-chan 
 	return out
 }
 
-func (p pipeline[T]) trimFeed(ctx context.Context, l *slog.Logger, in <-chan resolved) <-chan feed.Feed {
+func (p sink[T]) trimFeed(ctx context.Context, l *slog.Logger, in <-chan resolved) <-chan feed.Feed {
 	out := make(chan feed.Feed)
 
 	go func() {
@@ -430,7 +449,7 @@ func (p pipeline[T]) trimFeed(ctx context.Context, l *slog.Logger, in <-chan res
 	return out
 }
 
-func (p pipeline[T]) markdownFeed(ctx context.Context, l *slog.Logger, in <-chan feed.Feed) <-chan feed.Feed {
+func (p sink[T]) markdownFeed(ctx context.Context, l *slog.Logger, in <-chan feed.Feed) <-chan feed.Feed {
 	out := make(chan feed.Feed)
 
 	go func() {
