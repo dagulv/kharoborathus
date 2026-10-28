@@ -1,51 +1,70 @@
-package plugin
+package pipeline
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 )
 
-// type Pipeliner interface {
-// 	Next(ctx context.Context, l *slog.Logger) <-chan feed.Feed
-// }
+// ErrSkip drops an item without logging it as a failure.
+var ErrSkip = errors.New("skip")
 
 type step[In, Out any] func(context.Context, *slog.Logger, <-chan In) <-chan Out
-type pipeline[In, Out any] struct {
-	run   step[In, Out]
-	onErr func(error)
+
+type Pipeline[In, Out any] struct {
+	run  step[In, Out]
+	sink func(context.Context, Out) error
 }
 
-func NewPipeline[T any]() pipeline[T, T] {
-	return pipeline[T, T]{
-		onErr: func(err error) {
-			slog.Error("error pipeline: ", err)
-		},
+func New[T any]() Pipeline[T, T] {
+	return Pipeline[T, T]{
 		run: func(_ context.Context, _ *slog.Logger, in <-chan T) <-chan T { return in },
 	}
 }
 
-func (p pipeline[In, Out]) Next[Next any](
+func (p Pipeline[In, Out]) WithSink(sink func(context.Context, Out) error) Pipeline[In, Out] {
+	p.sink = sink
+
+	return p
+}
+
+func (p Pipeline[In, Out]) Stream(ctx context.Context, l *slog.Logger, in <-chan In) <-chan Out {
+	return p.run(ctx, l, in)
+}
+
+func (p Pipeline[In, Out]) Run(ctx context.Context, l *slog.Logger, in <-chan In) error {
+	for v := range p.run(ctx, l, in) {
+		if p.sink == nil {
+			continue
+		}
+
+		if err := p.sink(ctx, v); err != nil {
+			l.Error("pipeline sink", "err", err)
+		}
+	}
+
+	return ctx.Err()
+}
+
+func (p Pipeline[In, Out]) Next[Next any](
 	workers int,
 	fn func(context.Context, *slog.Logger, Out) (Next, error),
-	// pre func(context.Context, Out) error,
-	// post func(context.Context, Next) error,
-) pipeline[In, Next] {
-	return pipeline[In, Next]{
+) Pipeline[In, Next] {
+	return Pipeline[In, Next]{
 		run: func(ctx context.Context, l *slog.Logger, in <-chan In) <-chan Next {
 			return fanOut(ctx, workers, p.run(ctx, l, in), l, func(ctx context.Context, l *slog.Logger, in <-chan Out) <-chan Next {
-				// return handle(ctx, l, in, fn, pre, post)
 				return handle(ctx, l, in, fn)
 			})
 		},
 	}
 }
 
-func (p pipeline[In, Out]) NextCh[Next any](
+func (p Pipeline[In, Out]) NextCh[Next any](
 	workers int,
 	next step[Out, Next],
-) pipeline[In, Next] {
-	return pipeline[In, Next]{
+) Pipeline[In, Next] {
+	return Pipeline[In, Next]{
 		run: func(ctx context.Context, l *slog.Logger, in <-chan In) <-chan Next {
 			return fanOut(ctx, workers, p.run(ctx, l, in), l, next)
 		},
@@ -57,8 +76,6 @@ func handle[In, Out any](
 	l *slog.Logger,
 	in <-chan In,
 	fn func(context.Context, *slog.Logger, In) (Out, error),
-	// pre func(context.Context, In) error,
-	// post func(context.Context, Out) error,
 ) <-chan Out {
 	out := make(chan Out)
 
@@ -66,22 +83,18 @@ func handle[In, Out any](
 		defer close(out)
 
 		for v := range in {
-			// if pre != nil {
-			// 	if err := pre(ctx, v); err != nil {
-			// 		continue
-			// 	}
-			// }
-
 			res, err := fn(ctx, l, v)
-			if err != nil {
+			if errors.Is(err, ErrSkip) {
 				continue
 			}
 
-			// if post != nil {
-			// 	if err := post(ctx, res); err != nil {
-			// 		continue
-			// 	}
-			// }
+			if err != nil {
+				// Failures caused by shutdown are not item failures.
+				if ctx.Err() == nil {
+					l.Error("pipeline step", "err", err)
+				}
+				continue
+			}
 
 			select {
 			case out <- res:
@@ -101,10 +114,10 @@ func fanOut[In, Out any](ctx context.Context, n int, in <-chan In, l *slog.Logge
 		outs[i] = stage(ctx, l, in)
 	}
 
-	return merge(ctx, outs...)
+	return Merge(ctx, outs...)
 }
 
-func merge[T any](ctx context.Context, chans ...<-chan T) <-chan T {
+func Merge[T any](ctx context.Context, chans ...<-chan T) <-chan T {
 	out := make(chan T)
 
 	var wg sync.WaitGroup
@@ -131,20 +144,3 @@ func merge[T any](ctx context.Context, chans ...<-chan T) <-chan T {
 
 	return out
 }
-
-// func (p pipeline[In, Out]) Next[Next any](f func(Out) Next) pipeline[In, Next] {
-// 	return func(ctx context.Context, l *slog.Logger, in <-chan In) <-chan Next {
-// 		out := make(chan Next)
-// 		go func() {
-// 			defer close(out)
-// 			for v := range p.run(ctx, l, in) {
-// 				select {
-// 				case out <- f(v):
-// 				case <-ctx.Done():
-// 					return
-// 				}
-// 			}
-// 		}()
-// 		return out
-// 	}
-// }
