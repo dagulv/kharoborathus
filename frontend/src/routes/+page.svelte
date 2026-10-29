@@ -12,7 +12,6 @@
 
 	const posts = $derived([...data.posts, ...more]);
 
-	// Fixed zone, since the server renders the first page and its clock may be UTC.
 	const fmt = new Intl.DateTimeFormat('sv-SE', {
 		dateStyle: 'short',
 		timeStyle: 'short',
@@ -79,7 +78,6 @@
 			>Could not load more posts. Retry</button
 		>
 	{:else if !done && posts.length}
-		<!-- A new sentinel per page, since an observer only fires when visibility changes. -->
 		{#key posts.length}
 			<div {@attach nearEnd}></div>
 		{/key}
