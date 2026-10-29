@@ -42,7 +42,7 @@ ALTER TABLE posts ADD COLUMN summary_pending BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX posts_summary_pending_idx ON posts (created_at) WHERE summary_pending;
 ```
 
-These are in `001_init.sql`. `summary_pending` is replaced by `summary_checked`, see [quality gate](quality-gate.md).
+These are in `001_init.sql`. `summary_pending` is replaced by `summary_checked` and dropped in `004_drop_summary_pending.sql`, see [quality gate](quality-gate.md).
 
 ## Defaults
 

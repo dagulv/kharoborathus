@@ -9,7 +9,7 @@ Every post passes a Jev quality check before any DeepSeek call or feed listing. 
 
 ## Current state
 
-[quality.go](../../internal/service/source/quality.go) checks `pending` posts with `Tagger.Quality` in [gate.go](../../internal/service/robot/gate.go). [summaries.go](../../internal/service/source/summaries.go) summarizes `active` posts through `summary_checked`. Tagging, discovery and link extraction read `active` posts only. `summary_pending` is still in the schema until the follow-up migration.
+[quality.go](../../internal/service/source/quality.go) checks `pending` posts with `Tagger.Quality` in [gate.go](../../internal/service/robot/gate.go). [summaries.go](../../internal/service/source/summaries.go) summarizes `active` posts through `summary_checked`. Tagging, discovery and link extraction read `active` posts only. `004_drop_summary_pending.sql` drops `summary_pending`.
 
 ## Design
 
@@ -69,7 +69,7 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS quality_tried_at TIMESTAMPTZ;
 ```
 
-Later migration:
+`004_drop_summary_pending.sql`:
 
 ```sql
 DROP INDEX IF EXISTS posts_summary_pending_idx;
