@@ -32,6 +32,15 @@ export type PostSummary = {
 	createdAt: Date;
 };
 
+export type FeedPost = {
+	id: string;
+	domainUrl: string;
+	url: string;
+	title: string;
+	shortContent: string;
+	postedAt: string;
+};
+
 export type Post = PostSummary & {
 	content: string;
 	sourceUrl: string;
