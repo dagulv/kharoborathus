@@ -46,7 +46,6 @@ func TestTrimRuleFailures(t *testing.T) {
 	}{
 		"no match": {func(r Rule) Rule { r.Include = str("div.story"); return r }, FailIncludeNone},
 		"many":     {func(r Rule) Rule { r.Include = str("p"); return r }, FailIncludeMany},
-		"page":     {func(r Rule) Rule { r.Include = str("div.article-wrap"); r.Exclude = nil; return r }, FailPageShare},
 		"title": {func(r Rule) Rule {
 			r.Include = str("div.article-wrap")
 			r.Exclude = []string{"aside", ".comments", ".promo", ".newsletter-cta", ".updated", ".byline", "time"}
@@ -102,7 +101,7 @@ func TestSanity(t *testing.T) {
 		}
 	}
 
-	ok := extraction{Extraction: trimmer.Extraction{Text: long + `"Citat."`}, pageText: 10_000}
+	ok := extraction{Extraction: trimmer.Extraction{Text: long + `"Citat."`}}
 	if sanity(&ok); !ok.OK() {
 		t.Errorf("expected ok, got %v", ok.Failures)
 	}

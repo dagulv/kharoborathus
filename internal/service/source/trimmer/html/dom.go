@@ -63,10 +63,9 @@ var blockLevel = map[atom.Atom]bool{
 var errNoBody = errors.New("trimmer: document has no body")
 
 type document struct {
-	root     *nethtml.Node
-	body     *nethtml.Node
-	meta     map[string]string
-	pageText int
+	root *nethtml.Node
+	body *nethtml.Node
+	meta map[string]string
 }
 
 func parse(page []byte) (doc document, err error) {
@@ -83,7 +82,6 @@ func parse(page []byte) (doc document, err error) {
 	}
 
 	doc.meta = metadata(root)
-	doc.pageText = textLen(doc.body)
 
 	prune(doc.body)
 
