@@ -49,7 +49,7 @@ Plain text is the markdown `content` with link targets removed, so `[text](url)`
 
 ### Feed
 
-Unchanged for now. Grouped or flat presentation is a later frontend decision.
+The public feed hides a post with a `duplicate_of` link to an active post. A copy whose original is pending or rejected stays. `same_event` posts are listed flat. Grouping them is a later frontend decision.
 
 ## Schema changes
 
