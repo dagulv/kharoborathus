@@ -82,6 +82,7 @@ Secrets:
 - UpCloud credentials: an API token, not a user's password, since it expires within a year, can be limited to your IP and revoked alone. `UPCLOUD_TOKEN` and `TF_VAR_state_passphrase` live in the prod vault's `tofu.yaml`. The OpenTofu state stays local, encrypted and gitignored.
 - Haloy passes each value `haloy.yaml` names to its container. The rest of the prod vault never leaves your machine.
 - The Haloy API token lives in `~/.config/haloy` locally and in `/etc/haloy` on the server.
+- The migrate workflow needs `HALOY_API_TOKEN` and `POSTGRES_PASSWORD` as secrets of the GitHub `production` environment, with the prod values. Without them Haloy cannot resolve the db target's env and the run fails before the tunnel opens.
 
 ## Schema changes
 
