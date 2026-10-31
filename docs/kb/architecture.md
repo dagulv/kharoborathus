@@ -28,7 +28,7 @@ Source pipeline per article. Every request to a host waits 5 seconds after the p
 
 1. Adapter fetches the listing. `rss` reads the feed. `page` applies an LLM-generated CSS link rule. `wordpress` reads the REST API on a [backfill](backfill.md).
 2. Skip URLs already in `posts`.
-3. Fetch the article.
+3. Fetch the article. `rss` fetches it only for items without full content, which carry just an excerpt.
 4. Resolve its domain.
 5. Trim with the domain's LLM-generated rule. Without a rule, `trimGeneric` picks the densest node.
 6. Convert to markdown.
