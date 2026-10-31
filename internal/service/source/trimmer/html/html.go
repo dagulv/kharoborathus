@@ -19,7 +19,6 @@ const (
 	minOutput      = 200
 	maxOutput      = 200_000
 	maxLinkDensity = 0.25
-	maxPageShare   = 0.6
 )
 
 const (
@@ -29,7 +28,6 @@ const (
 	FailTooShort      = "too_short"
 	FailTooLong       = "too_long"
 	FailLinkDensity   = "link_density"
-	FailPageShare     = "page_share"
 	FailPaywall       = "paywall"
 	FailTitleRepeated = "title_repeated"
 	FailUnterminated  = "unterminated"
@@ -59,7 +57,6 @@ var paywallMarkers = []string{
 type extraction struct {
 	trimmer.Extraction
 
-	pageText    int
 	linkDensity float64
 	paragraphs  []string
 }
@@ -95,7 +92,6 @@ func trimRule(c *compiledRule, page []byte) (e extraction) {
 	}
 
 	matches := cascadia.QueryAll(doc.body, c.include)
-	e.pageText = doc.pageText
 
 	e.Title = cmp.Or(first(doc.root, c.title), doc.meta["og:title"], doc.meta["title"])
 	e.Author = cmp.Or(first(doc.root, c.author), doc.meta["author"], doc.meta["article:author"])
@@ -142,7 +138,6 @@ func trimGeneric(page []byte) (e extraction) {
 		return extraction{Failures: []string{FailParse}}
 	}
 
-	e.pageText = doc.pageText
 	e.Title = cmp.Or(first(doc.root, headline), doc.meta["og:title"], doc.meta["title"])
 	e.Author = cmp.Or(doc.meta["author"], doc.meta["article:author"])
 	e.Published = published(doc, publishedTime)
@@ -321,10 +316,6 @@ func sanity(e *extraction) {
 
 	if e.linkDensity >= maxLinkDensity {
 		e.Failures = append(e.Failures, FailLinkDensity)
-	}
-
-	if e.pageText > 0 && float64(l) > maxPageShare*float64(e.pageText) {
-		e.Failures = append(e.Failures, FailPageShare)
 	}
 
 	lower := strings.ToLower(e.Text)
