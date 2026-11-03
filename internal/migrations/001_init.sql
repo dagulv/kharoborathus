@@ -23,13 +23,11 @@ WITH
 CREATE TABLE IF NOT EXISTS tags (
   key TEXT PRIMARY KEY,
   enabled BOOLEAN NOT NULL DEFAULT true,
-  status TEXT NOT NULL DEFAULT 'active', -- active | dormant
-  gate BOOLEAN NOT NULL DEFAULT false,
-  match_rate REAL,
-  last_matched_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'active', -- proposed | active
+  type TEXT NOT NULL DEFAULT 'quality', -- sentiment | quality etc
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
+-- TODO: Correctly handle tag aliases here.
 CREATE TABLE IF NOT EXISTS tag_terms (
   key TEXT NOT NULL REFERENCES tags (key) ON DELETE CASCADE,
   lang TEXT NOT NULL,
@@ -59,25 +57,28 @@ CREATE TABLE IF NOT EXISTS sources (
   enabled BOOLEAN NOT NULL DEFAULT false,
   rate INT NOT NULL DEFAULT 15,
   metadata JSONB NOT NULL DEFAULT '{}',
-  target_tags TEXT[] NOT NULL DEFAULT '{}',
-  origin TEXT NOT NULL DEFAULT 'manual', -- manual | discovered
-  status TEXT NOT NULL DEFAULT 'active', -- proposed | active | dormant
-  status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  fetch_failures INT NOT NULL DEFAULT 0, -- consecutive listing fetch failures
-  failing_since TIMESTAMPTZ, -- first of the current run of failures
-  promoted_at TIMESTAMPTZ,
-  flagged_at TIMESTAMPTZ,
-  reviewed_at TIMESTAMPTZ,
-  backfilled_at TIMESTAMPTZ, -- when the WordPress check, and any backfill it found, ran
+  status TEXT NOT NULL DEFAULT 'active', -- proposed | active | flagged
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ,
-  -- Trust checks read only enabled, so a deleted source must never stay enabled.
   CHECK (deleted_at IS NULL OR NOT enabled)
 );
 
 CREATE INDEX IF NOT EXISTS sources_url_idx ON sources (url);
 
 CREATE INDEX IF NOT EXISTS sources_enabled_idx ON sources (enabled);
+
+CREATE TABLE IF NOT EXISTS raw_posts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_id UUID NOT NULL REFERENCES sources (id),
+  url TEXT UNIQUE NOT NULL,
+  lang TEXT NOT NULL,
+  domain_id UUID NOT NULL REFERENCES domains (id),
+  raw_content TEXT NOT NULL,
+  content TEXT NOT NULL,
+  simhash BIGINT,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS posts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -89,12 +90,10 @@ CREATE TABLE IF NOT EXISTS posts (
   short_content TEXT NOT NULL,
   content TEXT NOT NULL,
   tags TEXT[] NOT NULL DEFAULT '{}',
-  posted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  posted_at TIMESTAMPTZ,
   authors TEXT[] NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  content_hash BYTEA NOT NULL,
-  simhash BIGINT, -- NULL when the content has no words
-  summary_pending BOOLEAN NOT NULL DEFAULT false, -- backfilled posts are summarized in the background
+  simhash BIGINT,
   ts tsvector GENERATED ALWAYS AS (
     CASE lang
       WHEN 'sv' THEN setweight(to_tsvector('ts_swedish', title), 'A') || setweight(
@@ -121,7 +120,7 @@ CREATE INDEX IF NOT EXISTS posts_url_idx ON posts (url);
 
 CREATE INDEX IF NOT EXISTS posts_domain_id_idx ON posts (domain_id);
 
-CREATE INDEX IF NOT EXISTS posts_content_hash_idx ON posts (content_hash);
+CREATE INDEX IF NOT EXISTS posts_simhash_idx ON posts (simhash);
 
 CREATE INDEX IF NOT EXISTS posts_tags_idx ON posts USING gin (tags);
 
@@ -129,72 +128,42 @@ CREATE INDEX IF NOT EXISTS posts_posted_at_idx ON posts (posted_at DESC);
 
 CREATE INDEX IF NOT EXISTS posts_ts_idx ON posts USING gin (ts);
 
-CREATE INDEX IF NOT EXISTS posts_summary_pending_idx ON posts (created_at) WHERE summary_pending;
-
 CREATE TABLE IF NOT EXISTS source_discovered_by_post (
   source_id UUID NOT NULL REFERENCES sources (id),
   post_id UUID NOT NULL REFERENCES posts (id),
   PRIMARY KEY (source_id, post_id)
 );
 
-CREATE TABLE IF NOT EXISTS discovery_events (
+CREATE TABLE IF NOT EXISTS discovery_search_queries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-  entity TEXT NOT NULL,
-  action TEXT NOT NULL,
-  query TEXT NOT NULL,
+  normalized_entity TEXT NOT NULL, -- TODO: Not sure if `normalized_entity` and `action` is needed, but volvo_cars instead of Volvo Cars
+  action TEXT NOT NULL, -- eg buyback, selling/buying
+  query TEXT NOT NULL, -- `normalized_entity` and `action` maybe enough to be in only `query`, above can be useful for analytics
   searched_at TIMESTAMPTZ,
-  result_count INT, -- Brave results, NULL when marked searched without a call
+  result JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (post_id, query)
+  UNIQUE (query)
 );
 
-CREATE INDEX IF NOT EXISTS discovery_events_pending_idx ON discovery_events (created_at)
-WHERE
-  searched_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS discovery_events_idx ON discovery_events (lower(entity), lower(action), searched_at);
-
-CREATE TABLE IF NOT EXISTS discover_checked (
-  post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,
-  checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE IF NOT EXISTS discovery_search_query_posts (
+  query_id UUID NOT NULL REFERENCES discovery_search_queries (id) ON DELETE CASCADE,
+  post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
+  PRIMARY KEY (query_id, post_id)
 );
 
-CREATE TABLE IF NOT EXISTS link_events (
+CREATE INDEX IF NOT EXISTS discovery_search_query_posts_post_idx ON discovery_search_query_posts (post_id);
+
+CREATE TABLE IF NOT EXISTS discovery_posts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   url TEXT UNIQUE NOT NULL,
-  via TEXT NOT NULL, -- link | search
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-  discovery_events_id UUID REFERENCES discovery_events (id) ON DELETE SET NULL,
-  domain_id UUID REFERENCES domains (id), -- set on fetch, drives source promotion
+  discovery_search_query_id UUID REFERENCES discovery_search_queries (id) ON DELETE SET NULL,
   status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
-  gate_scores JSONB NOT NULL DEFAULT '{}',
-  error TEXT,
-  attempts INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   checked_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS link_events_pending_idx ON link_events (created_at)
-WHERE
-  status = 'pending';
-
-CREATE INDEX IF NOT EXISTS link_events_domain_idx ON link_events (domain_id, status);
-
-CREATE TABLE IF NOT EXISTS link_checked (
-  post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,
-  checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts (created_at);
-
-CREATE TABLE IF NOT EXISTS tag_checked (
-  post_id UUID PRIMARY KEY REFERENCES posts (id) ON DELETE CASCADE,
-  gate_passed BOOLEAN, -- NULL when the switch was off or there was nothing to gate against
-  checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE post_links (
+CREATE TABLE discovery_related_posts (
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
   to_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
   relation TEXT NOT NULL, -- ex: 'discovered', 'duplicate_of', 'same_event', 'follows_up', 'translation_of'
@@ -203,34 +172,6 @@ CREATE TABLE post_links (
   PRIMARY KEY (from_post_id, to_post_id, relation),
   CHECK (from_post_id <> to_post_id)
 );
-
-CREATE INDEX post_links_to_idx ON post_links (to_post_id, relation);
-
-CREATE INDEX post_links_relation_idx ON post_links (relation);
-
-CREATE TABLE IF NOT EXISTS tag_proposals (
-  key TEXT NOT NULL,
-  lang TEXT NOT NULL,
-  term TEXT NOT NULL,
-  post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (key, post_id)
-);
-
-CREATE INDEX IF NOT EXISTS tag_proposals_created_at_idx ON tag_proposals (created_at);
-
-CREATE TABLE IF NOT EXISTS tag_aliases (
-  alias TEXT PRIMARY KEY,
-  key TEXT NOT NULL REFERENCES tags (key) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS switches (
-  key TEXT PRIMARY KEY,
-  enabled BOOLEAN NOT NULL DEFAULT false,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-INSERT INTO switches (key) VALUES ('shadow_gate'), ('discovered_ingest'), ('search_discovery'), ('source_promotion') ON CONFLICT (key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
