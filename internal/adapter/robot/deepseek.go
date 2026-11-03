@@ -15,6 +15,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
@@ -31,7 +32,7 @@ const (
 	requestTimeout = 5 * time.Minute
 )
 
-var _ LLM = deepSeek{}
+var _ port.LLM = deepSeek{}
 
 //go:embed prompts/output_tool.md
 var outputToolPrompt string
@@ -43,7 +44,7 @@ type deepSeek struct {
 	l      *slog.Logger
 }
 
-func NewDeepSeek(env *config.Environment, l *slog.Logger) (LLM, error) {
+func NewDeepSeek(env *config.Environment, l *slog.Logger) (port.LLM, error) {
 	if env.DeepseekAPIKey == "" {
 		return nil, errors.New("deepseek: no api key")
 	}
@@ -61,7 +62,7 @@ func NewDeepSeek(env *config.Environment, l *slog.Logger) (LLM, error) {
 	}, nil
 }
 
-func (d deepSeek) Prompt(ctx context.Context, l *slog.Logger, req Request) (_ string, err error) {
+func (d deepSeek) Prompt(ctx context.Context, l *slog.Logger, req port.Request) (_ string, err error) {
 	params, err := d.params(req)
 
 	if err != nil {
@@ -85,7 +86,7 @@ func (d deepSeek) Prompt(ctx context.Context, l *slog.Logger, req Request) (_ st
 	return text.String(), nil
 }
 
-func (d deepSeek) Unmarshal(ctx context.Context, l *slog.Logger, req Request, out any) (err error) {
+func (d deepSeek) Unmarshal(ctx context.Context, l *slog.Logger, req port.Request, out any) (err error) {
 	params, err := d.params(req)
 
 	if err != nil {
@@ -144,13 +145,13 @@ func (d deepSeek) send(ctx context.Context, l *slog.Logger, params anthropic.Mes
 	)
 
 	if msg.StopReason == anthropic.StopReasonMaxTokens {
-		return nil, fmt.Errorf("%w: deepseek reached max_tokens", ErrIncomplete)
+		return nil, fmt.Errorf("%w: deepseek reached max_tokens", port.ErrIncomplete)
 	}
 
 	return msg, nil
 }
 
-func (d deepSeek) params(req Request) (params anthropic.MessageNewParams, err error) {
+func (d deepSeek) params(req port.Request) (params anthropic.MessageNewParams, err error) {
 	if req.Prompt == "" {
 		return params, errors.New("deepseek: no prompt")
 	}
@@ -208,7 +209,7 @@ func apiError(err error) error {
 
 	switch apiErr.StatusCode {
 	case http.StatusPaymentRequired, http.StatusTooManyRequests, http.StatusServiceUnavailable:
-		return fmt.Errorf("%w: %w", ErrUnavailable, err)
+		return fmt.Errorf("%w: %w", port.ErrUnavailable, err)
 	}
 
 	return err
@@ -289,5 +290,5 @@ func (d deepSeek) gate() error {
 		return nil
 	}
 
-	return fmt.Errorf("%w: %w: deepseek until %s", ErrUnavailable, ErrPeakHours, OffPeak.Next(now).Format(time.RFC3339))
+	return fmt.Errorf("%w: %w: deepseek until %s", port.ErrUnavailable, port.ErrPeakHours, OffPeak.Next(now).Format(time.RFC3339))
 }

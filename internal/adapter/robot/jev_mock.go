@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"unicode"
+
+	"github.com/dagulv/kharoborathus/internal/core/port"
 )
 
 const (
@@ -20,17 +22,17 @@ var mockStopWords = map[string]bool{
 	"the": true, "a": true, "an": true, "it": true, "does": true,
 }
 
-var _ Classifier = jevMock{}
+var _ port.Classifier = jevMock{}
 
 type jevMock struct {
 	l *slog.Logger
 }
 
-func NewJevMock(l *slog.Logger) Classifier {
+func NewJevMock(l *slog.Logger) port.Classifier {
 	return jevMock{l: l}
 }
 
-func (m jevMock) Noul(ctx context.Context, _ *slog.Logger, state any, questions map[string]NoulQuestion) (map[string]float64, error) {
+func (m jevMock) Noul(ctx context.Context, _ *slog.Logger, state any, questions map[string]port.NoulQuestion) (map[string]float64, error) {
 	b, err := json.Marshal(state)
 	if err != nil {
 		return nil, err

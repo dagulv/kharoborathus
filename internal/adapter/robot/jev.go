@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 )
@@ -22,7 +23,7 @@ const (
 	statusJevOverloaded = 529
 )
 
-var _ Classifier = jev{}
+var _ port.Classifier = jev{}
 
 type jev struct {
 	client *http.Client
@@ -32,7 +33,7 @@ type jev struct {
 	l      *slog.Logger
 }
 
-func NewJev(env *config.Environment, l *slog.Logger) (Classifier, error) {
+func NewJev(env *config.Environment, l *slog.Logger) (port.Classifier, error) {
 	if env.TypesafeAPIKey == "" {
 		return nil, errors.New("jev: no api key")
 	}
@@ -48,7 +49,7 @@ func NewJev(env *config.Environment, l *slog.Logger) (Classifier, error) {
 
 type jevQuestion struct {
 	Type string `json:"type"`
-	NoulQuestion
+	port.NoulQuestion
 }
 
 type jevRequest struct {
@@ -69,7 +70,7 @@ type jevResponse struct {
 	} `json:"usage"`
 }
 
-func (j jev) Noul(ctx context.Context, l *slog.Logger, state any, questions map[string]NoulQuestion) (map[string]float64, error) {
+func (j jev) Noul(ctx context.Context, l *slog.Logger, state any, questions map[string]port.NoulQuestion) (map[string]float64, error) {
 	if len(questions) == 0 {
 		return map[string]float64{}, nil
 	}
@@ -98,7 +99,7 @@ func (j jev) Noul(ctx context.Context, l *slog.Logger, state any, questions map[
 	for id := range questions {
 		a, ok := res.Answers[id]
 		if !ok || a.Noul == nil {
-			return nil, fmt.Errorf("%w: jev has no noul answer for %q", ErrIncomplete, id)
+			return nil, fmt.Errorf("%w: jev has no noul answer for %q", port.ErrIncomplete, id)
 		}
 
 		out[id] = *a.Noul
@@ -131,7 +132,7 @@ func (j jev) send(ctx context.Context, l *slog.Logger, body jevRequest, out *jev
 	case http.StatusOK:
 		return json.NewDecoder(res.Body).Decode(out)
 	case http.StatusTooManyRequests, http.StatusServiceUnavailable, statusJevOverloaded:
-		return fmt.Errorf("%w: jev %s", ErrUnavailable, res.Status)
+		return fmt.Errorf("%w: jev %s", port.ErrUnavailable, res.Status)
 	}
 
 	msg, _ := io.ReadAll(io.LimitReader(res.Body, 512))

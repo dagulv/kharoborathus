@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dagulv/kharoborathus/internal/core/port"
 )
 
 func mustParse(t *testing.T, s string) time.Time {
@@ -100,7 +102,7 @@ func TestSchemaOf(t *testing.T) {
 }
 
 func TestParamsDisableThinking(t *testing.T) {
-	params, err := deepSeek{}.params(Request{Prompt: "hej"})
+	params, err := deepSeek{}.params(port.Request{Prompt: "hej"})
 	if err != nil {
 		t.Fatal(err)
 	}
