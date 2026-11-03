@@ -9,7 +9,7 @@ A new `ingest` service turns queued URLs into posts. It reuses the source pipeli
 
 ## Current state
 
-[ingest.go](../../internal/service/ingest/ingest.go) runs every minute while `discovered_ingest` is on. It reuses `FetchHTML`, `Trim.Apply`, `source.Markdown`, `Summarizer` and the hard gate `Tagger.Gate`. Admin shows `link_events` status counts on the overview.
+[ingest.go](../../internal/service/ingest/ingest.go) runs every minute while `discovered_ingest` is on. It reuses `FetchHTML`, the [extractor](extraction.md), `source.Markdown`, `Summarizer` and the hard gate `Tagger.Gate`. Admin shows `link_events` status counts on the overview.
 
 ## Design
 
@@ -17,8 +17,8 @@ Chosen over a `queue` adapter in the source pipeline. That adapter would summari
 
 1. Read `pending` rows from `link_events` created inside the pending window, respecting the daily cap and per-domain rate. Runs only while the `discovered_ingest` switch is on, see [rollout](rollout.md). Older rows stay `pending`, so links queued while the switch was off are not fetched stale.
 2. Check `robots.txt` for the domain.
-3. Fetch, resolve domain and store it in `domain_id`, trim, convert to markdown.
-4. Reject on failed trimmer checks, short content or a missing title.
+3. Fetch, resolve domain and store it in `domain_id`, extract, convert to markdown.
+4. Reject on failed extract checks, short content or a missing title.
 5. Reject with `status = 'duplicate'` when the simhash matches a recent post, see [post linking](post-linking.md).
 6. Run the [gate](classifier-gate.md). Store scores in `gate_scores`.
 7. On reject, set `status = 'rejected'`. Only scores are kept. Raw content waits for the S3 TODO in the README.
@@ -40,7 +40,7 @@ Rules:
 - A redirect to another host sets `failed`, since `robots.txt` and the pacer covered only the original host. Same-host redirects store the final URL.
 - Pages with an extracted date older than the pending window are rejected as `stale`. Undated pages pass.
 - Ingest does not run while the classifier is mocked, since the mock passes almost any page.
-- Failed trimmer checks and short content are one check: `Trim.Apply` leaves no content, and the link is rejected with `no content`. A missing title rejects with `no title`.
+- Failed extract checks and short content are one check: `Extractor.Content` returns an error, and the link is rejected with `no content`. A missing title rejects with `no title`.
 - A URL conflict on insert sets `duplicate` with `url exists`.
 - Domains that differ only in scheme share their sources, so a block on `https://x` also stops `http://x`. Subdomains are separate sites.
 - Deleted sources count, so a domain whose source you deleted is not proposed again. When every source of the domain is disabled or deleted, the link fails with `source disabled` and nothing is inserted, so disabling a source blocks its domain. The check runs on the link's own domain before robots.txt or any page fetch, so a blocked domain gets no request, and again inside the insert transaction.

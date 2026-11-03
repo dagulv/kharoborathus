@@ -24,12 +24,13 @@ Grow beyond hand-picked sources without losing quality. Scale slowly and prefer 
 | [Request logs](request-logs.md)           | done   | Every third-party request as a row in `logs`, written by a slog handler.                               |
 | [Backfill](backfill.md)                   | done   | Whole archives of WordPress sources through the REST API, summarized in the background.                |
 | [Quality gate](quality-gate.md)           | done   | Jev checks every post before summaries, tags, events, links and the feed.                              |
+| [Extraction](extraction.md)               | done   | One LLM-generated CSS rule per field: feed links, content, title, authors and postedAt.                |
 
 ## Flow
 
 1. Trusted sources produce posts.
 2. Trusted posts propose tags and seed link extraction and search.
 3. Found URLs enter `link_events`.
-4. `ingest` fetches, trims and gates them.
+4. `ingest` fetches, extracts and gates them.
 5. Accepted posts join the feed and get linked to duplicates and same-event posts. Their domains become proposed sources.
 6. Proposed sources that keep passing the gate are promoted to active and join step 1.

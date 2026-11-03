@@ -26,11 +26,11 @@ Kharoborathus collects business and financial news from hand-picked sources, tag
 
 Source pipeline per article. Every request to a host waits 5 seconds after the previous one, through one [pacer](../../internal/lib/pace/pace.go) shared by all adapters:
 
-1. Adapter fetches the listing. `rss` reads the feed. `page` applies an LLM-generated CSS link rule. `wordpress` reads the REST API on a [backfill](backfill.md).
+1. Adapter fetches the listing. `rss` reads the feed. `page` asks the [extractor](extraction.md) for the links. `wordpress` reads the REST API on a [backfill](backfill.md).
 2. Skip URLs already in `posts`.
 3. Fetch the article. `rss` fetches it only for items without full content, which carry just an excerpt.
 4. Resolve its domain.
-5. Trim with the domain's LLM-generated rule. Without a rule, `trimGeneric` picks the densest node.
+5. [Extract](extraction.md) content, and title, authors and postedAt when the fetcher left them empty. Each field uses the domain's own rule, or falls back to the densest node and meta tags.
 6. Convert to markdown.
 7. Insert into `posts` as `pending` with a simhash and link `duplicate_of`.
 8. The [quality gate](quality-gate.md) sets `active` or `rejected`. Summary, tagging, discovery and links follow on `active` posts.
