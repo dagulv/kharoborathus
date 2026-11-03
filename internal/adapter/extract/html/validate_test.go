@@ -6,15 +6,13 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-
-	"github.com/dagulv/kharoborathus/internal/service/source/trimmer"
 )
 
-func pages(s site, from, n int) []trimmer.Sample {
-	out := make([]trimmer.Sample, 0, n)
+func pages(s site, from, n int) []sample {
+	out := make([]sample, 0, n)
 
 	for i := from; i < from+n; i++ {
-		out = append(out, trimmer.Sample{URL: s.url(i), Data: []byte(s.article(i))})
+		out = append(out, sample{URL: s.url(i), Data: []byte(s.article(i))})
 	}
 
 	return out
@@ -48,7 +46,7 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestGenerateRuleset(t *testing.T) {
+func TestGenerateContent(t *testing.T) {
 	s := site{body: "article-body", updated: "x"}
 
 	invented := goodRule()
@@ -58,9 +56,9 @@ func TestGenerateRuleset(t *testing.T) {
 	weaker.Exclude = []string{".promo", ".updated"}
 
 	llm := &fakeLLM{answers: []any{weaker, invented, goodRule()}}
-	tr := New(llm, "")
+	tr := newExtractor(llm, nil, slog.New(slog.DiscardHandler))
 
-	rule, err := tr.GenerateRuleset(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 8))
+	rule, err := tr.generateContent(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 8))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,14 +71,14 @@ func TestGenerateRuleset(t *testing.T) {
 		t.Errorf("prompt should hold three skeletons and no article text:\n%s", p)
 	}
 
-	llm = &fakeLLM{answers: []any{invented, Rule{Include: nil, Reasoning: "no clear container"}}}
+	llm = &fakeLLM{answers: []any{invented, ContentRule{Include: nil, Reasoning: "no clear container"}}}
 
-	if _, err := New(llm, "").GenerateRuleset(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 8)); !errors.Is(err, trimmer.ErrNoRule) ||
+	if _, err := newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateContent(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 8)); !errors.Is(err, ErrNoRule) ||
 		!errors.Is(err, ErrSelectorUngrounded) || !errors.Is(err, ErrAbstained) {
 		t.Errorf("no usable candidate: %v", err)
 	}
 
-	if _, err := tr.GenerateRuleset(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 7)); err == nil {
+	if _, err := tr.generateContent(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 7)); err == nil {
 		t.Error("generated without enough held out pages")
 	}
 }

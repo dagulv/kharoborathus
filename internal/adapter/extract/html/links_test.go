@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/dagulv/kharoborathus/internal/service/source/trimmer"
 )
 
 const listingURL = "https://www.nyheterna.se/"
@@ -32,11 +30,11 @@ func listing(i int) string {
 </body></html>`, cards.String())
 }
 
-func listings(n int) []trimmer.Sample {
-	out := make([]trimmer.Sample, 0, n)
+func listings(n int) []sample {
+	out := make([]sample, 0, n)
 
 	for i := range n {
-		out = append(out, trimmer.Sample{URL: listingURL, Data: []byte(listing(i * 2))})
+		out = append(out, sample{URL: listingURL, Data: []byte(listing(i * 2))})
 	}
 
 	return out
@@ -57,7 +55,7 @@ func fetchSite(_ context.Context, url string) ([]byte, error) {
 }
 
 func TestLinks(t *testing.T) {
-	links, err := NewLinker(&fakeLLM{}, "").Links(LinkRule{Links: str("article.teaser h2 a")}, listings(1)[0])
+	links, err := applyLinks(LinkRule{Links: str("article.teaser h2 a")}, listings(1)[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +64,7 @@ func TestLinks(t *testing.T) {
 		t.Errorf("links: %v", links)
 	}
 
-	if _, err := NewLinker(&fakeLLM{}, "").Links(LinkRule{}, listings(1)[0]); !errors.Is(err, ErrAbstained) {
+	if _, err := applyLinks(LinkRule{}, listings(1)[0]); !errors.Is(err, ErrAbstained) {
 		t.Errorf("abstained rule: %v", err)
 	}
 }
@@ -78,7 +76,7 @@ func TestGenerateLinkRule(t *testing.T) {
 
 	llm := &fakeLLM{answers: []any{invented, sections, good}}
 
-	rule, err := NewLinker(llm, "").GenerateRuleset(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite)
+	rule, err := newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,13 +91,13 @@ func TestGenerateLinkRule(t *testing.T) {
 
 	llm = &fakeLLM{answers: []any{invented, sections, LinkRule{Reasoning: "no list"}}}
 
-	_, err = NewLinker(llm, "").GenerateRuleset(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite)
-	if !errors.Is(err, trimmer.ErrNoRule) || !errors.Is(err, ErrSelectorUngrounded) || !errors.Is(err, ErrAbstained) ||
+	_, err = newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite)
+	if !errors.Is(err, ErrNoRule) || !errors.Is(err, ErrSelectorUngrounded) || !errors.Is(err, ErrAbstained) ||
 		!strings.Contains(err.Error(), "linked pages are articles") {
 		t.Errorf("no usable candidate: %v", err)
 	}
 
-	if _, err := NewLinker(llm, "").GenerateRuleset(context.Background(), slog.New(slog.DiscardHandler), listings(0), fetchSite); err == nil {
+	if _, err := newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(0), fetchSite); err == nil {
 		t.Error("generated from no listings")
 	}
 }
@@ -108,7 +106,7 @@ func TestGenerateLinkRuleSingleListing(t *testing.T) {
 	good := LinkRule{Links: str("article.teaser h2 a"), Reasoning: "repeated teasers"}
 	llm := &fakeLLM{answers: []any{good}}
 
-	rule, err := NewLinker(llm, "").GenerateRuleset(context.Background(), slog.New(slog.DiscardHandler), listings(1), fetchSite)
+	rule, err := newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(1), fetchSite)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +120,7 @@ func TestGenerateLinkRuleSingleListing(t *testing.T) {
 	}
 
 	multi := &fakeLLM{answers: []any{good}}
-	if _, err := NewLinker(multi, "").GenerateRuleset(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite); err != nil {
+	if _, err := newExtractor(multi, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite); err != nil {
 		t.Fatal(err)
 	}
 

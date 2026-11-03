@@ -12,7 +12,6 @@ Answer with a rule:
 - include: exactly one css selector matching the single element that holds the article body on every page.
 - exclude: selectors for boilerplate inside include, like promos, newsletter prompts, related links, share bars, ads and the headline. At most 12. Needing more means include is wrong.
 - strip_after: the first element after the article ends inside include (comments, tags, "read more"), or null.
-- title, published, author: selectors for the headline, the publish time and the byline, or null.
 - image_policy: keep, or drop when images inside include are ads or promos.
 
 Selector rules, broken rules are rejected:

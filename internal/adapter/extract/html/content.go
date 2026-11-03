@@ -2,15 +2,11 @@ package html
 
 import (
 	"bytes"
-	"cmp"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/andybalholm/cascadia"
-	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
-	"github.com/dagulv/kharoborathus/internal/service/source/trimmer"
 	nethtml "golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
@@ -55,37 +51,38 @@ var paywallMarkers = []string{
 }
 
 type extraction struct {
-	trimmer.Extraction
+	Title    string
+	Content  string
+	Text     string
+	Failures []string
 
 	linkDensity float64
 	paragraphs  []string
 }
 
-var _ trimmer.Trimmer[Rule] = (*htmlTrimmer)(nil)
-
-type htmlTrimmer struct {
-	llm   adapter.LLM
-	model string
+func (e extraction) OK() bool {
+	return len(e.Failures) == 0
 }
 
-func New(llm adapter.LLM, model string) trimmer.Trimmer[Rule] {
-	return &htmlTrimmer{llm: llm, model: cmp.Or(model, adapter.ModelFlash)}
+func (e extraction) Len() int {
+	return utf8.RuneCountInString(e.Text)
 }
 
-func (t *htmlTrimmer) Trim(rule Rule, page []byte) (trimmer.Extraction, error) {
+// The title only feeds the repeated title check.
+func content(rule ContentRule, title FieldRule, page []byte) (extraction, error) {
 	if rule.Abstained() {
-		return trimGeneric(page).Extraction, nil
+		return contentGeneric(page, title), nil
 	}
 
 	c, err := compile(rule)
 	if err != nil {
-		return trimmer.Extraction{}, err
+		return extraction{}, err
 	}
 
-	return trimRule(c, page).Extraction, nil
+	return contentRule(c, title, page), nil
 }
 
-func trimRule(c *compiledRule, page []byte) (e extraction) {
+func contentRule(c *compiledRule, title FieldRule, page []byte) (e extraction) {
 	doc, err := parse(page)
 	if err != nil {
 		return extraction{Failures: []string{FailParse}}
@@ -93,9 +90,7 @@ func trimRule(c *compiledRule, page []byte) (e extraction) {
 
 	matches := cascadia.QueryAll(doc.body, c.include)
 
-	e.Title = cmp.Or(first(doc.root, c.title), doc.meta["og:title"], doc.meta["title"])
-	e.Author = cmp.Or(first(doc.root, c.author), doc.meta["author"], doc.meta["article:author"])
-	e.Published = published(doc, c.published)
+	e.Title = readTitle(doc, title)
 
 	switch {
 	case len(matches) == 0:
@@ -132,15 +127,13 @@ func trimRule(c *compiledRule, page []byte) (e extraction) {
 	return e
 }
 
-func trimGeneric(page []byte) (e extraction) {
+func contentGeneric(page []byte, title FieldRule) (e extraction) {
 	doc, err := parse(page)
 	if err != nil {
 		return extraction{Failures: []string{FailParse}}
 	}
 
-	e.Title = cmp.Or(first(doc.root, headline), doc.meta["og:title"], doc.meta["title"])
-	e.Author = cmp.Or(doc.meta["author"], doc.meta["article:author"])
-	e.Published = published(doc, publishedTime)
+	e.Title = readTitle(doc, title)
 
 	content := densest(doc.body)
 
@@ -211,42 +204,6 @@ func densest(body *nethtml.Node) *nethtml.Node {
 	}
 
 	return best
-}
-
-func first(root *nethtml.Node, sel cascadia.Sel) string {
-	if sel == nil {
-		return ""
-	}
-
-	if n := cascadia.Query(root, sel); n != nil {
-		return collapse(text(n))
-	}
-
-	return ""
-}
-
-var timeLayouts = []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05", "2006-01-02"}
-
-func published(doc document, sel cascadia.Sel) time.Time {
-	var raw []string
-
-	if sel != nil {
-		if n := cascadia.Query(doc.root, sel); n != nil {
-			raw = append(raw, attr(n, "datetime"), attr(n, "content"), collapse(text(n)))
-		}
-	}
-
-	raw = append(raw, doc.meta["article:published_time"], doc.meta["datePublished"])
-
-	for _, r := range raw {
-		for _, layout := range timeLayouts {
-			if t, err := time.Parse(layout, strings.TrimSpace(r)); err == nil {
-				return t
-			}
-		}
-	}
-
-	return time.Time{}
 }
 
 func stripAfter(root, n *nethtml.Node) {

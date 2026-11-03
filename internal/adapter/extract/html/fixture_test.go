@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
-	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 )
 
 var subjects = []string{"räntan", "elpriset", "bostadsmarknaden", "exporten", "inflationen", "kronan", "arbetsmarknaden", "tillväxten", "budgeten", "valet", "skolan", "vården"}
@@ -63,13 +63,10 @@ func str(s string) *string {
 	return &s
 }
 
-func goodRule() Rule {
-	return Rule{
+func goodRule() ContentRule {
+	return ContentRule{
 		Include:     str("div.article-body"),
 		Exclude:     []string{".promo", ".newsletter-cta", ".updated"},
-		Title:       str("h1.headline"),
-		Published:   str("time[datetime]"),
-		Author:      str(".byline a"),
 		ImagePolicy: ImageKeep,
 		Reasoning:   "body is the shared container with unique text",
 	}
@@ -85,11 +82,11 @@ type fakeLLM struct {
 
 func (f *fakeLLM) Schedule() schedule.Schedule { return schedule.Always }
 
-func (f *fakeLLM) Prompt(context.Context, *slog.Logger, adapter.Request) (string, error) {
+func (f *fakeLLM) Prompt(context.Context, *slog.Logger, port.Request) (string, error) {
 	return "", nil
 }
 
-func (f *fakeLLM) Unmarshal(_ context.Context, _ *slog.Logger, req adapter.Request, out any) error {
+func (f *fakeLLM) Unmarshal(_ context.Context, _ *slog.Logger, req port.Request, out any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
