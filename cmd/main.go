@@ -12,21 +12,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/adapter/extract/html"
+	"github.com/dagulv/kharoborathus/internal/adapter/fetcher"
+	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
+	adapter "github.com/dagulv/kharoborathus/internal/adapter/robot"
+	discovery "github.com/dagulv/kharoborathus/internal/adapter/search"
+	"github.com/dagulv/kharoborathus/internal/core/domain"
+	"github.com/dagulv/kharoborathus/internal/core/service/source"
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/migrations"
-	"github.com/dagulv/kharoborathus/internal/service/discovery"
-	"github.com/dagulv/kharoborathus/internal/service/domain"
-	"github.com/dagulv/kharoborathus/internal/service/feed"
-	"github.com/dagulv/kharoborathus/internal/service/ingest"
-	"github.com/dagulv/kharoborathus/internal/service/robot"
-	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
-	"github.com/dagulv/kharoborathus/internal/service/source"
-	"github.com/dagulv/kharoborathus/internal/service/source/model"
-	"github.com/dagulv/kharoborathus/internal/service/switches"
-	"github.com/dagulv/kharoborathus/internal/service/tagging"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -72,11 +69,11 @@ func app(ctx context.Context) (err error) {
 	calls := slog.New(logs.NewHandler(db, l.WithGroup("logs")))
 
 	feedStore := feed.NewStore(db)
-	domainStore := domain.NewStore(db)
-	sourceStore := source.NewStore(db, feedStore, domainStore)
+	domainStore := postgres.NewStore(db)
+	sourceStore := postgres.NewSourceStore(db)
+	rawPostStore := postgres.NewRawPostStore(db)
 	discoveryStore := discovery.NewStore(db)
 	taggingStore := tagging.NewStore(db)
-	switchStore := switches.NewStore(db)
 	ingestStore := ingest.NewStore(db)
 
 	llm, err := adapter.NewDeepSeek(env, l.WithGroup("deepseek"))
@@ -84,7 +81,7 @@ func app(ctx context.Context) (err error) {
 		return fmt.Errorf("err create llm: %w", err)
 	}
 
-	trim := source.NewTrim(&domainStore, llm, l.WithGroup("trim"))
+	extractor := html.New(llm, &domainStore, l.WithGroup("extract"))
 	classifier, err := adapter.NewJev(env, l.WithGroup("jev"))
 	mocked := err != nil
 	if mocked {
@@ -99,9 +96,9 @@ func app(ctx context.Context) (err error) {
 	tagMerger := robot.NewTagMerger(classifier)
 	resultFilter := robot.NewResultFilter(llm)
 	searcher, searchErr := discovery.NewBrave(env)
-	ingester := ingest.NewIngester(&ingestStore, &switchStore, &taggingStore, &feedStore, &domainStore, trim, tagger, l.WithGroup("ingest"), calls)
+	ingester := ingest.NewIngester(&ingestStore, &taggingStore, &feedStore, &domainStore, extractor, tagger, l.WithGroup("ingest"), calls)
 
-	syncs := make(chan model.Source, source.SyncQueue)
+	syncs := make(chan domain.Source, source.SyncQueue)
 
 	mux := http.NewServeMux()
 	feed.Routes(mux, feedStore, l.WithGroup("feed"))
@@ -113,6 +110,14 @@ func app(ctx context.Context) (err error) {
 	servers := []*http.Server{
 		{Addr: env.HttpHost, Handler: mux},
 		{Addr: env.InternalHttpHost, Handler: internalMux},
+	}
+
+	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, schedule.Always, syncs)
+
+	fetchers := map[string]source.Fetcher{
+		"rss":       source.NewFetcher(rss.New(pacer, l), calls),
+		"page":      source.NewFetcher(fetcher.NewPage(&rawPostStore, &domainStore, extractor, pacer, l), calls),
+		"wordpress": source.NewFetcher(wordpress.New(pacer, l), calls),
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -128,35 +133,7 @@ func app(ctx context.Context) (err error) {
 	}
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceStore, syncs, trim, schedule.Always, l.WithGroup("sourced"), calls)
-	})
-
-	g.Go(func() error {
-		return source.RunSummaries(ctx, &sourceStore, summarizer, llm.Schedule(), l.WithGroup("summaries"), calls)
-	})
-
-	g.Go(func() error {
-		if mocked {
-			l.Warn("quality gate passes every post, the mocked classifier cannot judge quality")
-		}
-
-		return source.RunQuality(ctx, &sourceStore, tagger, mocked, l.WithGroup("quality"), calls)
-	})
-
-	g.Go(func() error {
-		return source.RunLifecycle(ctx, &sourceStore, &switchStore, l.WithGroup("lifecycle"), calls)
-	})
-
-	g.Go(func() error {
-		return tagging.Run(ctx, &taggingStore, &switchStore, tagGenerator, tagger, l.WithGroup("tagging"), calls)
-	})
-
-	g.Go(func() error {
-		return tagging.RunPromotion(ctx, &taggingStore, tagMerger, tagger, l.WithGroup("promotion"), calls)
-	})
-
-	g.Go(func() error {
-		return tagging.RunMaintenance(ctx, &taggingStore, &switchStore, l.WithGroup("maintenance"))
+		return sourceService.Run(ctx, l.WithGroup("sourced"))
 	})
 
 	g.Go(func() error {
