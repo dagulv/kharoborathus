@@ -16,31 +16,28 @@ const (
 	ImageDrop = "drop"
 )
 
-type Rule struct {
+type ContentRule struct {
 	Include     *string  `json:"include" jsonschema:"nullable"`
 	Exclude     []string `json:"exclude" jsonschema:"maxItems=12"`
 	StripAfter  *string  `json:"strip_after" jsonschema:"nullable"`
-	Title       *string  `json:"title" jsonschema:"nullable"`
-	Published   *string  `json:"published" jsonschema:"nullable"`
-	Author      *string  `json:"author" jsonschema:"nullable"`
 	ImagePolicy string   `json:"image_policy" jsonschema:"enum=keep,enum=drop"`
 	Reasoning   string   `json:"reasoning"`
 }
 
-func (Rule) JSONSchemaExtend(s *jsonschema.Schema) {
-	for name, desc := range prompts.fields {
+func (ContentRule) JSONSchemaExtend(s *jsonschema.Schema) {
+	for name, desc := range prompts.contentFields {
 		if p, ok := s.Properties.Get(name); ok {
 			p.Description = desc
 		}
 	}
 }
 
-func (r Rule) Abstained() bool {
+func (r ContentRule) Abstained() bool {
 	return r.Include == nil || strings.TrimSpace(*r.Include) == ""
 }
 
-func (r Rule) selectors() (out []string) {
-	for _, s := range []*string{r.Include, r.StripAfter, r.Title, r.Published, r.Author} {
+func (r ContentRule) selectors() (out []string) {
+	for _, s := range []*string{r.Include, r.StripAfter} {
 		if s != nil {
 			out = append(out, *s)
 		}
@@ -49,7 +46,7 @@ func (r Rule) selectors() (out []string) {
 	return append(out, r.Exclude...)
 }
 
-func (r Rule) sanitize() Rule {
+func (r ContentRule) sanitize() ContentRule {
 	trim := func(s *string) *string {
 		if s == nil {
 			return nil
@@ -65,9 +62,6 @@ func (r Rule) sanitize() Rule {
 
 	r.Include = trim(r.Include)
 	r.StripAfter = trim(r.StripAfter)
-	r.Title = trim(r.Title)
-	r.Published = trim(r.Published)
-	r.Author = trim(r.Author)
 
 	exclude := make([]string, 0, len(r.Exclude))
 	for _, e := range r.Exclude {
@@ -87,13 +81,13 @@ func (r Rule) sanitize() Rule {
 	return r
 }
 
-func (r Rule) check() error {
+func (r ContentRule) check() error {
 	if r.Abstained() {
-		return errors.New("trimmer: rule has no include")
+		return errors.New("extract: rule has no include")
 	}
 
 	if len(r.Exclude) > maxExclude {
-		return fmt.Errorf("trimmer: %d excludes, at most %d", len(r.Exclude), maxExclude)
+		return fmt.Errorf("extract: %d excludes, at most %d", len(r.Exclude), maxExclude)
 	}
 
 	for _, s := range r.selectors() {
@@ -105,7 +99,7 @@ func (r Rule) check() error {
 	return nil
 }
 
-func (r Rule) ground(v vocabulary) error {
+func (r ContentRule) ground(v vocabulary) error {
 	if err := r.check(); err != nil {
 		return err
 	}
@@ -120,16 +114,13 @@ func (r Rule) ground(v vocabulary) error {
 }
 
 type compiledRule struct {
-	rule       Rule
+	rule       ContentRule
 	include    cascadia.Sel
 	exclude    []cascadia.Sel
 	stripAfter cascadia.Sel
-	title      cascadia.Sel
-	published  cascadia.Sel
-	author     cascadia.Sel
 }
 
-func compile(r Rule) (c *compiledRule, err error) {
+func compile(r ContentRule) (c *compiledRule, err error) {
 	if err = r.check(); err != nil {
 		return
 	}
@@ -158,18 +149,6 @@ func compile(r Rule) (c *compiledRule, err error) {
 	}
 
 	if c.stripAfter, err = opt(r.StripAfter); err != nil {
-		return nil, err
-	}
-
-	if c.title, err = opt(r.Title); err != nil {
-		return nil, err
-	}
-
-	if c.published, err = opt(r.Published); err != nil {
-		return nil, err
-	}
-
-	if c.author, err = opt(r.Author); err != nil {
 		return nil, err
 	}
 

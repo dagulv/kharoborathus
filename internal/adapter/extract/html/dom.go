@@ -60,7 +60,7 @@ var blockLevel = map[atom.Atom]bool{
 	atom.Td: true, atom.Th: true, atom.Tr: true, atom.Ul: true,
 }
 
-var errNoBody = errors.New("trimmer: document has no body")
+var errNoBody = errors.New("extract: document has no body")
 
 type document struct {
 	root *nethtml.Node

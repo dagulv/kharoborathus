@@ -15,8 +15,8 @@ const (
 )
 
 var (
-	ErrSelectorSyntax     = errors.New("trimmer: selector syntax")
-	ErrSelectorUngrounded = errors.New("trimmer: selector not grounded in the observed dom")
+	ErrSelectorSyntax     = errors.New("extract: selector syntax")
+	ErrSelectorUngrounded = errors.New("extract: selector not grounded in the observed dom")
 )
 
 var deniedAttrs = map[string]bool{
