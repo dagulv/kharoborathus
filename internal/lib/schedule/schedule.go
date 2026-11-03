@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+const (
+	TickInterval    = time.Second
+	RefreshInterval = time.Minute
+)
+
 var Weekdays = []time.Weekday{time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday}
 
 var Always = Schedule{}
