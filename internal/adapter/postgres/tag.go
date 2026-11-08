@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
@@ -65,27 +66,37 @@ func (s *TagStore) ActiveTags(ctx context.Context, lang string) ([]domain.Tag, e
 
 // Returns the proposed keys to store on the post. Active and disabled keys add nothing, since Jev decides active ones.
 func (s *TagStore) SaveProposals(ctx context.Context, tx pgx.Tx, lang string, proposals []Proposal) ([]string, error) {
-	var keys []string
+	// Saved in key order, so two posts proposing the same new keys lock them in the same order.
+	sorted := slices.SortedFunc(slices.Values(proposals), func(a, b Proposal) int { return strings.Compare(a.Key, b.Key) })
+	resolved := make(map[string]string, len(proposals))
+	proposed := make(map[string]bool, len(proposals))
 
-	for _, p := range proposals {
-		var key, status string
-		var enabled bool
+	for _, p := range sorted {
+		var key string
 
-		if err := tx.QueryRow(ctx, `
-			WITH k AS (SELECT COALESCE((SELECT key FROM tag_aliases WHERE alias = $1), $1) AS key),
-			ins AS (INSERT INTO tags (key, status) SELECT key, 'proposed' FROM k ON CONFLICT (key) DO NOTHING RETURNING key, status, enabled)
-			SELECT key, status, enabled FROM ins
-			UNION ALL
-			SELECT t.key, t.status, t.enabled FROM tags t, k WHERE t.key = k.key AND NOT EXISTS (SELECT 1 FROM ins)
-			`, p.Key).Scan(&key, &status, &enabled); err != nil {
-			return nil, fmt.Errorf("err save proposed tag %s: %w", p.Key, err)
+		if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT key FROM tag_aliases WHERE alias = $1), $1)`, p.Key).Scan(&key); err != nil {
+			return nil, fmt.Errorf("err resolve tag alias %s: %w", p.Key, err)
 		}
 
-		if !enabled || status != domain.StatusProposed || slices.Contains(keys, key) {
+		if _, err := tx.Exec(ctx, `INSERT INTO tags (key, status) VALUES ($1, 'proposed') ON CONFLICT (key) DO NOTHING`, key); err != nil {
+			return nil, fmt.Errorf("err save proposed tag %s: %w", key, err)
+		}
+
+		// A separate statement, so it sees a row a concurrent transaction committed while the insert waited.
+		var status string
+		var enabled bool
+
+		if err := tx.QueryRow(ctx, `SELECT status, enabled FROM tags WHERE key = $1`, key).Scan(&status, &enabled); err != nil {
+			return nil, fmt.Errorf("err get proposed tag %s: %w", key, err)
+		}
+
+		resolved[p.Key] = key
+
+		if !enabled || status != domain.StatusProposed {
 			continue
 		}
 
-		keys = append(keys, key)
+		proposed[key] = true
 
 		if lang == "" || p.Term == "" {
 			continue
@@ -93,6 +104,15 @@ func (s *TagStore) SaveProposals(ctx context.Context, tx pgx.Tx, lang string, pr
 
 		if _, err := tx.Exec(ctx, `INSERT INTO tag_terms (key, lang, term) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, key, lang, p.Term); err != nil {
 			return nil, fmt.Errorf("err save proposed term %s: %w", key, err)
+		}
+	}
+
+	// Returned in the model's order, most important first.
+	var keys []string
+
+	for _, p := range proposals {
+		if key := resolved[p.Key]; proposed[key] && !slices.Contains(keys, key) {
+			keys = append(keys, key)
 		}
 	}
 
