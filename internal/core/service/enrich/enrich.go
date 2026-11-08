@@ -2,6 +2,7 @@ package enrich
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -39,6 +40,11 @@ func (s *Service) Enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 	queryIDs, err := s.enrich(ctx, l, rawPostID)
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+
+	// The window can close while Jev runs. That is a closed schedule, not a failure.
+	if errors.Is(err, port.ErrPeakHours) {
+		return nil
 	}
 
 	if err != nil {
