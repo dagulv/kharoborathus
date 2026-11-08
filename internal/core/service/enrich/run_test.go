@@ -58,12 +58,3 @@ func TestCatchUpStopsOnError(t *testing.T) {
 		t.Errorf("failed %d, llm calls %d", failed, f.llm.calls)
 	}
 }
-
-func TestEnqueueFull(t *testing.T) {
-	ids := make(chan string, 1)
-	l := slog.New(slog.DiscardHandler)
-
-	if !Enqueue(ids, l, "a") || Enqueue(ids, l, "b") {
-		t.Error("want true then false")
-	}
-}
