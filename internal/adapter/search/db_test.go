@@ -2,86 +2,17 @@ package discovery
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
-	"log/slog"
-	"net/url"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
-	"github.com/dagulv/kharoborathus/internal/migrations"
-	"github.com/jackc/pgx/v5"
+	"github.com/dagulv/kharoborathus/internal/lib/dbtest"
 )
 
-// Needs a postgres with the Swedish dictionary files, such as the infra/db image.
 func testDB(t *testing.T) *database.Database {
-	t.Helper()
-
-	conn := os.Getenv("TEST_POSTGRES_CONN")
-	if conn == "" {
-		t.Skip("TEST_POSTGRES_CONN not set")
-	}
-
-	ctx := context.Background()
-
-	admin, err := pgx.Connect(ctx, conn)
-	if err != nil {
-		t.Fatalf("err connect admin: %v", err)
-	}
-	defer admin.Close(ctx)
-
-	name := "kharo_test_" + randomHex(t)
-
-	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("err create database: %v", err)
-	}
-
-	u, err := url.Parse(conn)
-	if err != nil {
-		t.Fatalf("err parse conn: %v", err)
-	}
-
-	u.Path = "/" + name
-
-	if err := migrations.Migrate(ctx, u.String(), slog.New(slog.DiscardHandler)); err != nil {
-		t.Fatalf("err migrate: %v", err)
-	}
-
-	db, err := database.NewDatabase(ctx, u.String())
-	if err != nil {
-		t.Fatalf("err open database: %v", err)
-	}
-
-	t.Cleanup(func() {
-		db.Close()
-
-		admin, err := pgx.Connect(ctx, conn)
-		if err != nil {
-			t.Errorf("err connect admin: %v", err)
-			return
-		}
-		defer admin.Close(ctx)
-
-		if _, err := admin.Exec(ctx, "DROP DATABASE "+name+" WITH (FORCE)"); err != nil {
-			t.Errorf("err drop database: %v", err)
-		}
-	})
-
-	return db
-}
-
-func randomHex(t *testing.T) string {
-	b := make([]byte, 6)
-
-	if _, err := rand.Read(b); err != nil {
-		t.Fatal(err)
-	}
-
-	return hex.EncodeToString(b)
+	return dbtest.New(t)
 }
 
 type seed struct {
@@ -103,7 +34,7 @@ func seedPost(t *testing.T, db *database.Database, s seed) domain.Post {
 	}
 
 	if s.URL == "" {
-		s.URL = fmt.Sprintf("%s/%s", s.BaseURL, randomHex(t))
+		s.URL = fmt.Sprintf("%s/%s", s.BaseURL, dbtest.RandomHex(t))
 	}
 
 	if s.Lang == "" {
