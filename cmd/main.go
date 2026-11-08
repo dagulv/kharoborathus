@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/adapter/extract/html"
 	"github.com/dagulv/kharoborathus/internal/adapter/fetcher"
@@ -16,6 +18,7 @@ import (
 	adapter "github.com/dagulv/kharoborathus/internal/adapter/robot"
 	discovery "github.com/dagulv/kharoborathus/internal/adapter/search"
 	"github.com/dagulv/kharoborathus/internal/core/service/enrich"
+	"github.com/dagulv/kharoborathus/internal/core/service/posts"
 	"github.com/dagulv/kharoborathus/internal/core/service/source"
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
@@ -113,7 +116,33 @@ func app(ctx context.Context) (err error) {
 		SearchIDs:  searchIDs,
 	}
 
+	mux := http.NewServeMux()
+	posts.Routes(mux, &postStore, l.WithGroup("posts"))
+
+	server := &http.Server{Addr: env.HttpHost, Handler: mux}
+
 	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("err serve %s: %w", server.Addr, err)
+		}
+
+		return nil
+	})
+
+	g.Go(func() error {
+		<-ctx.Done()
+
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("err shutdown %s: %w", server.Addr, err)
+		}
+
+		return nil
+	})
 
 	g.Go(func() error {
 		return source.Run(ctx, &sourceService, fetchers, l.WithGroup("sourced"))
