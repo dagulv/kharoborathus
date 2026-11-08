@@ -77,6 +77,13 @@ func app(ctx context.Context) (err error) {
 	}
 
 	extractor := html.New(llm, &domainStore, l.WithGroup("extract"))
+
+	classifier, err := adapter.NewJev(env, l.WithGroup("jev"))
+	if err != nil {
+		l.Warn("quality check off, every post that is not a duplicate is accepted", "err", err)
+		classifier = nil
+	}
+
 	// One pacer for every adapter, so two sources on one host still wait for each other.
 	pacer := pace.New(source.DomainPace)
 
@@ -86,7 +93,7 @@ func app(ctx context.Context) (err error) {
 		"wordpress": source.NewFetcher(fetcher.NewWordPress(&rawPostStore, pacer, l), calls),
 	}
 
-	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, schedule.Always, nil)
+	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, classifier, schedule.Always, nil)
 
 	resultFilter := discovery.NewResultFilter(llm)
 	searcher, searchErr := discovery.NewBrave(env)

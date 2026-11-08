@@ -19,16 +19,19 @@ type Service struct {
 	DomainStore  *postgres.Store
 	RawPostStore *postgres.RawPostStore
 	Extractor    port.Extractor
-	Schedule     schedule.Schedule
-	resyncs      <-chan domain.Source
+	// Nil accepts every post that is not a duplicate, for when only the mocked classifier is available.
+	Classifier port.Classifier
+	Schedule   schedule.Schedule
+	resyncs    <-chan domain.Source
 }
 
-func NewService(store *postgres.SourceStore, domains *postgres.Store, rawPosts *postgres.RawPostStore, extractor port.Extractor, schedule schedule.Schedule, resyncs <-chan domain.Source) Service {
+func NewService(store *postgres.SourceStore, domains *postgres.Store, rawPosts *postgres.RawPostStore, extractor port.Extractor, classifier port.Classifier, schedule schedule.Schedule, resyncs <-chan domain.Source) Service {
 	return Service{
 		SourceStore:  store,
 		DomainStore:  domains,
 		RawPostStore: rawPosts,
 		Extractor:    extractor,
+		Classifier:   classifier,
 		Schedule:     schedule,
 		resyncs:      resyncs,
 	}
