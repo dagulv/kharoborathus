@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS raw_posts (
   domain_id UUID NOT NULL REFERENCES domains (id),
   raw_content TEXT NOT NULL,
   content TEXT NOT NULL,
+  meta_content JSON NOT NULL DEFAULT '{}',
   simhash BIGINT,
   status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -166,7 +167,7 @@ CREATE TABLE IF NOT EXISTS discovery_posts (
 CREATE TABLE discovery_related_posts (
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
   to_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-  relation TEXT NOT NULL, -- ex: 'discovered', 'duplicate_of', 'same_event', 'follows_up', 'translation_of'
+  relation TEXT NOT NULL, -- ex: 'discovered', 'same_event', 'follows_up', 'translation_of'
   metadata JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (from_post_id, to_post_id, relation),

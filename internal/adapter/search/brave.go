@@ -14,10 +14,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
-	"github.com/dagulv/kharoborathus/internal/service/robot"
-	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 )
 
 const (
@@ -37,7 +36,7 @@ type Query struct {
 }
 
 type Searcher interface {
-	Search(ctx context.Context, l *slog.Logger, q Query) ([]robot.SearchResult, error)
+	Search(ctx context.Context, l *slog.Logger, q Query) ([]SearchResult, error)
 }
 
 type brave struct {
@@ -80,7 +79,7 @@ type braveResponse struct {
 	} `json:"news"`
 }
 
-func (b brave) Search(ctx context.Context, l *slog.Logger, q Query) ([]robot.SearchResult, error) {
+func (b brave) Search(ctx context.Context, l *slog.Logger, q Query) ([]SearchResult, error) {
 	params := url.Values{
 		"q":              {q.Q},
 		"country":        {"SE"},
@@ -104,13 +103,13 @@ func (b brave) Search(ctx context.Context, l *slog.Logger, q Query) ([]robot.Sea
 
 	res, err := logs.Client(b.client, l, "brave").Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: err call brave: %w", adapter.ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: err call brave: %w", port.ErrUnavailable, err)
 	}
 	defer res.Body.Close()
 
 	switch {
 	case res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= http.StatusInternalServerError:
-		return nil, fmt.Errorf("%w: err brave status %s", adapter.ErrUnavailable, res.Status)
+		return nil, fmt.Errorf("%w: err brave status %s", port.ErrUnavailable, res.Status)
 	case res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusUnprocessableEntity:
 		var e braveError
 
@@ -134,7 +133,7 @@ func (b brave) Search(ctx context.Context, l *slog.Logger, q Query) ([]robot.Sea
 		return nil, fmt.Errorf("%w: err decode brave response: %w", errSearchUnreadable, err)
 	}
 
-	var out []robot.SearchResult
+	var out []SearchResult
 
 	seen := make(map[string]bool)
 
@@ -144,7 +143,7 @@ func (b brave) Search(ctx context.Context, l *slog.Logger, q Query) ([]robot.Sea
 		}
 
 		seen[r.URL] = true
-		out = append(out, robot.SearchResult{
+		out = append(out, SearchResult{
 			URL:           r.URL,
 			Title:         r.Title,
 			Description:   r.Description,

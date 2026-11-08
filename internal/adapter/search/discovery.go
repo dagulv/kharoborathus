@@ -6,10 +6,9 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/iterx"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
-	"github.com/dagulv/kharoborathus/internal/service/robot"
-	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
 )
 
 const (
@@ -17,7 +16,7 @@ const (
 	batchSize    = 20
 )
 
-func Run(ctx context.Context, s *Store, d *robot.Discoverer, sched schedule.Schedule, l, calls *slog.Logger) error {
+func Run(ctx context.Context, s *Store, d *Discoverer, sched schedule.Schedule, l, calls *slog.Logger) error {
 	for range sched.Tick(ctx, tickInterval) {
 		if err := discoverPosts(ctx, s, d, l, calls); err != nil {
 			l.Error("discover posts", "err", err)
@@ -27,7 +26,7 @@ func Run(ctx context.Context, s *Store, d *robot.Discoverer, sched schedule.Sche
 	return ctx.Err()
 }
 
-func discoverPosts(ctx context.Context, s *Store, d *robot.Discoverer, l, calls *slog.Logger) error {
+func discoverPosts(ctx context.Context, s *Store, d *Discoverer, l, calls *slog.Logger) error {
 	posts, err := iterx.Collect(s.ListUndiscoveredPosts(ctx, batchSize))
 	if err != nil || len(posts) == 0 {
 		return err
@@ -51,7 +50,7 @@ func discoverPosts(ctx context.Context, s *Store, d *robot.Discoverer, l, calls 
 		aiCalls++
 
 		switch {
-		case errors.Is(err, adapter.ErrUnavailable) || ctx.Err() != nil:
+		case errors.Is(err, port.ErrUnavailable) || ctx.Err() != nil:
 			return nil
 		case err != nil:
 			l.Warn("discover keywords", "post", post.ID, "err", err)
@@ -71,7 +70,7 @@ func discoverPosts(ctx context.Context, s *Store, d *robot.Discoverer, l, calls 
 	return nil
 }
 
-func eventItems(postID string, keywords []robot.Keyword, aliases map[string]string) []DiscoverItem {
+func eventItems(postID string, keywords []Keyword, aliases map[string]string) []DiscoverItem {
 	items := make([]DiscoverItem, 0, len(keywords))
 
 	for _, k := range keywords {

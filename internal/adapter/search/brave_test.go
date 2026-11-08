@@ -9,7 +9,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/dagulv/kharoborathus/internal/service/robot/adapter"
+	"github.com/dagulv/kharoborathus/internal/core/port"
 )
 
 func testBrave(t *testing.T, handler http.HandlerFunc) brave {
@@ -92,8 +92,8 @@ func TestBraveOtherLanguage(t *testing.T) {
 
 func TestBraveErrors(t *testing.T) {
 	cases := map[int]error{
-		http.StatusTooManyRequests:     adapter.ErrUnavailable,
-		http.StatusServiceUnavailable:  adapter.ErrUnavailable,
+		http.StatusTooManyRequests:     port.ErrUnavailable,
+		http.StatusServiceUnavailable:  port.ErrUnavailable,
 		http.StatusUnprocessableEntity: errSearchRejected,
 		http.StatusBadRequest:          errSearchRejected,
 		http.StatusUnauthorized:        nil,
@@ -111,7 +111,7 @@ func TestBraveErrors(t *testing.T) {
 			t.Errorf("%d: no error", status)
 		case want != nil && !errors.Is(err, want):
 			t.Errorf("%d: got %v", status, err)
-		case want == nil && (errors.Is(err, adapter.ErrUnavailable) || errors.Is(err, errSearchRejected)):
+		case want == nil && (errors.Is(err, port.ErrUnavailable) || errors.Is(err, errSearchRejected)):
 			t.Errorf("%d: got %v", status, err)
 		}
 	}
