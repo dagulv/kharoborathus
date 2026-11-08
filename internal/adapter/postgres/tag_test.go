@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/dbtest"
@@ -106,5 +107,46 @@ func TestSaveProposals(t *testing.T) {
 
 	if keys := save("", Proposal{Key: "dividend", Term: "utdelning"}); !slices.Equal(keys, []string{"dividend"}) || count(`SELECT count(*) FROM tag_terms WHERE key = 'dividend'`) != 0 {
 		t.Errorf("empty lang: keys %v", keys)
+	}
+}
+
+func TestSaveProposalsConcurrent(t *testing.T) {
+	db, s := tagDB(t)
+	ctx := context.Background()
+
+	txA, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer txA.Rollback(ctx)
+
+	if _, err := s.SaveProposals(ctx, txA, "sv", []Proposal{{Key: "dividend", Term: "utdelning"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	type result struct {
+		keys []string
+		err  error
+	}
+
+	done := make(chan result)
+
+	go func() {
+		var r result
+		r.err = pgx.BeginFunc(ctx, db, func(tx pgx.Tx) (err error) {
+			r.keys, err = s.SaveProposals(ctx, tx, "sv", []Proposal{{Key: "dividend", Term: "utdelning"}})
+			return err
+		})
+		done <- r
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	if err := txA.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if r := <-done; r.err != nil || !slices.Equal(r.keys, []string{"dividend"}) {
+		t.Errorf("b: keys %v, %v", r.keys, r.err)
 	}
 }
