@@ -9,6 +9,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const (
+	duplicateWindowDays  = 7
+	maxDuplicateDistance = 3
+)
+
 const rawPostColumns = `
 	id,
 	source_id,
@@ -58,6 +63,34 @@ func (s *RawPostStore) RawPostExists(ctx context.Context, url string) (exists bo
 	}
 
 	return exists, nil
+}
+
+// Only earlier rows count, so of two near-identical posts exactly one is the duplicate.
+func (s *RawPostStore) HasDuplicate(ctx context.Context, p domain.RawPost) (exists bool, err error) {
+	if p.Simhash == nil {
+		return false, nil
+	}
+
+	if err = s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM raw_posts
+			WHERE (created_at, id) < ($1, $2)
+				AND created_at > $1 - make_interval(days => $4)
+				AND bit_count((simhash # $3::bigint)::bit(64)) <= $5
+		)
+		`, p.CreatedAt, p.ID, *p.Simhash, duplicateWindowDays, maxDuplicateDistance).Scan(&exists); err != nil {
+		return false, fmt.Errorf("err check duplicate %s: %w", p.URL, err)
+	}
+
+	return exists, nil
+}
+
+func (s *RawPostStore) SetStatus(ctx context.Context, id, status string) error {
+	if _, err := s.db.Exec(ctx, `UPDATE raw_posts SET status = $2 WHERE id = $1`, id, status); err != nil {
+		return fmt.Errorf("err set raw post status: %w", err)
+	}
+
+	return nil
 }
 
 func scanRawPost(row pgx.Row, p domain.RawPost) (domain.RawPost, error) {
