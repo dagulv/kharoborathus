@@ -15,6 +15,7 @@ import (
 
 type fakeLLM struct {
 	answer any
+	err    error
 	req    port.Request
 }
 
@@ -26,6 +27,10 @@ func (f *fakeLLM) Prompt(context.Context, *slog.Logger, port.Request) (string, e
 
 func (f *fakeLLM) Unmarshal(_ context.Context, _ *slog.Logger, req port.Request, out any) error {
 	f.req = req
+
+	if f.err != nil {
+		return f.err
+	}
 
 	b, err := json.Marshal(f.answer)
 	if err != nil {

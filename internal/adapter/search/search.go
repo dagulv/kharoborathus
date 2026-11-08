@@ -5,56 +5,61 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 )
 
 const (
-	searchInterval = time.Minute
-	searchBatch    = 5
-	dedupeWindow   = 7
+	SearchQueue  = 100
+	dedupeWindow = 7
 	// $50 a month at $5 per 1k queries, spread over a 31-day month.
 	dailySearchBudget = 322
 	// One day of ingest at its daily cap. More would age out before it is fetched.
 	maxPendingResults = 200
-	// Each tick buys a search, so a failing filter must not be retried every minute.
-	// The pause doubles while searches keep failing, so a long outage costs a few searches a day.
-	wastedPause    = 30 * time.Minute
-	maxWastedPause = 24 * time.Hour
 )
 
-var errSearchWasted = errors.New("discovery: paid search wasted")
-
-func RunSearch(ctx context.Context, s *Store, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
-	var pausedUntil time.Time
-	var pause time.Duration
-
-	for range sched.Tick(ctx, searchInterval) {
-		if time.Now().Before(pausedUntil) {
-			continue
-		}
-
-		err := searchEvents(ctx, s, sched, se, f, l, calls)
-		if errors.Is(err, errSearchWasted) {
-			pause = nextPause(pause)
-			pausedUntil = time.Now().Add(pause)
-			l.Warn("search paused", "for", pause, "err", err)
-
-			continue
-		}
-
-		pause = 0
-
-		if err != nil {
-			l.Error("search events", "err", err)
-		}
-	}
-
-	return ctx.Err()
+type searchStore interface {
+	GetQuery(ctx context.Context, id string) (SearchItem, error)
+	PendingResults(ctx context.Context, windowDays int) (int, error)
+	SearchesLastDay(ctx context.Context) (int, error)
+	MarkRejected(ctx context.Context, id string) error
+	SaveResults(ctx context.Context, id string, results []SearchResult) error
+	SaveKept(ctx context.Context, item SearchItem, kept []int, urls []string) error
 }
 
-func searchEvents(ctx context.Context, s *Store, sched schedule.Schedule, se Searcher, f *ResultFilter, l, calls *slog.Logger) error {
+// A dropped id keeps searched_at NULL, so a catch-up job can find it.
+func Enqueue(ids chan<- string, l *slog.Logger, id string) bool {
+	select {
+	case ids <- id:
+		return true
+	default:
+		l.Warn("search queue full", "query", id)
+		return false
+	}
+}
+
+// One query at a time, so the budget and pending checks cannot race.
+func RunSearch(ctx context.Context, s searchStore, ids <-chan string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
+	for {
+		select {
+		case id := <-ids:
+			if err := searchQuery(ctx, s, id, se, f, sched, l, calls); err != nil {
+				l.Error("search query", "query", id, "err", err)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func searchQuery(ctx context.Context, s searchStore, id string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
+	item, err := s.GetQuery(ctx, id)
+	if err != nil || item.SearchedAt != nil {
+		return err
+	}
+
 	pending, err := s.PendingResults(ctx, dedupeWindow)
 	if err != nil || pending >= maxPendingResults {
 		return err
@@ -65,101 +70,52 @@ func searchEvents(ctx context.Context, s *Store, sched schedule.Schedule, se Sea
 		return err
 	}
 
-	items, err := s.ListQueue(ctx, dedupeWindow, min(searchBatch, dailySearchBudget-used))
-	if err != nil {
-		return err
-	}
+	il := calls.With("discovery_search_query_id", id)
 
-	var searches, deduped, aiCalls int
-	var queued int64
+	results, err := se.Search(ctx, il, Query{Q: item.Query, Lang: item.Lang})
+	if errors.Is(err, errSearchRejected) {
+		l.Warn("search rejected", "query", id, "err", err)
 
-	defer func() {
-		if len(items) > 0 {
-			l.Info("search discovery", "processed", len(items), "searches", searches, "deduped", deduped, "queued", queued, "aiCalls", aiCalls)
-		}
-	}()
-
-	for _, item := range items {
-		il := calls.With("discovery_event_id", item.ID)
-
-		done, err := s.Searched(ctx, item.Entity, item.Action, dedupeWindow)
-		if err != nil {
-			return err
+		if err := s.MarkRejected(ctx, id); err != nil {
+			return fmt.Errorf("err mark rejected: %w", err)
 		}
 
-		if done {
-			if err := s.MarkSearched(ctx, item.ID); err != nil {
-				return fmt.Errorf("err mark deduped: %w", err)
-			}
-
-			deduped++
-
-			continue
-		}
-
-		// A tick can outlast the schedule, and a search bought then could not be filtered.
-		if !sched.Active(time.Now()) {
-			return nil
-		}
-
-		results, err := se.Search(ctx, il, Query{Q: item.Query, Lang: item.Lang})
-		if errors.Is(err, errSearchRejected) {
-			l.Warn("search rejected", "item", item.ID, "err", err)
-
-			if err := s.MarkSearched(ctx, item.ID); err != nil {
-				return fmt.Errorf("err mark rejected: %w", err)
-			}
-
-			continue
-		}
-
-		if errors.Is(err, errSearchUnreadable) {
-			return recordWasted(ctx, s, item, 0, err)
-		}
-
-		if err != nil {
-			return fmt.Errorf("err search %s: %w", item.ID, err)
-		}
-
-		searches++
-
-		if len(results) > 0 {
-			aiCalls++
-		}
-
-		kept, err := f.Keep(ctx, il, item.Entity, item.Action, results)
-		if err != nil || ctx.Err() != nil {
-			return recordWasted(ctx, s, item, len(results), err)
-		}
-
-		n, err := s.QueueResults(context.WithoutCancel(ctx), item, filterLinks(kept, item.BaseURL), len(results))
-		if err != nil {
-			return recordWasted(ctx, s, item, len(results), err)
-		}
-
-		queued += n
-	}
-
-	return nil
-}
-
-func nextPause(prev time.Duration) time.Duration {
-	if prev == 0 {
-		return wastedPause
-	}
-
-	return min(prev*2, maxWastedPause)
-}
-
-// Brave billed the search, so it counts against the budget even when its results are lost or the worker is shutting down.
-func recordWasted(ctx context.Context, s *Store, item SearchItem, resultCount int, cause error) error {
-	if _, err := s.QueueResults(context.WithoutCancel(ctx), item, nil, resultCount); err != nil {
-		return fmt.Errorf("err record wasted search %s: %w", item.ID, err)
-	}
-
-	if ctx.Err() != nil {
 		return nil
 	}
 
-	return fmt.Errorf("%w: %s: %w", errSearchWasted, item.ID, cause)
+	if err != nil {
+		return fmt.Errorf("err search %s: %w", id, err)
+	}
+
+	// Brave billed the search, so its results are kept even when the worker is shutting down.
+	if err := s.SaveResults(context.WithoutCancel(ctx), id, results); err != nil {
+		return fmt.Errorf("err save results %s: %w", id, err)
+	}
+
+	if !sched.Active(time.Now()) {
+		return nil
+	}
+
+	kept, err := f.Keep(ctx, il, strings.ReplaceAll(item.Entity, "_", " "), item.Action, results)
+	if err != nil {
+		return fmt.Errorf("err filter results %s: %w", id, err)
+	}
+
+	urls := make([]string, len(kept))
+	for i, k := range kept {
+		urls[i] = results[k].URL
+	}
+
+	// An empty list still marks the query as filtered.
+	if kept == nil {
+		kept = []int{}
+	}
+
+	if err := s.SaveKept(context.WithoutCancel(ctx), item, kept, filterLinks(urls, item.BaseURL)); err != nil {
+		return fmt.Errorf("err save kept %s: %w", id, err)
+	}
+
+	l.Info("search query", "query", id, "results", len(results), "kept", len(kept))
+
+	return nil
 }
