@@ -25,6 +25,7 @@ Grow beyond hand-picked sources without losing quality. Scale slowly and prefer 
 | [Backfill](backfill.md)                   | done   | Whole archives of WordPress sources through the REST API, summarized in the background.                |
 | [Quality gate](quality-gate.md)           | done   | Jev checks every post before summaries, tags, events, links and the feed.                              |
 | [Extraction](extraction.md)               | done   | One LLM-generated CSS rule per field: feed links, content, title, authors and postedAt.                |
+| [Enrich](enrich.md)                       | done   | Step 2: accepted raw posts become posts with a summary, tags and discovery, off peak.                  |
 
 ## Flow
 

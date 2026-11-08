@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -84,6 +85,16 @@ func (s *Service) insert(ctx context.Context, _ *slog.Logger, p domain.RawPost) 
 	return out, err
 }
 
+// A dropped id is found again by enrich's catch-up job.
 func (s *Service) saveStatus(ctx context.Context, p domain.RawPost) error {
-	return s.RawPostStore.SetStatus(ctx, p.ID, p.Status)
+	if err := s.RawPostStore.SetStatus(ctx, p.ID, p.Status); err != nil || p.Status != domain.StatusAccepted {
+		return err
+	}
+
+	select {
+	case s.Enriched <- p.ID:
+		return nil
+	default:
+		return fmt.Errorf("enrich queue full, dropped %s", p.ID)
+	}
 }

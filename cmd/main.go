@@ -15,6 +15,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
 	adapter "github.com/dagulv/kharoborathus/internal/adapter/robot"
 	discovery "github.com/dagulv/kharoborathus/internal/adapter/search"
+	"github.com/dagulv/kharoborathus/internal/core/service/enrich"
 	"github.com/dagulv/kharoborathus/internal/core/service/source"
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
@@ -69,6 +70,8 @@ func app(ctx context.Context) (err error) {
 	domainStore := postgres.NewStore(db)
 	sourceStore := postgres.NewSourceStore(db)
 	rawPostStore := postgres.NewRawPostStore(db)
+	postStore := postgres.NewPostStore(db)
+	tagStore := postgres.NewTagStore(db)
 	discoveryStore := discovery.NewStore(db)
 
 	llm, err := adapter.NewDeepSeek(env, l.WithGroup("deepseek"))
@@ -93,16 +96,31 @@ func app(ctx context.Context) (err error) {
 		"wordpress": source.NewFetcher(fetcher.NewWordPress(&rawPostStore, pacer, l), calls),
 	}
 
-	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, classifier, schedule.Always, nil)
-
 	resultFilter := discovery.NewResultFilter(llm)
 	searcher, searchErr := discovery.NewBrave(env)
 	searchIDs := make(chan string, discovery.SearchQueue)
+	enrichIDs := make(chan string, enrich.Queue)
+
+	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, classifier, enrichIDs, schedule.Always, nil)
+
+	enrichService := enrich.Service{
+		DB:         db,
+		RawPosts:   &rawPostStore,
+		Posts:      &postStore,
+		Tags:       &tagStore,
+		LLM:        llm,
+		Classifier: classifier,
+		SearchIDs:  searchIDs,
+	}
 
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
 		return source.Run(ctx, &sourceService, fetchers, l.WithGroup("sourced"))
+	})
+
+	g.Go(func() error {
+		return enrichService.Run(ctx, enrichIDs, l.WithGroup("enrich"))
 	})
 
 	g.Go(func() error {

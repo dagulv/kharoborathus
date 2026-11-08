@@ -83,7 +83,7 @@ func qualityService(t *testing.T, c port.Classifier) (*Service, domain.RawPost) 
 	sources := postgres.NewSourceStore(db)
 	domains := postgres.NewStore(db)
 	rawPosts := postgres.NewRawPostStore(db)
-	s := NewService(&sources, &domains, &rawPosts, nil, c, schedule.Always, nil)
+	s := NewService(&sources, &domains, &rawPosts, nil, c, make(chan string, 10), schedule.Always, nil)
 
 	p.Lang = "sv"
 	p.Title = "Volvo köper Northvolt"
@@ -161,5 +161,32 @@ func TestInsertExisting(t *testing.T) {
 
 	if _, err := s.insert(ctx, l, base); !errors.Is(err, pipeline.ErrSkip) {
 		t.Errorf("err %v", err)
+	}
+}
+
+func TestSaveStatusSendsAccepted(t *testing.T) {
+	enriched := make(chan string, 10)
+	s, base := qualityService(t, nil)
+	s.Enriched = enriched
+	ctx := context.Background()
+	l := slog.New(slog.DiscardHandler)
+
+	for _, c := range []struct{ url, status string }{{"https://a.example/1", domain.StatusAccepted}, {"https://a.example/2", domain.StatusRejected}} {
+		base.URL = c.url
+
+		p, err := s.insert(ctx, l, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		p.Status = c.status
+
+		if err := s.saveStatus(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if len(enriched) != 1 {
+		t.Fatalf("sent %d ids", len(enriched))
 	}
 }
