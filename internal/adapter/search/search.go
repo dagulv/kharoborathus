@@ -8,9 +8,6 @@ import (
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
-	"github.com/dagulv/kharoborathus/internal/service/ingest"
-	"github.com/dagulv/kharoborathus/internal/service/robot"
-	"github.com/dagulv/kharoborathus/internal/service/switches"
 )
 
 const (
@@ -29,7 +26,7 @@ const (
 
 var errSearchWasted = errors.New("discovery: paid search wasted")
 
-func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f *robot.ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
+func RunSearch(ctx context.Context, s *Store, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
 	var pausedUntil time.Time
 	var pause time.Duration
 
@@ -38,7 +35,7 @@ func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f
 			continue
 		}
 
-		err := searchEvents(ctx, s, sw, sched, se, f, l, calls)
+		err := searchEvents(ctx, s, sched, se, f, l, calls)
 		if errors.Is(err, errSearchWasted) {
 			pause = nextPause(pause)
 			pausedUntil = time.Now().Add(pause)
@@ -57,18 +54,7 @@ func RunSearch(ctx context.Context, s *Store, sw *switches.Store, se Searcher, f
 	return ctx.Err()
 }
 
-func searchEvents(ctx context.Context, s *Store, sw *switches.Store, sched schedule.Schedule, se Searcher, f *robot.ResultFilter, l, calls *slog.Logger) error {
-	on, err := sw.Enabled(ctx, switches.SearchDiscovery)
-	if err != nil || !on {
-		return err
-	}
-
-	// Results are only worth paying for while ingest fetches them.
-	on, err = sw.Enabled(ctx, switches.DiscoveredIngest)
-	if err != nil || !on {
-		return err
-	}
-
+func searchEvents(ctx context.Context, s *Store, sched schedule.Schedule, se Searcher, f *ResultFilter, l, calls *slog.Logger) error {
 	pending, err := s.PendingResults(ctx, dedupeWindow)
 	if err != nil || pending >= maxPendingResults {
 		return err
@@ -146,7 +132,7 @@ func searchEvents(ctx context.Context, s *Store, sw *switches.Store, sched sched
 			return recordWasted(ctx, s, item, len(results), err)
 		}
 
-		n, err := s.QueueResults(context.WithoutCancel(ctx), item, ingest.FilterLinks(kept, item.BaseURL), len(results))
+		n, err := s.QueueResults(context.WithoutCancel(ctx), item, filterLinks(kept, item.BaseURL), len(results))
 		if err != nil {
 			return recordWasted(ctx, s, item, len(results), err)
 		}

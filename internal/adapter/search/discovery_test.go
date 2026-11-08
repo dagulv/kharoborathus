@@ -3,12 +3,10 @@ package discovery
 import (
 	"slices"
 	"testing"
-
-	"github.com/dagulv/kharoborathus/internal/service/robot"
 )
 
 func TestEventItems(t *testing.T) {
-	got := eventItems("p", []robot.Keyword{
+	got := eventItems("p", []Keyword{
 		{Entity: "Volvo", Action: "takeover", Query: "Volvo köper Northvolt"},
 		{Entity: "Saab", Action: "order", Query: "Saab order"},
 	}, map[string]string{"takeover": "acquisition"})
