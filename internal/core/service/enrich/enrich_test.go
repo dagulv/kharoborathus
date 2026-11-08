@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"testing"
@@ -329,5 +330,19 @@ func TestEnrichRetries(t *testing.T) {
 
 	if _, ok := f.post(t, rejected.URL); ok {
 		t.Error("rejected post enriched")
+	}
+}
+
+func TestEnrichPeakHours(t *testing.T) {
+	f := setup(t)
+	f.llm.err = fmt.Errorf("%w: %w: deepseek until later", port.ErrUnavailable, port.ErrPeakHours)
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Errorf("err %v", err)
+	}
+
+	if got := f.raw(t, raw.ID); got.Status != domain.StatusAccepted || got.RetryCount != 0 {
+		t.Errorf("status %q, retries %d", got.Status, got.RetryCount)
 	}
 }
