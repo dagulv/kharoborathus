@@ -39,7 +39,7 @@ targets:
     domains:
       - domain: api.kharoborathus.dagulv.me
     port: 3001
-    health_check_path: /feeds?limit=1
+    health_check_path: /posts?limit=1
     env:
       - name: POSTGRES_CONNECTION_STRING
         from:
