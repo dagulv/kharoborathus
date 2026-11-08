@@ -46,7 +46,7 @@ func TestActiveTags(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(tags) != 2 || tags[0].Key != "acquisition" || !slices.Equal(tags[0].Terms, []string{"förvärv", "uppköp"}) || tags[1].Key != "contract" || len(tags[1].Terms) != 0 {
+	if len(tags) != 2 || tags[0].Key != "acquisition" || tags[0].Type != "quality" || !slices.Equal(tags[0].Terms, []string{"förvärv", "uppköp"}) || tags[1].Key != "contract" || len(tags[1].Terms) != 0 {
 		t.Errorf("got %+v", tags)
 	}
 }
