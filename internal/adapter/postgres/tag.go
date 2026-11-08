@@ -41,11 +41,11 @@ func (s *TagStore) TagKeys(ctx context.Context) ([]string, error) {
 
 func (s *TagStore) ActiveTags(ctx context.Context, lang string) ([]domain.Tag, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT t.key, COALESCE(array_agg(tt.term ORDER BY tt.term) FILTER (WHERE tt.term IS NOT NULL), '{}')
+		SELECT t.key, t.type, COALESCE(array_agg(tt.term ORDER BY tt.term) FILTER (WHERE tt.term IS NOT NULL), '{}')
 		FROM tags t
 		LEFT JOIN tag_terms tt ON tt.key = t.key AND tt.lang = $1
 		WHERE t.enabled AND t.status = 'active'
-		GROUP BY t.key
+		GROUP BY t.key, t.type
 		ORDER BY t.key
 		`, lang)
 	if err != nil {
@@ -53,7 +53,7 @@ func (s *TagStore) ActiveTags(ctx context.Context, lang string) ([]domain.Tag, e
 	}
 
 	tags, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (t domain.Tag, err error) {
-		err = row.Scan(&t.Key, &t.Terms)
+		err = row.Scan(&t.Key, &t.Type, &t.Terms)
 		return
 	})
 	if err != nil {

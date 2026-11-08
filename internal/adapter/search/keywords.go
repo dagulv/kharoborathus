@@ -26,7 +26,7 @@ func groundKeywords(keywords []Keyword, article string) []Keyword {
 
 	for _, k := range keywords {
 		k.Entity = collapse(k.Entity)
-		k.Action = tagKey(k.Action)
+		k.Action = TagKey(k.Action)
 		k.Query = collapse(k.Query)
 
 		entity := strings.ToLower(k.Entity)
@@ -60,6 +60,6 @@ func collapse(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func tagKey(s string) string {
+func TagKey(s string) string {
 	return strings.NewReplacer(" ", "_", "-", "_").Replace(strings.ToLower(collapse(s)))
 }

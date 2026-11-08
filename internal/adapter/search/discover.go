@@ -87,7 +87,7 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 }
 
 func resolveAction(action string, quality map[string]bool, aliases map[string]string) (string, bool) {
-	action = tagKey(action)
+	action = TagKey(action)
 	if key, ok := aliases[action]; ok {
 		action = key
 	}
@@ -100,5 +100,5 @@ func resolveAction(action string, quality map[string]bool, aliases map[string]st
 }
 
 func normalizedEntity(entity string) string {
-	return tagKey(entity)
+	return TagKey(entity)
 }
