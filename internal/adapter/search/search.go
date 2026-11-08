@@ -61,13 +61,23 @@ func searchQuery(ctx context.Context, s searchStore, id string, se Searcher, f *
 	}
 
 	pending, err := s.PendingResults(ctx, dedupeWindow)
-	if err != nil || pending >= maxPendingResults {
+	if err != nil {
 		return err
 	}
 
+	if pending >= maxPendingResults {
+		l.Info("search held back", "query", id, "reason", "pending results", "pending", pending)
+		return nil
+	}
+
 	used, err := s.SearchesLastDay(ctx)
-	if err != nil || used >= dailySearchBudget {
+	if err != nil {
 		return err
+	}
+
+	if used >= dailySearchBudget {
+		l.Info("search held back", "query", id, "reason", "daily budget", "used", used)
+		return nil
 	}
 
 	il := calls.With("discovery_search_query_id", id)
