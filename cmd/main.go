@@ -10,11 +10,17 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/dagulv/kharoborathus/internal/adapter/extract/html"
+	"github.com/dagulv/kharoborathus/internal/adapter/fetcher"
+	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
 	adapter "github.com/dagulv/kharoborathus/internal/adapter/robot"
 	discovery "github.com/dagulv/kharoborathus/internal/adapter/search"
+	"github.com/dagulv/kharoborathus/internal/core/service/source"
 	"github.com/dagulv/kharoborathus/internal/lib/config"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
+	"github.com/dagulv/kharoborathus/internal/lib/pace"
+	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/migrations"
 	"golang.org/x/sync/errgroup"
 )
@@ -60,6 +66,9 @@ func app(ctx context.Context) (err error) {
 	// Third-party requests, one row each in the logs table.
 	calls := slog.New(logs.NewHandler(db, l.WithGroup("logs")))
 
+	domainStore := postgres.NewStore(db)
+	sourceStore := postgres.NewSourceStore(db)
+	rawPostStore := postgres.NewRawPostStore(db)
 	discoveryStore := discovery.NewStore(db)
 
 	llm, err := adapter.NewDeepSeek(env, l.WithGroup("deepseek"))
@@ -67,11 +76,27 @@ func app(ctx context.Context) (err error) {
 		return fmt.Errorf("err create llm: %w", err)
 	}
 
+	extractor := html.New(llm, &domainStore, l.WithGroup("extract"))
+	// One pacer for every adapter, so two sources on one host still wait for each other.
+	pacer := pace.New(source.DomainPace)
+
+	fetchers := map[string]source.Fetcher{
+		"rss":       source.NewFetcher(fetcher.NewRSS(&rawPostStore, pacer, l), calls),
+		"page":      source.NewFetcher(fetcher.NewPage(&rawPostStore, &domainStore, extractor, pacer, l), calls),
+		"wordpress": source.NewFetcher(fetcher.NewWordPress(&rawPostStore, pacer, l), calls),
+	}
+
+	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, schedule.Always, nil)
+
 	resultFilter := discovery.NewResultFilter(llm)
 	searcher, searchErr := discovery.NewBrave(env)
 	searchIDs := make(chan string, discovery.SearchQueue)
 
 	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		return source.Run(ctx, &sourceService, fetchers, l.WithGroup("sourced"))
+	})
 
 	g.Go(func() error {
 		if searchErr != nil {
