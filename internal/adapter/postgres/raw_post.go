@@ -109,6 +109,45 @@ func (s *RawPostStore) SetStatus(ctx context.Context, id, status string) error {
 	return nil
 }
 
+func (s *RawPostStore) GetRawPost(ctx context.Context, id string) (domain.RawPost, error) {
+	p, err := scanRawPost(s.db.QueryRow(ctx, `SELECT `+rawPostColumns+` FROM raw_posts WHERE id = $1`, id), domain.RawPost{})
+	if err != nil {
+		return p, fmt.Errorf("err get raw post %s: %w", id, err)
+	}
+
+	return p, nil
+}
+
+// Posts that keep failing go behind the rest, and the age gap keeps the job off posts the live path is handling.
+func (s *RawPostStore) ListUnenriched(ctx context.Context, limit int, minAge time.Duration, maxRetries int) ([]string, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT r.id FROM raw_posts r
+		WHERE (r.status = 'accepted' OR (r.status = 'failed' AND r.retry_count < $3))
+			AND r.created_at < now() - $2::interval
+			AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = r.url)
+		ORDER BY r.retry_count, r.created_at
+		LIMIT $1
+		`, limit, minAge, maxRetries)
+	if err != nil {
+		return nil, fmt.Errorf("err query unenriched raw posts: %w", err)
+	}
+
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("err scan unenriched raw posts: %w", err)
+	}
+
+	return ids, nil
+}
+
+func (s *RawPostStore) FailEnrich(ctx context.Context, id string) error {
+	if _, err := s.db.Exec(ctx, `UPDATE raw_posts SET status = 'failed', retry_count = retry_count + 1 WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("err fail enrich: %w", err)
+	}
+
+	return nil
+}
+
 func scanRawPost(row pgx.Row, p domain.RawPost) (domain.RawPost, error) {
 	var content rawContent
 
