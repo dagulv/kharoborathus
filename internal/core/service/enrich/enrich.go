@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
@@ -16,7 +17,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const maxRetries = 10
+const (
+	maxRetries   = 10
+	maxProposals = 5
+)
 
 type Service struct {
 	DB       *database.Database
@@ -128,8 +132,15 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		return nil, err
 	}
 
-	for i := range a.Tags {
-		a.Tags[i].Key = discovery.TagKey(a.Tags[i].Key)
+	proposals := make([]postgres.Proposal, 0, maxProposals)
+
+	for _, t := range a.Tags {
+		t.Key = discovery.TagKey(t.Key)
+		if strings.Trim(t.Key, "_") == "" || len(proposals) == maxProposals {
+			continue
+		}
+
+		proposals = append(proposals, t)
 	}
 
 	summary := a.Summary
@@ -154,7 +165,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 
 	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if trusted {
-			proposed, err := s.Tags.SaveProposals(ctx, tx, p.Lang, a.Tags)
+			proposed, err := s.Tags.SaveProposals(ctx, tx, p.Lang, proposals)
 			if err != nil {
 				return err
 			}
