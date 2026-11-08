@@ -26,8 +26,9 @@ type RawPost struct {
 	Content    string     `json:"content"`
 	Simhash    *int64     `json:"-"`      // NULL when the content has no words
 	Status     string     `json:"status"` // pending | accepted | rejected | duplicate | failed
+	RetryCount int        `json:"retryCount"`
 	CreatedAt  time.Time  `json:"createdAt"`
-	Title      string     `json:"title"` // Not stored, carried from the fetch or trim to the post
+	Title      string     `json:"title"`
 	Authors    []string   `json:"authors"`
 	PostedAt   *time.Time `json:"postedAt"`
 }

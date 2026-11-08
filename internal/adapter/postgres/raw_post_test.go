@@ -125,3 +125,23 @@ func TestCreateRawPostExists(t *testing.T) {
 		t.Errorf("err %v", err)
 	}
 }
+
+func TestRawPostContentRoundTrip(t *testing.T) {
+	_, s, base := rawPostDB(t)
+	posted := time.Date(2026, 11, 8, 8, 0, 0, 0, time.UTC)
+
+	base.URL = "https://a.example/1"
+	base.Content = "# Rubrik\n\nText"
+	base.Title = "Rubrik"
+	base.Authors = []string{"A", "B"}
+	base.PostedAt = &posted
+
+	out, err := s.CreateRawPost(context.Background(), domain.RawPost{SourceID: base.SourceID, DomainID: base.DomainID, Lang: "sv", URL: base.URL, Content: base.Content, Title: base.Title, Authors: base.Authors, PostedAt: base.PostedAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if out.Content != base.Content || out.Title != "Rubrik" || len(out.Authors) != 2 || out.PostedAt == nil || !out.PostedAt.Equal(posted) || out.RetryCount != 0 {
+		t.Errorf("got %+v", out)
+	}
+}
