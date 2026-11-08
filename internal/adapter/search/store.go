@@ -182,6 +182,15 @@ func actionKeys(ctx context.Context, tx pgx.Tx) (quality map[string]bool, aliase
 	return quality, aliases, nil
 }
 
+// Held until commit, so a concurrent post sees this event's query before deciding to insert its own.
+func lockEvent(ctx context.Context, tx pgx.Tx, entity, action string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1 || '/' || $2))`, entity, action); err != nil {
+		return fmt.Errorf("err lock event: %w", err)
+	}
+
+	return nil
+}
+
 func recentQuery(ctx context.Context, tx pgx.Tx, entity, action string, windowDays int) (id string, found bool, err error) {
 	err = tx.QueryRow(ctx, `
 		SELECT id FROM discovery_search_queries

@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
@@ -200,5 +201,53 @@ func TestDiscoverLinkAlreadyPost(t *testing.T) {
 
 	if n := count(t, db, `SELECT count(*) FROM discovery_posts`); n != 0 {
 		t.Errorf("discovery posts %d", n)
+	}
+}
+
+func TestDiscoverConcurrent(t *testing.T) {
+	db := discoverDB(t)
+	ctx := context.Background()
+
+	txA, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer txA.Rollback(ctx)
+
+	idsA, err := Discover(ctx, txA, seedPost(t, db, seed{Trusted: true, Content: volvoArticle}), []Keyword{volvoTakeover})
+	if err != nil || len(idsA) != 1 {
+		t.Fatalf("a: ids %v, %v", idsA, err)
+	}
+
+	type result struct {
+		ids []string
+		err error
+	}
+
+	done := make(chan result)
+	// No shared link, or the discovery_posts unique index would serialize the two transactions on its own.
+	post := seedPost(t, db, seed{Trusted: true, Content: "Volvo Cars köper Northvolt."})
+
+	go func() {
+		var r result
+		r.err = pgx.BeginFunc(ctx, db, func(tx pgx.Tx) (err error) {
+			r.ids, err = Discover(ctx, tx, post, []Keyword{{Entity: "Volvo Cars", Action: "acquisition", Query: "Volvo Cars förvärvar Northvolt"}})
+			return err
+		})
+		done <- r
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	if err := txA.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if r := <-done; r.err != nil || len(r.ids) != 0 {
+		t.Fatalf("b: ids %v, %v", r.ids, r.err)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries`); n != 1 {
+		t.Errorf("query rows %d", n)
 	}
 }

@@ -1,7 +1,9 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
+	"slices"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/jackc/pgx/v5"
@@ -25,7 +27,9 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 		return nil, err
 	}
 
-	var ids []string
+	type event struct{ entity, action, query string }
+
+	var resolved []event
 
 	for _, e := range groundKeywords(events, post.Content) {
 		action, ok := resolveAction(e.Action, quality, aliases)
@@ -33,9 +37,22 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 			continue
 		}
 
-		entity := normalizedEntity(e.Entity)
+		resolved = append(resolved, event{entity: normalizedEntity(e.Entity), action: action, query: e.Query})
+	}
 
-		id, found, err := recentQuery(ctx, tx, entity, action, dedupeWindow)
+	// Locking in key order keeps two posts with the same events from deadlocking.
+	slices.SortStableFunc(resolved, func(a, b event) int {
+		return cmp.Or(cmp.Compare(a.entity, b.entity), cmp.Compare(a.action, b.action))
+	})
+
+	var ids []string
+
+	for _, e := range resolved {
+		if err := lockEvent(ctx, tx, e.entity, e.action); err != nil {
+			return nil, err
+		}
+
+		id, found, err := recentQuery(ctx, tx, e.entity, e.action, dedupeWindow)
 		if err != nil {
 			return nil, err
 		}
@@ -52,7 +69,7 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 			continue
 		}
 
-		id, created, err := insertQuery(ctx, tx, entity, action, e.Query)
+		id, created, err := insertQuery(ctx, tx, e.entity, e.action, e.query)
 		if err != nil {
 			return nil, err
 		}
