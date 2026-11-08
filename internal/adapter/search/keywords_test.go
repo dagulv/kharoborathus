@@ -3,7 +3,9 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -38,8 +40,8 @@ const article = `# Volvo investerar i Göteborg
 Volvo Cars investerar 10 miljarder kronor i en ny batterifabrik. Samtidigt tecknar Ericsson ett avtal med Telia om 5G.
 Northvolt, Saab, Scania och ABB nämns också.`
 
-func TestKeywords(t *testing.T) {
-	llm := &fakeLLM{answer: discoveryAnswer{Keywords: []Keyword{
+func TestGroundKeywords(t *testing.T) {
+	got := groundKeywords([]Keyword{
 		{Entity: " Volvo  Cars ", Action: "Investment", Query: "Volvo Cars investerar  batterifabrik"},
 		{Entity: "Ericsson", Action: "contract", Query: "Ericsson avtal Telia 5G"},
 		{Entity: "Ericsson", Action: "contract", Query: "ericsson avtal telia 5g"},
@@ -50,12 +52,7 @@ func TestKeywords(t *testing.T) {
 		{Entity: "Scania", Action: "order", Query: "Scania order"},
 		{Entity: "ABB", Action: "order", Query: "ABB order"},
 		{Entity: "", Action: "order", Query: "order"},
-	}}}
-
-	keywords, err := NewDiscoverer(llm).Keywords(context.Background(), slog.New(slog.DiscardHandler), article, []string{"acquisition", "contract"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	}, article)
 
 	want := []Keyword{
 		{Entity: "Volvo Cars", Action: "investment", Query: "Volvo Cars investerar batterifabrik"},
@@ -65,30 +62,36 @@ func TestKeywords(t *testing.T) {
 		{Entity: "Scania", Action: "order", Query: "Scania order"},
 	}
 
-	if len(keywords) != len(want) {
-		t.Fatalf("got %d keywords: %+v", len(keywords), keywords)
-	}
-
-	for i := range want {
-		if keywords[i] != want[i] {
-			t.Errorf("keyword %d: got %+v, want %+v", i, keywords[i], want[i])
-		}
-	}
-
-	if !strings.Contains(llm.req.Prompt, article) || !strings.Contains(llm.req.Prompt, "Quality tag keys: acquisition, contract") || llm.req.System == "" {
-		t.Errorf("prompt %q", llm.req.Prompt)
+	if !slices.Equal(got, want) {
+		t.Errorf("got %+v", got)
 	}
 }
 
-func TestKeywordsNone(t *testing.T) {
-	llm := &fakeLLM{}
-
-	keywords, err := NewDiscoverer(llm).Keywords(context.Background(), slog.New(slog.DiscardHandler), article, nil)
-	if err != nil || len(keywords) != 0 {
-		t.Fatalf("got %v, %v", keywords, err)
+func TestEventsUserPrompt(t *testing.T) {
+	keys := make([]string, 400)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("k%d", i)
 	}
 
-	if !strings.Contains(llm.req.Prompt, "Quality tag keys: none") {
-		t.Errorf("prompt %q", llm.req.Prompt)
+	p, err := EventsUserPrompt(keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(p, "Quality tag keys: k0, k1,") || !strings.Contains(p, "k299") || strings.Contains(p, "k300") {
+		t.Errorf("prompt %q", p)
+	}
+}
+
+func TestEventsUserPromptNone(t *testing.T) {
+	p, err := EventsUserPrompt(nil)
+	if err != nil || !strings.Contains(p, "Quality tag keys: none") {
+		t.Errorf("prompt %q, %v", p, err)
+	}
+}
+
+func TestEventsSystemPrompt(t *testing.T) {
+	if !strings.Contains(EventsSystemPrompt, "events:") || strings.Contains(EventsSystemPrompt, "keywords:") {
+		t.Errorf("prompt %q", EventsSystemPrompt)
 	}
 }

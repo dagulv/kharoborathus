@@ -1,68 +1,22 @@
 package discovery
 
 import (
-	"context"
-	"fmt"
-	"log/slog"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/dagulv/kharoborathus/internal/core/port"
 )
 
 const (
-	maxTagKeys        = 300
-	maxKeywords       = 5
-	maxKeywordQuery   = 100
-	maxKeywordEntity  = 80
-	maxKeywordAction  = 30
-	maxDiscoveryInput = 20_000
+	maxTagKeys       = 300
+	maxKeywords      = 5
+	maxKeywordQuery  = 100
+	maxKeywordEntity = 80
+	maxKeywordAction = 30
 )
 
 type Keyword struct {
 	Entity string `json:"entity"`
 	Action string `json:"action"`
 	Query  string `json:"query"`
-}
-
-type discoveryAnswer struct {
-	Keywords []Keyword `json:"keywords"`
-}
-
-type Discoverer struct {
-	llm port.LLM
-}
-
-func NewDiscoverer(llm port.LLM) *Discoverer {
-	return &Discoverer{llm: llm}
-}
-
-func (d *Discoverer) Keywords(ctx context.Context, l *slog.Logger, markdown string, tagKeys []string) ([]Keyword, error) {
-	if r := []rune(markdown); len(r) > maxDiscoveryInput {
-		markdown = string(r[:maxDiscoveryInput])
-	}
-
-	prompt, err := render("discovery_user_prompt", map[string]any{
-		"Keys":    tagKeys[:min(len(tagKeys), maxTagKeys)],
-		"Article": markdown,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	temp := 0.2
-
-	var answer discoveryAnswer
-
-	if err := d.llm.Unmarshal(ctx, l, port.Request{
-		System:      discoverySystem,
-		Prompt:      prompt,
-		Temperature: &temp,
-	}, &answer); err != nil {
-		return nil, fmt.Errorf("err extract keywords: %w", err)
-	}
-
-	return groundKeywords(answer.Keywords, markdown), nil
 }
 
 func groundKeywords(keywords []Keyword, article string) []Keyword {
