@@ -43,7 +43,10 @@ func Run(ctx context.Context, s *Service, fetchers map[string]Fetcher, l *slog.L
 	return pipeline.New[domain.RawPost]().
 		Next(workers, s.Extract).
 		Next(workers, SetMarkdown).
-		WithSink(s.save).
+		Next(workers, SetSimhash).
+		Next(workers, s.insert).
+		Next(workers, s.checkQuality).
+		WithSink(s.saveStatus).
 		Run(ctx, l, pipeline.Merge(ctx, posts...))
 }
 
@@ -70,11 +73,17 @@ func route(ctx context.Context, sources <-chan domain.Source, ins map[string]cha
 	}
 }
 
+// Stored as pending before the quality check, so a Jev outage or a crash loses no fetched post.
 // A url another worker stored first is not a failure.
-func (s *Service) save(ctx context.Context, p domain.RawPost) error {
-	if _, err := s.RawPostStore.CreateRawPost(ctx, p); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return err
+func (s *Service) insert(ctx context.Context, _ *slog.Logger, p domain.RawPost) (domain.RawPost, error) {
+	out, err := s.RawPostStore.CreateRawPost(ctx, p)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return p, pipeline.ErrSkip
 	}
 
-	return nil
+	return out, err
+}
+
+func (s *Service) saveStatus(ctx context.Context, p domain.RawPost) error {
+	return s.RawPostStore.SetStatus(ctx, p.ID, p.Status)
 }
