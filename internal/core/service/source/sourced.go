@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	domainPace = time.Second * 5
+	DomainPace = time.Second * 5
 	workers    = 5
 )
 
@@ -23,6 +23,8 @@ type Fetcher interface {
 
 type fetcher[T any] struct {
 	port.Fetcher[T]
+
+	calls *slog.Logger
 }
 
 // Keyed by domain.Source.Adapter.
