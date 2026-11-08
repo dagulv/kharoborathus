@@ -2,12 +2,18 @@ package discovery
 
 import (
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 )
 
-// Longer URLs break the unique btree indexes on discovery_posts.url and posts.url.
-const maxLinkLength = 2000
+const (
+	maxLinksPerPost = 10
+	// Longer URLs break the unique btree indexes on discovery_posts.url and posts.url.
+	maxLinkLength = 2000
+)
+
+var markdownLink = regexp.MustCompile(`(!?)\[[^\[\]]*\]\(<?([^\s()<>]+)>?(?:\s+"[^"]*")?\)`)
 
 var blockedHosts = []string{
 	"facebook.com", "fb.com", "instagram.com", "threads.net", "twitter.com", "x.com", "t.co",
@@ -17,6 +23,22 @@ var blockedHosts = []string{
 	"drive.google.com", "docs.google.com", "dropbox.com", "wetransfer.com", "box.com",
 	"onedrive.live.com", "1drv.ms", "issuu.com", "scribd.com", "slideshare.net",
 	"flickr.com", "imgur.com", "giphy.com",
+}
+
+func outboundLinks(markdown, ownBaseURL string) []string {
+	var raw []string
+
+	for _, m := range markdownLink.FindAllStringSubmatch(markdown, -1) {
+		if m[1] == "!" {
+			continue
+		}
+
+		raw = append(raw, m[2])
+	}
+
+	links := filterLinks(raw, ownBaseURL)
+
+	return links[:min(len(links), maxLinksPerPost)]
 }
 
 func filterLinks(raw []string, ownBaseURL string) []string {
