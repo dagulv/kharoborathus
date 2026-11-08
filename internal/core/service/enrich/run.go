@@ -16,17 +16,6 @@ const (
 	catchUpBatch = 20
 )
 
-// A dropped id is found again by the catch-up job.
-func Enqueue(ids chan<- string, l *slog.Logger, id string) bool {
-	select {
-	case ids <- id:
-		return true
-	default:
-		l.Warn("enrich queue full", "raw_post", id)
-		return false
-	}
-}
-
 func (s *Service) Run(ctx context.Context, ids <-chan string, l *slog.Logger) error {
 	g, ctx := errgroup.WithContext(ctx)
 
