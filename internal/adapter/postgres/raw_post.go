@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
@@ -24,7 +26,16 @@ const rawPostColumns = `
 	content,
 	simhash,
 	status,
+	retry_count,
 	created_at`
+
+// The content column, which carries what the fetch and extraction found until the post is created.
+type rawContent struct {
+	Content  string     `json:"content"`
+	Title    string     `json:"title"`
+	Authors  []string   `json:"authors"`
+	PostedAt *time.Time `json:"posted_at,omitempty"`
+}
 
 type RawPostStore struct {
 	db *database.Database
@@ -36,11 +47,16 @@ func NewRawPostStore(db *database.Database) RawPostStore {
 	}
 }
 
-// Returns pgx.ErrNoRows when the url is already stored. Fields without a column are kept from p.
+// Returns pgx.ErrNoRows when the url is already stored.
 func (s *RawPostStore) CreateRawPost(ctx context.Context, p domain.RawPost) (domain.RawPost, error) {
 	status := domain.StatusPending
 	if p.Status != "" {
 		status = p.Status
+	}
+
+	content, err := json.Marshal(rawContent{Content: p.Content, Title: p.Title, Authors: p.Authors, PostedAt: p.PostedAt})
+	if err != nil {
+		return p, fmt.Errorf("err marshal raw post content %s: %w", p.URL, err)
 	}
 
 	out, err := scanRawPost(s.db.QueryRow(ctx, `
@@ -48,7 +64,7 @@ func (s *RawPostStore) CreateRawPost(ctx context.Context, p domain.RawPost) (dom
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (url) DO NOTHING
 		RETURNING `+rawPostColumns,
-		p.SourceID, p.URL, p.Lang, p.DomainID, p.RawContent, p.Content, p.Simhash, status,
+		p.SourceID, p.URL, p.Lang, p.DomainID, p.RawContent, content, p.Simhash, status,
 	), p)
 	if err != nil {
 		return out, fmt.Errorf("err create raw post %s: %w", p.URL, err)
@@ -94,18 +110,25 @@ func (s *RawPostStore) SetStatus(ctx context.Context, id, status string) error {
 }
 
 func scanRawPost(row pgx.Row, p domain.RawPost) (domain.RawPost, error) {
-	err := row.Scan(
+	var content rawContent
+
+	if err := row.Scan(
 		&p.ID,
 		&p.SourceID,
 		&p.URL,
 		&p.Lang,
 		&p.DomainID,
 		&p.RawContent,
-		&p.Content,
+		&content,
 		&p.Simhash,
 		&p.Status,
+		&p.RetryCount,
 		&p.CreatedAt,
-	)
+	); err != nil {
+		return p, err
+	}
 
-	return p, err
+	p.Content, p.Title, p.Authors, p.PostedAt = content.Content, content.Title, content.Authors, content.PostedAt
+
+	return p, nil
 }

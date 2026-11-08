@@ -82,10 +82,10 @@ CREATE TABLE IF NOT EXISTS raw_posts (
   lang TEXT NOT NULL,
   domain_id UUID NOT NULL REFERENCES domains (id),
   raw_content TEXT NOT NULL,
-  content TEXT NOT NULL,
-  meta_content JSON NOT NULL DEFAULT '{}',
+  content JSONB NOT NULL, -- {content, title, authors, posted_at} from the fetch and extraction
   simhash BIGINT,
   status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
+  retry_count INT NOT NULL DEFAULT 0, -- failed enrich attempts
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
