@@ -36,7 +36,7 @@ func NewResultFilter(llm port.LLM) *ResultFilter {
 	return &ResultFilter{llm: llm}
 }
 
-func (f *ResultFilter) Keep(ctx context.Context, l *slog.Logger, entity, action string, results []SearchResult) ([]string, error) {
+func (f *ResultFilter) Keep(ctx context.Context, l *slog.Logger, entity, action string, results []SearchResult) ([]int, error) {
 	if len(results) == 0 {
 		return nil, nil
 	}
@@ -73,15 +73,15 @@ func (f *ResultFilter) Keep(ctx context.Context, l *slog.Logger, entity, action 
 		return nil, fmt.Errorf("err filter search results: %w", err)
 	}
 
-	var urls []string
+	var kept []int
 
 	for _, id := range answer.Keep {
-		if id < 0 || id >= len(results) || slices.Contains(urls, results[id].URL) {
+		if id < 0 || id >= len(results) || slices.ContainsFunc(kept, func(k int) bool { return results[k].URL == results[id].URL }) {
 			continue
 		}
 
-		urls = append(urls, results[id].URL)
+		kept = append(kept, id)
 	}
 
-	return urls, nil
+	return kept, nil
 }

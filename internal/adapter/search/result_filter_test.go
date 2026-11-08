@@ -22,7 +22,7 @@ func TestKeep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if want := []string{"https://c.example/3", "https://a.example/1"}; !slices.Equal(got, want) {
+	if want := []int{2, 0}; !slices.Equal(got, want) {
 		t.Errorf("got %v", got)
 	}
 

@@ -5,50 +5,48 @@
 
 ## Summary
 
-Searches the web with the Brave Search API for other sources on events found in trusted posts, when the event's action is a gate tag: news, press releases, company pages and filings. An LLM filters results before anything is fetched.
+Searches the web with the Brave Search API for other sources on events found in trusted posts, when the event's action is a quality tag: news, press releases, company pages and filings. An LLM filters results before anything is fetched. Both steps are links in the event chain. No ticker polls for work. See [the design](../superpowers/specs/2026-11-08-event-driven-search-design.md).
 
 ## Current state
 
-- [discovery.go](../../internal/service/discovery/discovery.go) extracts events from every post. The prompt lists the gate tag keys, actions become tag keys and are remapped through `tag_aliases`.
-- [search.go](../../internal/service/discovery/search.go) searches while `search_discovery` is on, through [brave.go](../../internal/service/discovery/brave.go), and filters results with [search_filter.go](../../internal/service/robot/search_filter.go).
-- Admin shows Brave searches in the last 24 hours against the daily cap.
-- `discovery_events_event_idx` serves the dedupe check and [post linking](post-linking.md).
+- [discover.go](../../internal/adapter/search/discover.go): `Discover` is step 3. It runs inside the transaction that inserts a post and returns new query ids. Step 2, which calls it, does not exist yet.
+- [prompts/discovery.md](../../internal/adapter/search/prompts/discovery.md): the events part of step 2's DeepSeek prompt, as `EventsSystemPrompt` and `EventsUserPrompt`.
+- [search.go](../../internal/adapter/search/search.go): `RunSearch` is step 4. It reads query ids from a channel, searches through [brave.go](../../internal/adapter/search/brave.go) and filters with [result_filter.go](../../internal/adapter/search/result_filter.go).
+- No catch-up job yet. Rows a step leaves unhandled stay unhandled.
 
 ## Design
 
-**Trigger: entity plus a gate action**
+**Step 3: Discover.** Inside step 2's transaction, no LLM.
 
-A search runs only for events whose `action` is the key of a tag with `enabled`, `status = 'active'` and `gate = true`. Gate tags are specific topics like `acquisition` or `contract`, so a company name combined with one of them is a searchable event.
+1. Trusted posts, from an enabled source with `status = 'active'`, queue up to 10 outbound markdown links in `discovery_posts` with no query id.
+2. Events are grounded: the entity must be in the article and in the query.
+3. Actions are normalized like tag keys and mapped through `tag_aliases`. Only active, enabled `quality` tags pass.
+4. `normalized_entity` is the entity as a tag key, like `volvo_cars`.
+5. A query with the same `normalized_entity` and `action` created within 7 days gets the post linked to it in `discovery_search_query_posts`. That link is the `same_event` record. No new search.
+6. Otherwise trusted posts insert a new query. A `query` text conflict links to the existing row and is not searched again. Untrusted posts never create queries.
+7. After commit, step 2 sends new query ids with `Enqueue`. A full channel drops the id and logs it.
 
-1. Event extraction keeps running on every post, since [post linking](post-linking.md) needs events from all posts.
-2. The discovery prompt gets the current gate tag keys, like the tag generator gets existing keys. `action` must be one of them when one fits, otherwise its own one or two lowercase words.
-3. Extracted actions are normalized like tag keys, lowercase with underscores, and remapped through `tag_aliases`.
-4. A search worker runs only while the `search_discovery` switch is on, see [rollout](rollout.md). It reads `ListQueue`, limited to items that:
-   - come from trusted posts,
-   - have an `action` that is a gate tag key at search time, since `gate` is recomputed daily,
-   - were created inside the dedupe window. Older non-matching items are left alone instead of clogging the queue.
-5. Dedupe: skip the query and `MarkSearched` when the same lowercased `entity` and `action` had a paid search inside the dedupe window. Rows marked without a call do not count, or the window would keep sliding. `discovery_events` is only unique per post, so many posts about one event would each search it.
-6. Call Brave Web Search through a `Searcher` interface. One call returns both web and news results.
-7. An LLM sees each result's `title`, `description`, `extra_snippets`, `page_age` and hostname plus the event's `entity` and `action`. It keeps only results about that event, from any kind of source.
-8. Insert kept URLs into `link_events` with `via = 'search'` and `discovery_events_id`. Brave snippets are dropped after filtering, so only URLs are stored.
-9. `MarkSearched`.
+**Step 4: RunSearch.** One query at a time, whenever an id arrives.
+
+1. Skip queries with `searched_at` set.
+2. Leave the query untouched while 200 or more search results are pending within 7 days, or 322 searches were paid in the last day.
+3. Search Brave in the language of the query's earliest linked post.
+4. Save the raw results in `result.results`, even during shutdown, since Brave billed them.
+5. While DeepSeek's off-peak schedule is active, filter the results. Write the kept indexes to `result.kept` and queue the kept URLs in `discovery_posts` with the query id, skipping URLs already in `posts`.
+
+| `searched_at` | `result` | State | Paid |
+|---|---|---|---|
+| NULL | NULL | Not searched. | No |
+| set | NULL | Rejected by Brave with 400 or 422. Never retried. | No |
+| set | `results`, no `kept` | Searched, not filtered. | Yes |
+| set | `results` and `kept` | Done. | Yes |
 
 Rules:
 
-- At most 322 searches in a rolling 24 hours, the $50 monthly budget spread over a 31-day month.
-- `result_count` holds the Brave result count of a paid call. It stays NULL when an item is marked searched without a call, so usage counts only paid calls.
-- Newest items first. When the cap holds back a backlog, older items age out of the window.
-- `search_lang` only for `sv` and `en`.
-- 429, 5xx and network errors stop the tick and leave the item. 400 and 422 mark it searched without a call, except a 422 with `SUBSCRIPTION_TOKEN_INVALID`, which stops the tick like other statuses. A 200 whose body cannot be read counts as a paid search with no results and pauses the worker the same way. Other statuses stop the tick.
-- The tick follows the LLM schedule and checks it again before each search, so no search is bought just before peak hours. If the filter or the queue insert fails after a search, the results are dropped, the item still counts as a paid search, and the worker pauses so an outage cannot drain the budget. The pause starts at 30 minutes and doubles up to a day while failures repeat. A paid search interrupted by shutdown also counts.
-- No searches while `discovered_ingest` is off or the classifier is mocked, since nothing would fetch the results.
-- No searches while 200 or more `via = 'search'` links are pending inside the window, one day of ingest at its cap.
-- No results means no LLM call.
-- Result URLs pass the link extraction filter, without its 10-link cap, and skip URLs already in `posts`.
-- The filter never sees result URLs and answers with result ids.
+- 429, 5xx, unreadable responses and other errors leave the query untouched.
+- No results means no LLM call. `kept` is written as `[]`.
+- The filter never sees result URLs and answers with result ids. The entity is passed with underscores as spaces.
 - Without `BRAVE_API_KEY` the search worker does not start.
-
-Search engine URLs never enter `link_events`. Only result URLs do.
 
 ### Brave Web Search request
 
@@ -59,7 +57,7 @@ x-subscription-token: <key>
 
 | Param            | Value                                        |
 | ---------------- | -------------------------------------------- |
-| `q`              | `discovery_events.query`, max 400 characters |
+| `q`              | `discovery_search_queries.query`, max 400 characters |
 | `country`        | `SE`                                         |
 | `search_lang`    | Post language, `sv` or `en`                  |
 | `freshness`      | `pw`, last 7 days                            |
@@ -71,10 +69,7 @@ Results are read from `web.results` and `news.results` and deduplicated by URL. 
 
 ## Schema changes
 
-```sql
-CREATE INDEX IF NOT EXISTS discovery_events_event_idx ON discovery_events (lower(entity), lower(action), searched_at);
-ALTER TABLE discovery_events ADD COLUMN result_count INT;
-```
+`tag_aliases` in [001_init.sql](../../internal/migrations/001_init.sql). Only tag promotion and manual inserts write it.
 
 ## Defaults
 
@@ -85,8 +80,9 @@ ALTER TABLE discovery_events ADD COLUMN result_count INT;
 | Freshness                    | `pw`               | Same event, not old coverage.                         |
 | Monthly budget alert         | $50                | About 10k queries at $5 per 1k.                       |
 | Daily search cap             | 322                | $50 a month at $5 per 1k queries over a 31-day month. |
-| Searches per tick            | 5                  | Every minute, inside the cap.                         |
 | Pending search results limit | 200                | One day of ingest at its daily cap.                   |
+| Outbound links per post      | 10                 | Old link extraction cap.                              |
+| Search queue                 | 100                | Channel buffer, `SearchQueue`.                        |
 
 ## Open questions
 

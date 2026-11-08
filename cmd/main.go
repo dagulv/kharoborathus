@@ -69,6 +69,7 @@ func app(ctx context.Context) (err error) {
 
 	resultFilter := discovery.NewResultFilter(llm)
 	searcher, searchErr := discovery.NewBrave(env)
+	searchIDs := make(chan string, discovery.SearchQueue)
 
 	g, ctx := errgroup.WithContext(ctx)
 
@@ -78,7 +79,7 @@ func app(ctx context.Context) (err error) {
 			return nil
 		}
 
-		return discovery.RunSearch(ctx, &discoveryStore, searcher, resultFilter, llm.Schedule(), l.WithGroup("search"), calls)
+		return discovery.RunSearch(ctx, &discoveryStore, searchIDs, searcher, resultFilter, llm.Schedule(), l.WithGroup("search"), calls)
 	})
 
 	if err = g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
