@@ -13,6 +13,7 @@ type Tag struct {
 	Status    string    `json:"status"` // proposed | active
 	Type      string    `json:"type"`   // sentiment | quality etc
 	CreatedAt time.Time `json:"createdAt"`
+	Terms     []string  `json:"terms"` // In one language, loaded for Jev
 }
 
 type TagTerm struct {

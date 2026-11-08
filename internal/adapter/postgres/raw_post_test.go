@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -143,5 +144,83 @@ func TestRawPostContentRoundTrip(t *testing.T) {
 
 	if out.Content != base.Content || out.Title != "Rubrik" || len(out.Authors) != 2 || out.PostedAt == nil || !out.PostedAt.Equal(posted) || out.RetryCount != 0 {
 		t.Errorf("got %+v", out)
+	}
+}
+
+func TestGetRawPost(t *testing.T) {
+	_, s, base := rawPostDB(t)
+	p := create(t, s, base, "https://a.example/1", 1)
+
+	got, err := s.GetRawPost(context.Background(), p.ID)
+	if err != nil || got.URL != p.URL || got.Content != "c" {
+		t.Errorf("got %+v, %v", got, err)
+	}
+}
+
+func TestListUnenriched(t *testing.T) {
+	db, s, base := rawPostDB(t)
+	ctx := context.Background()
+
+	mk := func(url, status string, retries int, age string) string {
+		p := create(t, s, base, url, 1)
+		if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = $2, retry_count = $3, created_at = now() - $4::interval WHERE id = $1`, p.ID, status, retries, age); err != nil {
+			t.Fatal(err)
+		}
+		return p.ID
+	}
+
+	accepted := mk("https://a.example/accepted", domain.StatusAccepted, 0, "1 hour")
+	older := mk("https://a.example/older", domain.StatusAccepted, 0, "2 hours")
+	retried := mk("https://a.example/retried", domain.StatusFailed, 3, "3 hours")
+	mk("https://a.example/exhausted", domain.StatusFailed, 10, "3 hours")
+	mk("https://a.example/fresh", domain.StatusAccepted, 0, "1 minute")
+	mk("https://a.example/rejected", domain.StatusRejected, 0, "1 hour")
+	posted := mk("https://a.example/posted", domain.StatusAccepted, 0, "1 hour")
+
+	if _, err := db.Exec(ctx, `
+		INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content)
+		SELECT source_id, url, lang, domain_id, 't', 's', 'c' FROM raw_posts WHERE id = $1
+		`, posted); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, err := s.ListUnenriched(ctx, 20, 5*time.Minute, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{older, accepted, retried}; !slices.Equal(ids, want) {
+		t.Errorf("got %v, want %v", ids, want)
+	}
+}
+
+func TestListUnenrichedRetryCap(t *testing.T) {
+	db, s, base := rawPostDB(t)
+	ctx := context.Background()
+	p := create(t, s, base, "https://a.example/1", 1)
+
+	if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = 'failed', retry_count = 10, created_at = now() - interval '1 hour' WHERE id = $1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if ids, err := s.ListUnenriched(ctx, 20, 5*time.Minute, 10); err != nil || len(ids) != 0 {
+		t.Errorf("got %v, %v", ids, err)
+	}
+}
+
+func TestFailEnrich(t *testing.T) {
+	_, s, base := rawPostDB(t)
+	ctx := context.Background()
+	p := create(t, s, base, "https://a.example/1", 1)
+
+	for range 2 {
+		if err := s.FailEnrich(ctx, p.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.GetRawPost(ctx, p.ID)
+	if err != nil || got.Status != domain.StatusFailed || got.RetryCount != 2 {
+		t.Errorf("status %q, retries %d, %v", got.Status, got.RetryCount, err)
 	}
 }
