@@ -67,15 +67,10 @@ func app(ctx context.Context) (err error) {
 		return fmt.Errorf("err create llm: %w", err)
 	}
 
-	discoverer := discovery.NewDiscoverer(llm)
 	resultFilter := discovery.NewResultFilter(llm)
 	searcher, searchErr := discovery.NewBrave(env)
 
 	g, ctx := errgroup.WithContext(ctx)
-
-	g.Go(func() error {
-		return discovery.Run(ctx, &discoveryStore, discoverer, llm.Schedule(), l.WithGroup("discovery"), calls)
-	})
 
 	g.Go(func() error {
 		if searchErr != nil {

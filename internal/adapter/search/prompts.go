@@ -16,9 +16,14 @@ var prompts = template.Must(template.New("").
 
 // System prompts take no data, so they stay identical across calls and DeepSeek can cache them.
 var (
-	discoverySystem    = mustRender("discovery_system_prompt")
+	EventsSystemPrompt = mustRender("events_system_prompt")
 	searchFilterSystem = mustRender("search_filter_system_prompt")
 )
+
+// Step 2 asks for events in its own DeepSeek call, so it sends this beside the article.
+func EventsUserPrompt(keys []string) (string, error) {
+	return render("events_user_prompt", map[string]any{"Keys": keys[:min(len(keys), maxTagKeys)]})
+}
 
 func render(name string, data any) (string, error) {
 	var b strings.Builder
