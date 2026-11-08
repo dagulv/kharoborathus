@@ -27,7 +27,15 @@ CREATE TABLE IF NOT EXISTS tags (
   type TEXT NOT NULL DEFAULT 'quality', -- sentiment | quality etc
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- TODO: Correctly handle tag aliases here.
+
+-- An alias is never also a key in tags, so lookups take one hop.
+CREATE TABLE IF NOT EXISTS tag_aliases (
+  alias TEXT PRIMARY KEY,
+  key TEXT NOT NULL REFERENCES tags (key) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (alias <> key)
+);
+
 CREATE TABLE IF NOT EXISTS tag_terms (
   key TEXT NOT NULL REFERENCES tags (key) ON DELETE CASCADE,
   lang TEXT NOT NULL,
