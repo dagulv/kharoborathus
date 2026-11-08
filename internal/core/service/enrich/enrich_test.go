@@ -346,3 +346,24 @@ func TestEnrichPeakHours(t *testing.T) {
 		t.Errorf("status %q, retries %d", got.Status, got.RetryCount)
 	}
 }
+
+func TestEnrichProposalLimits(t *testing.T) {
+	f := setup(t)
+	f.llm.answer = answer{Summary: "s", Tags: []postgres.Proposal{
+		{Key: ""}, {Key: " - "}, {Key: "p1"}, {Key: "p2"}, {Key: "p3"}, {Key: "p4"}, {Key: "p5"}, {Key: "p6"},
+	}}
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if p, _ := f.post(t, raw.URL); !slices.Equal(p.Tags, []string{"acquisition", "p1", "p2", "p3", "p4", "p5"}) {
+		t.Errorf("tags %v", p.Tags)
+	}
+
+	var n int
+	if err := f.db.QueryRow(context.Background(), `SELECT count(*) FROM tags WHERE key IN ('', '_', 'p6')`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("bad proposals saved: %d, %v", n, err)
+	}
+}
