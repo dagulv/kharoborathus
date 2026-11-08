@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -276,5 +277,25 @@ func TestStoreSearch(t *testing.T) {
 
 	if n, err := s.SearchesLastDay(ctx); err != nil || n != 1 {
 		t.Errorf("searches after reject %d, %v", n, err)
+	}
+}
+
+func TestSearchHeldBackLogged(t *testing.T) {
+	cases := map[string]*fakeStore{
+		"pending results": {item: testItem(), pending: 200},
+		"daily budget":    {item: testItem(), used: 322},
+	}
+
+	for reason, s := range cases {
+		var buf bytes.Buffer
+		l := slog.New(slog.NewTextHandler(&buf, nil))
+
+		if err := searchQuery(context.Background(), s, "q", &fakeSearcher{}, NewResultFilter(&fakeLLM{}), schedule.Always, l, l); err != nil {
+			t.Fatal(err)
+		}
+
+		if !strings.Contains(buf.String(), "search held back") || !strings.Contains(buf.String(), reason) {
+			t.Errorf("%s: log %q", reason, buf.String())
+		}
 	}
 }
