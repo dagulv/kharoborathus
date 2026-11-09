@@ -3,7 +3,6 @@ package source
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -47,7 +46,7 @@ func Run(ctx context.Context, s *Service, fetchers map[string]Fetcher, l *slog.L
 		Next(workers, SetSimhash).
 		Next(workers, s.insert).
 		Next(workers, s.checkQuality).
-		WithSink(s.saveStatus).
+		WithSink(func(ctx context.Context, p domain.RawPost) error { return s.saveStatus(ctx, l, p) }).
 		Run(ctx, l, pipeline.Merge(ctx, posts...))
 }
 
@@ -85,16 +84,17 @@ func (s *Service) insert(ctx context.Context, _ *slog.Logger, p domain.RawPost) 
 	return out, err
 }
 
-// A dropped id is found again by enrich's catch-up job.
-func (s *Service) saveStatus(ctx context.Context, p domain.RawPost) error {
+// A dropped id is found again by enrich's catch-up job, so a full queue is not a failure.
+func (s *Service) saveStatus(ctx context.Context, l *slog.Logger, p domain.RawPost) error {
 	if err := s.RawPostStore.SetStatus(ctx, p.ID, p.Status); err != nil || p.Status != domain.StatusAccepted {
 		return err
 	}
 
 	select {
 	case s.Enriched <- p.ID:
-		return nil
 	default:
-		return fmt.Errorf("enrich queue full, dropped %s", p.ID)
+		l.Warn("enrich queue full", "raw_post", p.ID)
 	}
+
+	return nil
 }

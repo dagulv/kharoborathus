@@ -1,6 +1,7 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -181,12 +182,38 @@ func TestSaveStatusSendsAccepted(t *testing.T) {
 
 		p.Status = c.status
 
-		if err := s.saveStatus(ctx, p); err != nil {
+		if err := s.saveStatus(ctx, l, p); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	if len(enriched) != 1 {
 		t.Fatalf("sent %d ids", len(enriched))
+	}
+}
+
+func TestSaveStatusQueueFull(t *testing.T) {
+	s, base := qualityService(t, nil)
+	s.Enriched = make(chan string)
+	ctx := context.Background()
+
+	var logged bytes.Buffer
+	l := slog.New(slog.NewTextHandler(&logged, nil))
+
+	base.URL = "https://a.example/1"
+
+	p, err := s.insert(ctx, l, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p.Status = domain.StatusAccepted
+
+	if err := s.saveStatus(ctx, l, p); err != nil {
+		t.Errorf("err %v", err)
+	}
+
+	if !strings.Contains(logged.String(), "level=WARN") || !strings.Contains(logged.String(), "enrich queue full") {
+		t.Errorf("log %q", logged.String())
 	}
 }
