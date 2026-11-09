@@ -32,7 +32,7 @@ Step 2 of the event chain. Turns each accepted raw post into a post with a summa
 Rules:
 
 - Any error, from Jev, DeepSeek or the database, sets the raw post `failed` and adds one to `retry_count`. A closed schedule and shutdown do not count.
-- `failed` on a raw post always means enrich failed. Step 1's quality errors stay `pending`.
+- `failed` on a raw post always means enrich failed. Step 1's quality errors stay `pending`. Step 1 rechecks them every minute, up to 20 older than 5 minutes, and stops at the first error.
 - `posts.tags` holds active and proposed keys. The feed shows only enabled, active ones. Promotion counts support from proposed ones.
 
 ## Schema changes
