@@ -12,7 +12,6 @@ import type {
 	PostSummary,
 	Source,
 	SourceCheck,
-	Switch,
 	Tag,
 	TagAlias,
 	TagProposal
@@ -42,10 +41,10 @@ export const getStats = query(async () => {
 		SELECT
 			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL) AS sources,
 			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND enabled) AS enabled_sources,
-			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND flagged_at IS NOT NULL) AS flagged_sources,
+			(SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND status = 'flagged') AS flagged_sources,
 			(SELECT count(*)::int FROM posts) AS posts,
 			(SELECT count(*)::int FROM posts WHERE created_at > now() - interval '24 hours') AS posts_today,
-			(SELECT count(*)::int FROM discovery_events WHERE searched_at > now() - interval '24 hours' AND result_count IS NOT NULL) AS searches_today
+			(SELECT count(*)::int FROM discovery_search_queries WHERE searched_at > now() - interval '24 hours' AND result IS NOT NULL) AS searches_today
 	`;
 
 	return row;
@@ -54,7 +53,7 @@ export const getStats = query(async () => {
 export const getLinkQueue = query(async () => {
 	const sql = db();
 	const rows = await sql<{ status: string; count: number }[]>`
-		SELECT status, count(*)::int AS count FROM link_events GROUP BY status
+		SELECT status, count(*)::int AS count FROM discovery_posts GROUP BY status
 	`;
 
 	return Object.fromEntries(rows.map((r) => [r.status, r.count])) as Record<string, number>;
@@ -65,7 +64,6 @@ export const listSources = query(
 	async ({ includeDeleted }) => {
 		const sql = db();
 
-		// gate_rate mirrors the window in tagging.Store.FlagSources in the Go app
 		return sql<Source[]>`
 			SELECT
 				s.id,
@@ -75,16 +73,12 @@ export const listSources = query(
 				s.url,
 				s.enabled,
 				s.status,
-				s.origin,
 				s.rate,
-				s.target_tags,
 				s.metadata,
 				s.created_at,
 				s.deleted_at,
 				coalesce(p.post_count, 0)::int AS post_count,
-				p.last_posted_at,
-				s.flagged_at,
-				g.gate_rate
+				p.last_posted_at
 			FROM sources s
 			JOIN domains d ON d.id = s.domain_id
 			LEFT JOIN (
@@ -92,19 +86,6 @@ export const listSources = query(
 				FROM posts
 				GROUP BY source_id
 			) p ON p.source_id = s.id
-			LEFT JOIN LATERAL (
-				SELECT avg(r.gate_passed::int)::real AS gate_rate
-				FROM (
-					SELECT c.gate_passed
-					FROM tag_checked c
-					JOIN posts po ON po.id = c.post_id
-					WHERE po.source_id = s.id
-						AND c.gate_passed IS NOT NULL
-						AND c.checked_at > coalesce(s.reviewed_at, '-infinity')
-					ORDER BY c.checked_at DESC
-					LIMIT 50
-				) r
-			) g ON true
 			${includeDeleted ? sql`` : sql`WHERE s.deleted_at IS NULL`}
 			ORDER BY s.created_at DESC
 		`;
@@ -125,7 +106,7 @@ export const listPosts = query(
 		if (sourceId) conds.push(sql`p.source_id = ${sourceId}`);
 		if (tag) conds.push(sql`p.tags @> ARRAY[${tag}]::text[]`);
 
-		// Mirrors feed.Store.ListPosts search in the Go app
+		// Mirrors PostStore.ListPosts search in the Go app
 		if (search) {
 			conds.push(sql`(
 				(p.lang = 'sv' AND p.ts @@ websearch_to_tsquery('ts_swedish', ${search}))
@@ -222,20 +203,10 @@ export const createSource = form(
 			v.number('Rate must be a number'),
 			v.integer(),
 			v.minValue(1, 'Rate must be at least 1')
-		),
-		targetTags: v.optional(v.pipe(v.string(), v.maxLength(1000)), '')
+		)
 	}),
-	async ({ url, listing, rate, targetTags }, issue) => {
+	async ({ url, listing, rate }, issue) => {
 		const [adapter, listingURL] = listing.split(' ');
-
-		const tags = [
-			...new Set(
-				targetTags
-					.split(',')
-					.map((t) => t.trim())
-					.filter(Boolean)
-			)
-		];
 
 		const sql = db();
 		const [existing] =
@@ -251,8 +222,8 @@ export const createSource = form(
 			`;
 
 			await tx`
-				INSERT INTO sources (domain_id, adapter, url, enabled, rate, target_tags)
-				VALUES (${domain.id}, ${adapter}, ${listingURL}, true, ${rate}, ${tags}::text[])
+				INSERT INTO sources (domain_id, adapter, url, enabled, rate)
+				VALUES (${domain.id}, ${adapter}, ${listingURL}, true, ${rate})
 			`;
 		});
 
@@ -284,9 +255,7 @@ export const listTags = query(async () => {
 			t.key,
 			t.enabled,
 			t.status,
-			t.gate,
-			t.match_rate,
-			t.last_matched_at,
+			t.type,
 			t.created_at,
 			coalesce(array_agg(tt.lang || ': ' || tt.term ORDER BY tt.lang, tt.term) FILTER (WHERE tt.term IS NOT NULL), '{}') AS terms,
 			(SELECT count(*)::int FROM posts p WHERE p.tags @> ARRAY[t.key]) AS post_count
@@ -297,20 +266,23 @@ export const listTags = query(async () => {
 	`;
 });
 
+// Proposed tags live in tags, and their support in posts.tags, which is what promotion counts.
 export const listProposals = query(async () => {
 	const sql = db();
 
 	return sql<TagProposal[]>`
 		SELECT
-			p.key,
-			array_agg(DISTINCT p.term) AS terms,
-			count(DISTINCT p.post_id)::int AS post_count,
-			count(DISTINCT po.domain_id)::int AS domain_count,
-			max(p.created_at) AS last_proposed_at
-		FROM tag_proposals p
-		JOIN posts po ON po.id = p.post_id
-		GROUP BY p.key
-		ORDER BY post_count DESC, p.key
+			t.key,
+			coalesce(array_agg(DISTINCT tt.lang || ': ' || tt.term) FILTER (WHERE tt.term IS NOT NULL), '{}') AS terms,
+			count(DISTINCT p.id)::int AS post_count,
+			count(DISTINCT p.domain_id)::int AS domain_count,
+			coalesce(max(p.created_at), t.created_at) AS last_proposed_at
+		FROM tags t
+		LEFT JOIN tag_terms tt ON tt.key = t.key
+		LEFT JOIN posts p ON p.tags @> ARRAY[t.key]
+		WHERE t.status = 'proposed' AND t.enabled
+		GROUP BY t.key
+		ORDER BY post_count DESC, t.key
 	`;
 });
 
@@ -348,11 +320,6 @@ export const mergeTag = command(v.object({ from: tagKey, to: tagKey }), async ({
 			SET tags = ARRAY(SELECT DISTINCT unnest(array_replace(tags, ${from}, ${to})))
 			WHERE tags @> ARRAY[${from}]::text[]
 		`;
-		await tx`
-			UPDATE sources
-			SET target_tags = ARRAY(SELECT DISTINCT unnest(array_replace(target_tags, ${from}, ${to})))
-			WHERE target_tags @> ARRAY[${from}]::text[]
-		`;
 		await tx`UPDATE tag_aliases SET key = ${to} WHERE key = ${from}`;
 		await tx`
 			INSERT INTO tag_aliases (alias, key) VALUES (${from}, ${to})
@@ -364,88 +331,19 @@ export const mergeTag = command(v.object({ from: tagKey, to: tagKey }), async ({
 	await Promise.all([listTags().refresh(), listAliases().refresh()]);
 });
 
+// Keeping a flagged source makes it active again. Disabling it stops it being fetched.
 export const reviewSource = command(
-	v.object({ id: uuid, enabled: v.boolean(), targetTags: v.array(tagKey) }),
-	async ({ id, enabled, targetTags }) => {
+	v.object({ id: uuid, enabled: v.boolean() }),
+	async ({ id, enabled }) => {
 		const sql = db();
 		const [source] = await sql`
 			UPDATE sources
-			SET enabled = ${enabled}, target_tags = ${targetTags}::text[], flagged_at = NULL, reviewed_at = now()
+			SET enabled = ${enabled}, status = 'active'
 			WHERE id = ${id} AND deleted_at IS NULL
 			RETURNING 1
 		`;
 
 		if (!source) error(404, 'Source not found');
-	}
-);
-
-// Readiness per key mirrors the switch table in docs/kb/rollout.md
-// source_promotion thresholds mirror internal/service/source/lifecycle.go
-export const listSwitches = query(async () => {
-	const sql = db();
-
-	return sql<Switch[]>`
-		SELECT
-			s.key,
-			s.enabled,
-			s.updated_at,
-			CASE s.key
-				WHEN 'shadow_gate' THEN (
-					SELECT count(*) FROM tags WHERE enabled AND status = 'active' AND gate
-				) || ' gate tags'
-				WHEN 'discovered_ingest' THEN (
-					SELECT count(*) || ' gate-checked posts, '
-						|| coalesce(round(avg(gate_passed::int) * 100) || '% pass', 'no pass rate') || ', '
-						|| (SELECT count(*) FROM sources WHERE deleted_at IS NULL AND flagged_at IS NOT NULL) || ' flagged sources'
-					FROM tag_checked
-					WHERE gate_passed IS NOT NULL
-				)
-				WHEN 'search_discovery' THEN (
-					SELECT coalesce(round(avg((status = 'accepted')::int) * 100) || '% accepted', 'no acceptance rate')
-						|| ' of ' || count(*) || ' gate decisions in 7 days'
-					FROM link_events
-					WHERE status IN ('accepted', 'rejected') AND checked_at > now() - interval '7 days'
-				)
-				WHEN 'source_promotion' THEN (
-					SELECT coalesce(extract(day FROM now() - min(created_at))::int, 0) || ' days of link queue history, '
-						|| (
-							SELECT count(*)
-							FROM sources s
-							JOIN domains d ON d.id = s.domain_id
-							JOIN LATERAL (
-								SELECT
-									count(*) FILTER (WHERE q.status = 'accepted') AS accepted,
-									count(DISTINCT q.created_at::date) FILTER (WHERE q.status = 'accepted') AS days,
-									count(*) FILTER (WHERE q.status IN ('accepted', 'rejected')) AS decided
-								FROM link_events q
-								JOIN domains qd ON qd.id = q.domain_id
-								WHERE split_part(qd.base_url, '://', 2) = split_part(d.base_url, '://', 2)
-									AND q.checked_at >= CASE WHEN s.promoted_at IS NULL THEN '-infinity' ELSE s.status_changed_at END
-							) e ON true
-							WHERE s.status = 'proposed' AND s.enabled AND s.deleted_at IS NULL
-								AND e.accepted >= 5 AND e.days >= 3 AND e.accepted >= 0.6 * e.decided
-						) || ' proposed sources qualify'
-					FROM link_events
-				)
-			END AS readiness
-		FROM switches s
-		ORDER BY s.key
-	`;
-});
-
-export const setSwitch = command(
-	v.object({ key: v.pipe(v.string(), v.nonEmpty(), v.maxLength(40)), enabled: v.boolean() }),
-	async ({ key, enabled }) => {
-		const sql = db();
-		const [row] = await sql`
-			UPDATE switches SET enabled = ${enabled}, updated_at = now()
-			WHERE key = ${key}
-			RETURNING 1
-		`;
-
-		if (!row) error(404, `Unknown switch ${key}`);
-
-		await listSwitches().refresh();
 	}
 );
 

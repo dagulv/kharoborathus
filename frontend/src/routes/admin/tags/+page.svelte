@@ -6,7 +6,6 @@
 	const aliases = $derived(await listAliases());
 
 	const fmt = new Intl.DateTimeFormat('sv-SE', { dateStyle: 'short' });
-	const pct = new Intl.NumberFormat('sv-SE', { style: 'percent', maximumFractionDigits: 1 });
 
 	let from = $state('');
 	let to = $state('');
@@ -67,10 +66,8 @@
 				<th class="px-3 py-2 font-medium">Key</th>
 				<th class="px-3 py-2 font-medium">Terms</th>
 				<th class="px-3 py-2 font-medium">Status</th>
-				<th class="px-3 py-2 font-medium">Gate</th>
-				<th class="px-3 py-2 text-right font-medium">Match rate</th>
+				<th class="px-3 py-2 font-medium">Type</th>
 				<th class="px-3 py-2 text-right font-medium">Posts</th>
-				<th class="px-3 py-2 font-medium">Last match</th>
 				<th class="px-3 py-2 font-medium">Enabled</th>
 			</tr>
 		</thead>
@@ -78,16 +75,14 @@
 			{#each tags as tag (tag.key)}
 				<tr class={['border-b border-zinc-100 last:border-0', !tag.enabled && 'opacity-50']}>
 					<td class="px-3 py-2">
-						<a class="hover:underline" href="/admin/posts?tag={encodeURIComponent(tag.key)}">{tag.key}</a>
+						<a class="hover:underline" href="/admin/posts?tag={encodeURIComponent(tag.key)}"
+							>{tag.key}</a
+						>
 					</td>
 					<td class="px-3 py-2 text-xs text-zinc-500">{tag.terms.join(', ')}</td>
 					<td class="px-3 py-2">{tag.status}</td>
-					<td class="px-3 py-2">{tag.gate ? 'yes' : 'no'}</td>
-					<td class="px-3 py-2 text-right tabular-nums">
-						{tag.matchRate === null ? '' : pct.format(tag.matchRate)}
-					</td>
+					<td class="px-3 py-2">{tag.type}</td>
 					<td class="px-3 py-2 text-right tabular-nums">{tag.postCount}</td>
-					<td class="px-3 py-2">{tag.lastMatchedAt ? fmt.format(tag.lastMatchedAt) : ''}</td>
 					<td class="px-3 py-2">
 						<input
 							type="checkbox"
@@ -101,7 +96,9 @@
 	</table>
 </div>
 
-<h2 class="mt-8 mb-2 font-semibold">Proposals <span class="text-zinc-400">({proposals.length})</span></h2>
+<h2 class="mt-8 mb-2 font-semibold">
+	Proposals <span class="text-zinc-400">({proposals.length})</span>
+</h2>
 
 <div class="overflow-x-auto rounded border border-zinc-200 bg-white">
 	<table class="w-full text-left text-sm">
@@ -128,7 +125,9 @@
 	</table>
 </div>
 
-<h2 class="mt-8 mb-2 font-semibold">Aliases <span class="text-zinc-400">({aliases.length})</span></h2>
+<h2 class="mt-8 mb-2 font-semibold">
+	Aliases <span class="text-zinc-400">({aliases.length})</span>
+</h2>
 
 <ul class="text-sm">
 	{#each aliases as alias (alias.alias)}

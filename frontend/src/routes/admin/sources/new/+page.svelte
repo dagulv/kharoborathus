@@ -2,7 +2,7 @@
 	import { checkSource, createSource } from '../../admin.remote';
 	import type { ListingCandidate, SourceCheck } from '#lib/types.js';
 
-	const { url, listing, rate, targetTags } = createSource.fields;
+	const { url, listing, rate } = createSource.fields;
 
 	let candidates = $state<ListingCandidate[] | null>(null);
 	let wordpress = $state<SourceCheck['wordpress']>();
@@ -118,16 +118,6 @@
 		{#each rate.issues() ?? [] as issue (issue.message)}
 			<span class="mt-1 block text-sm text-red-600">{issue.message}</span>
 		{/each}
-	</label>
-
-	<label class="block">
-		<span class="text-sm font-medium">Target tags</span>
-		<input
-			{...targetTags.as('text')}
-			placeholder="finance, banking"
-			class="mt-1 w-full rounded border border-zinc-300 px-2 py-1.5 text-sm"
-		/>
-		<span class="mt-1 block text-xs text-zinc-500">Comma separated</span>
 	</label>
 
 	{#each createSource.fields.issues() ?? [] as issue (issue.message)}
