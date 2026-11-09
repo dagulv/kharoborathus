@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
@@ -122,7 +123,7 @@ func TestListPosts(t *testing.T) {
 		t.Fatalf("ids %v", ids)
 	}
 
-	if !slices.Equal(posts[1].Tags, []string{"acquisition"}) || posts[1].Title != volvo.Title || posts[1].Content != "c" {
+	if !slices.Equal(posts[1].Tags, []string{"acquisition"}) || posts[1].Title != volvo.Title || posts[1].Content != "" {
 		t.Errorf("volvo %+v", posts[1])
 	}
 
@@ -151,7 +152,7 @@ func TestGetPost(t *testing.T) {
 	ctx := context.Background()
 
 	got, err := s.GetPost(ctx, volvo.ID)
-	if err != nil || got.ID != volvo.ID || !slices.Equal(got.Tags, []string{"acquisition"}) {
+	if err != nil || got.ID != volvo.ID || got.Content != "c" || !slices.Equal(got.Tags, []string{"acquisition"}) {
 		t.Errorf("got %+v, %v", got, err)
 	}
 
@@ -208,5 +209,31 @@ func TestListPostsAfterInvalid(t *testing.T) {
 				t.Errorf("%s: err %v", name, err)
 			}
 		}
+	}
+}
+
+func TestListPostsTagFilterUsesIndex(t *testing.T) {
+	db, _, _, _ := postsDB(t)
+	ctx := context.Background()
+
+	if _, err := db.Exec(ctx, `SET enable_seqscan = off`); err != nil {
+		t.Fatal(err)
+	}
+
+	var rows []string
+	r, err := db.Query(ctx, `EXPLAIN `+listPostsQuery+` WHERE `+tagFilter(1)+` ORDER BY `+feedOrder+` LIMIT 30`, []string{"acquisition"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for r.Next() {
+		var line string
+		if err := r.Scan(&line); err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, line)
+	}
+
+	if !slices.ContainsFunc(rows, func(l string) bool { return strings.Contains(l, "posts_tags_idx") }) {
+		t.Errorf("plan does not use posts_tags_idx:\n%s", strings.Join(rows, "\n"))
 	}
 }

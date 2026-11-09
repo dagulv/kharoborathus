@@ -60,9 +60,15 @@ func (s *PostStore) Trusted(ctx context.Context, sourceID string) (trusted bool,
 
 const invalidTextRepresentation = "22P02"
 
+// Postgres rejects a malformed uuid this way, which callers treat as an id that names nothing.
+func isInvalidText(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == invalidTextRepresentation
+}
+
 // Only enabled, active tag keys are public. Proposed keys stay on the row for promotion to count.
-const listPostsQuery = `
-	SELECT p.id, p.source_id, p.domain_id, d.base_url, p.url, p.lang, p.title, p.short_content, p.content, v.tags, p.authors, p.posted_at, p.created_at
+const postsQuery = `
+	SELECT p.id, p.source_id, p.domain_id, d.base_url, p.url, p.lang, p.title, p.short_content, %s, v.tags, p.authors, p.posted_at, p.created_at
 	FROM posts p
 	JOIN domains d ON d.id = p.domain_id
 	CROSS JOIN LATERAL (
@@ -70,6 +76,17 @@ const listPostsQuery = `
 		FROM unnest(p.tags) WITH ORDINALITY AS u (key, ord)
 		WHERE EXISTS (SELECT 1 FROM tags t WHERE t.key = u.key AND t.enabled AND t.status = 'active')
 	) v`
+
+// Lists leave the article out. Only a single post carries it.
+var (
+	listPostsQuery = fmt.Sprintf(postsQuery, "''")
+	getPostQuery   = fmt.Sprintf(postsQuery, "p.content")
+)
+
+// p.tags is indexed and v.tags is not, so both narrow a tag filter.
+func tagFilter(arg int) string {
+	return fmt.Sprintf(`p.tags @> $%[1]d::text[] AND v.tags @> $%[1]d::text[]`, arg)
+}
 
 // Newest publication first by default, with created_at for posts whose date is unknown.
 const feedOrder = `coalesce(p.posted_at, p.created_at) DESC, p.id DESC`
@@ -102,7 +119,7 @@ func (s *PostStore) ListPosts(ctx context.Context, filter domain.PostFilter) ite
 
 		if len(filter.Tags) > 0 {
 			args = append(args, filter.Tags)
-			conds = append(conds, fmt.Sprintf(`v.tags @> $%d::text[]`, len(args)))
+			conds = append(conds, tagFilter(len(args)))
 		}
 
 		if filter.Search != "" {
@@ -157,9 +174,7 @@ func (s *PostStore) checkCursor(ctx context.Context, after string) error {
 	var exists bool
 
 	err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM posts WHERE id = $1)`, after).Scan(&exists)
-
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == invalidTextRepresentation {
+	if isInvalidText(err) {
 		return fmt.Errorf("after %q is not a post id: %w", after, domain.ErrInvalidFilter)
 	}
 
@@ -176,10 +191,8 @@ func (s *PostStore) checkCursor(ctx context.Context, after string) error {
 
 // An id that is not a uuid is reported as not found.
 func (s *PostStore) GetPost(ctx context.Context, id string) (domain.Post, error) {
-	p, err := scanPost(s.db.QueryRow(ctx, listPostsQuery+` WHERE p.id = $1`, id))
-
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == invalidTextRepresentation {
+	p, err := scanPost(s.db.QueryRow(ctx, getPostQuery+` WHERE p.id = $1`, id))
+	if isInvalidText(err) {
 		err = pgx.ErrNoRows
 	}
 

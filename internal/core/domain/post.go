@@ -42,8 +42,8 @@ type Post struct {
 	DomainID     string     `json:"domainId"` // Used for icon/brand and link, resolved from url
 	DomainURL    string     `json:"domainUrl"`
 	Title        string     `json:"title"`
-	ShortContent string     `json:"shortContent"` // Plain text short content, llm summary of content
-	Content      string     `json:"content"`      // Markdown content
+	ShortContent string     `json:"shortContent"`      // Plain text short content, llm summary of content
+	Content      string     `json:"content,omitempty"` // Markdown content, left out of lists
 	Tags         []string   `json:"tags"`
 	PostedAt     *time.Time `json:"postedAt"`
 	Authors      []string   `json:"authors"`
