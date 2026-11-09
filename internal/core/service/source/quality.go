@@ -38,7 +38,7 @@ func isArticle(ctx context.Context, c port.Classifier, l *slog.Logger, title, ma
 	return scores["article"] >= articleThreshold, nil
 }
 
-// A failed check leaves the post pending for a later retry. An error never rejects a post.
+// A failed check leaves the post pending for retryPending. An error never rejects a post.
 func (s *Service) checkQuality(ctx context.Context, l *slog.Logger, p domain.RawPost) (domain.RawPost, error) {
 	duplicate, err := s.RawPostStore.HasDuplicate(ctx, p)
 	if err != nil {

@@ -157,6 +157,38 @@ func TestGetRawPost(t *testing.T) {
 	}
 }
 
+func TestListPending(t *testing.T) {
+	db, s, base := rawPostDB(t)
+	ctx := context.Background()
+
+	mk := func(url, status, age string) string {
+		p := create(t, s, base, url, 1)
+		if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = $2, created_at = now() - $3::interval WHERE id = $1`, p.ID, status, age); err != nil {
+			t.Fatal(err)
+		}
+		return p.ID
+	}
+
+	pending := mk("https://a.example/pending", domain.StatusPending, "1 hour")
+	older := mk("https://a.example/older", domain.StatusPending, "2 hours")
+	mk("https://a.example/fresh", domain.StatusPending, "1 minute")
+	mk("https://a.example/accepted", domain.StatusAccepted, "1 hour")
+
+	posts, err := s.ListPending(ctx, 20, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ids := make([]string, len(posts))
+	for i, p := range posts {
+		ids[i] = p.ID
+	}
+
+	if want := []string{older, pending}; !slices.Equal(ids, want) || posts[0].Content != "c" {
+		t.Errorf("got %v, want %v", ids, want)
+	}
+}
+
 func TestListUnenriched(t *testing.T) {
 	db, s, base := rawPostDB(t)
 	ctx := context.Background()
