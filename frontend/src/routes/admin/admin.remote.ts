@@ -203,9 +203,10 @@ export const createSource = form(
 			v.number('Rate must be a number'),
 			v.integer(),
 			v.minValue(1, 'Rate must be at least 1')
-		)
+		),
+		lang: v.picklist(['', 'sv', 'en'])
 	}),
-	async ({ url, listing, rate }, issue) => {
+	async ({ url, listing, rate, lang }, issue) => {
 		const [adapter, listingURL] = listing.split(' ');
 
 		const sql = db();
@@ -222,8 +223,8 @@ export const createSource = form(
 			`;
 
 			await tx`
-				INSERT INTO sources (domain_id, adapter, url, enabled, rate)
-				VALUES (${domain.id}, ${adapter}, ${listingURL}, true, ${rate})
+				INSERT INTO sources (domain_id, adapter, url, enabled, rate, lang)
+				VALUES (${domain.id}, ${adapter}, ${listingURL}, true, ${rate}, ${lang})
 			`;
 		});
 

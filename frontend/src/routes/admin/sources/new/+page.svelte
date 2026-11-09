@@ -2,7 +2,7 @@
 	import { checkSource, createSource } from '../../admin.remote';
 	import type { ListingCandidate, SourceCheck } from '#lib/types.js';
 
-	const { url, listing, rate } = createSource.fields;
+	const { url, listing, rate, lang } = createSource.fields;
 
 	let candidates = $state<ListingCandidate[] | null>(null);
 	let wordpress = $state<SourceCheck['wordpress']>();
@@ -116,6 +116,22 @@
 			class="mt-1 w-32 rounded border border-zinc-300 px-2 py-1.5 text-sm aria-invalid:border-red-500"
 		/>
 		{#each rate.issues() ?? [] as issue (issue.message)}
+			<span class="mt-1 block text-sm text-red-600">{issue.message}</span>
+		{/each}
+	</label>
+
+	<label class="block">
+		<span class="text-sm font-medium">Language</span>
+		<select
+			{...lang.as('select')}
+			class="mt-1 block rounded border border-zinc-300 px-2 py-1.5 text-sm aria-invalid:border-red-500"
+		>
+			<option value="">Unknown</option>
+			<option value="sv">Swedish</option>
+			<option value="en">English</option>
+		</select>
+		<span class="mt-1 block text-xs text-zinc-500">Used when a post declares no language.</span>
+		{#each lang.issues() ?? [] as issue (issue.message)}
 			<span class="mt-1 block text-sm text-red-600">{issue.message}</span>
 		{/each}
 	</label>
