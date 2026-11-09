@@ -20,6 +20,7 @@ type Source struct {
 	URL       string            `json:"url"`
 	Enabled   bool              `json:"enabled"`
 	Rate      int               `json:"rate"`
+	Lang      string            `json:"lang"`
 	Metadata  map[string]string `json:"metadata"` // maybe needed for rare occurrences (like login, disclaimers, etc)
 	Status    string            `json:"status"`   // proposed | active | flagged
 	CreatedAt time.Time         `json:"createdAt"`

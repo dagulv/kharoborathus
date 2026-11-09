@@ -48,7 +48,12 @@ func (f fakeFetcher) FetchPost(_ context.Context, l *slog.Logger, data string) (
 }
 
 func (f fakeFetcher) ProcessFeed(_ context.Context, data string) (domain.RawPost, error) {
-	return domain.RawPost{URL: data}, nil
+	p := domain.RawPost{URL: data}
+	if strings.HasSuffix(data, "/en") {
+		p.Lang = "en-GB"
+	}
+
+	return p, nil
 }
 
 func TestFetcherPlugin(t *testing.T) {
@@ -82,5 +87,28 @@ func TestFetcherPlugin(t *testing.T) {
 		if !strings.Contains(calls.String(), s) {
 			t.Errorf("calls log misses %s: %s", s, calls.String())
 		}
+	}
+}
+
+func TestFetcherSourceLang(t *testing.T) {
+	f := NewFetcher(fakeFetcher{feeds: map[string][]string{
+		"https://a.example/feed": {"https://a.example/1", "https://a.example/en"},
+	}}, slog.New(slog.DiscardHandler))
+
+	in := make(chan domain.Source, 1)
+	in <- domain.Source{ID: "a", URL: "https://a.example/feed", Lang: "sv"}
+	close(in)
+
+	ctx := context.Background()
+
+	var got []string
+	for p := range f.Plugin(ctx).Stream(ctx, slog.New(slog.DiscardHandler), in) {
+		got = append(got, p.URL+" "+p.Lang)
+	}
+
+	slices.Sort(got)
+
+	if want := []string{"https://a.example/1 sv", "https://a.example/en en"}; !slices.Equal(got, want) {
+		t.Errorf("got %v", got)
 	}
 }

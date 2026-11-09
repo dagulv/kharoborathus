@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS sources (
   url TEXT NOT NULL,
   enabled BOOLEAN NOT NULL DEFAULT false,
   rate INT NOT NULL DEFAULT 15,
+  lang TEXT NOT NULL DEFAULT '', -- for posts whose page or feed gives none
   metadata JSONB NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'active', -- proposed | active | flagged
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

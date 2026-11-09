@@ -80,9 +80,8 @@ func (p fetcher[T]) fetchFeed(ctx context.Context, l *slog.Logger, f fetched[T])
 
 	parsed.SourceID = f.source.ID
 	parsed.Lang = normalizeLang(parsed.Lang)
-
 	if parsed.Lang == "" {
-		// parsed.Lang = f.source
+		parsed.Lang = f.source.Lang
 	}
 
 	return parsed, nil
