@@ -19,7 +19,7 @@ type Store interface {
 	GetPost(ctx context.Context, id string) (domain.Post, error)
 }
 
-// Served on the public port, the only one the proxy publishes.
+// The public API. Admin routes share the server under /admin/, behind a session.
 func Routes(mux *http.ServeMux, s Store, l *slog.Logger) {
 	mux.HandleFunc("GET /posts", listPosts(s, l))
 	mux.HandleFunc("GET /posts/{id}", getPost(s, l))
