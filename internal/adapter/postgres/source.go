@@ -19,6 +19,7 @@ const sourceColumns = `
 	enabled,
 	status,
 	rate,
+	lang,
 	metadata,
 	created_at`
 
@@ -102,6 +103,7 @@ func scanSource(row pgx.Row) (source domain.Source, err error) {
 		&source.Enabled,
 		&source.Status,
 		&source.Rate,
+		&source.Lang,
 		&source.Metadata,
 		&source.CreatedAt,
 	)
