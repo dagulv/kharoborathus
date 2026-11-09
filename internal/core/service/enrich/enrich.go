@@ -31,6 +31,8 @@ type Service struct {
 	// Nil when Jev is not configured. Posts then get proposed keys only.
 	Classifier port.Classifier
 	SearchIDs  chan<- string
+
+	tags tagCache
 }
 
 type answer struct {
@@ -87,10 +89,12 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 
 	l = l.With("raw_post_id", p.ID, "url", p.URL)
 
-	active, err := s.Tags.ActiveTags(ctx, p.Lang)
+	set, err := s.tags.get(ctx, p.Lang, s.loadTags)
 	if err != nil {
 		return nil, err
 	}
+
+	active := set.active
 
 	var tags []string
 
@@ -101,11 +105,6 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		}
 	}
 
-	keys, err := s.Tags.TagKeys(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	var quality []string
 
 	for _, t := range active {
@@ -114,7 +113,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		}
 	}
 
-	prompt, err := userPrompt(p.Lang, keys, quality, p.Content)
+	prompt, err := userPrompt(p.Lang, set.keys, quality, p.Content)
 	if err != nil {
 		return nil, err
 	}
@@ -192,4 +191,18 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 	}
 
 	return queryIDs, nil
+}
+
+func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
+	active, err := s.Tags.ActiveTags(ctx, lang)
+	if err != nil {
+		return tagSet{}, err
+	}
+
+	keys, err := s.Tags.TagKeys(ctx)
+	if err != nil {
+		return tagSet{}, err
+	}
+
+	return tagSet{keys: keys, active: active}, nil
 }
