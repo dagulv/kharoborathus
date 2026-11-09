@@ -23,8 +23,11 @@ func NewStore(db *database.Database) Store {
 
 // The earliest linked post sets the search language and the own host for kept URLs.
 func (s *Store) GetQuery(ctx context.Context, id string) (i SearchItem, err error) {
+	var results []byte
+
 	if err = s.db.QueryRow(ctx, `
-		SELECT q.id, q.normalized_entity, q.action, q.query, q.searched_at, p.lang, p.id, d.base_url
+		SELECT q.id, q.normalized_entity, q.action, q.query, q.searched_at, p.lang, p.id, d.base_url,
+			q.result->'results', q.searched_at IS NOT NULL AND (q.result IS NULL OR q.result ? 'kept')
 		FROM discovery_search_queries q
 		CROSS JOIN LATERAL (
 			SELECT p.id, p.lang, p.domain_id
@@ -36,11 +39,48 @@ func (s *Store) GetQuery(ctx context.Context, id string) (i SearchItem, err erro
 		) p
 		JOIN domains d ON d.id = p.domain_id
 		WHERE q.id = $1
-		`, id).Scan(&i.ID, &i.Entity, &i.Action, &i.Query, &i.SearchedAt, &i.Lang, &i.FromPostID, &i.BaseURL); err != nil {
+		`, id).Scan(&i.ID, &i.Entity, &i.Action, &i.Query, &i.SearchedAt, &i.Lang, &i.FromPostID, &i.BaseURL, &results, &i.Done); err != nil {
 		return SearchItem{}, fmt.Errorf("err get search query: %w", err)
 	}
 
+	if results == nil {
+		return i, nil
+	}
+
+	var stored []storedResult
+	if err = json.Unmarshal(results, &stored); err != nil {
+		return SearchItem{}, fmt.Errorf("err unmarshal results %s: %w", id, err)
+	}
+
+	i.Results = make([]SearchResult, len(stored))
+	for j, r := range stored {
+		i.Results[j] = r.SearchResult
+		i.Results[j].URL = r.URL
+	}
+
 	return i, nil
+}
+
+// Paid results waiting for the filter go first. A query whose posts are all gone cannot be searched.
+func (s *Store) ListUnfinished(ctx context.Context, windowDays, limit int) ([]string, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT q.id FROM discovery_search_queries q
+		WHERE (q.searched_at IS NULL OR (q.result IS NOT NULL AND NOT q.result ? 'kept'))
+			AND q.created_at > now() - make_interval(days => $1)
+			AND EXISTS (SELECT 1 FROM discovery_search_query_posts qp WHERE qp.query_id = q.id)
+		ORDER BY q.searched_at IS NULL, q.created_at DESC
+		LIMIT $2
+		`, windowDays, limit)
+	if err != nil {
+		return nil, fmt.Errorf("err query unfinished searches: %w", err)
+	}
+
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("err scan unfinished searches: %w", err)
+	}
+
+	return ids, nil
 }
 
 func (s *Store) PendingResults(ctx context.Context, windowDays int) (n int, err error) {

@@ -18,10 +18,12 @@ const (
 	dailySearchBudget = 322
 	// One day of ingest at its daily cap. More would age out before it is fetched.
 	maxPendingResults = 200
+	catchUpBatch      = 10
 )
 
 type searchStore interface {
 	GetQuery(ctx context.Context, id string) (SearchItem, error)
+	ListUnfinished(ctx context.Context, windowDays, limit int) ([]string, error)
 	PendingResults(ctx context.Context, windowDays int) (int, error)
 	SearchesLastDay(ctx context.Context) (int, error)
 	MarkRejected(ctx context.Context, id string) error
@@ -29,7 +31,7 @@ type searchStore interface {
 	SaveKept(ctx context.Context, item SearchItem, kept []int, urls []string) error
 }
 
-// A dropped id keeps searched_at NULL, so a catch-up job can find it.
+// A dropped id keeps searched_at NULL, so catchUp finds it.
 func Enqueue(ids chan<- string, l *slog.Logger, id string) bool {
 	select {
 	case ids <- id:
@@ -42,11 +44,17 @@ func Enqueue(ids chan<- string, l *slog.Logger, id string) bool {
 
 // One query at a time, so the budget and pending checks cannot race.
 func RunSearch(ctx context.Context, s searchStore, ids <-chan string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
+	tick := sched.Tick(ctx, time.Minute)
+
 	for {
 		select {
 		case id := <-ids:
 			if err := searchQuery(ctx, s, id, se, f, sched, l, calls); err != nil {
 				l.Error("search query", "query", id, "err", err)
+			}
+		case <-tick:
+			if err := catchUp(ctx, s, se, f, sched, l, calls); err != nil && ctx.Err() == nil {
+				l.Error("search catch up", "err", err)
 			}
 		case <-ctx.Done():
 			return ctx.Err()
@@ -54,52 +62,38 @@ func RunSearch(ctx context.Context, s searchStore, ids <-chan string, se Searche
 	}
 }
 
+// Stops at the first error, so an outage costs one call a tick instead of a whole batch.
+func catchUp(ctx context.Context, s searchStore, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
+	ids, err := s.ListUnfinished(ctx, dedupeWindow, catchUpBatch)
+	if err != nil {
+		return err
+	}
+
+	for _, id := range ids {
+		if err := searchQuery(ctx, s, id, se, f, sched, l, calls); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func searchQuery(ctx context.Context, s searchStore, id string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
 	item, err := s.GetQuery(ctx, id)
-	if err != nil || item.SearchedAt != nil {
+	if err != nil || item.Done {
 		return err
-	}
-
-	pending, err := s.PendingResults(ctx, dedupeWindow)
-	if err != nil {
-		return err
-	}
-
-	if pending >= maxPendingResults {
-		l.Info("search held back", "query", id, "reason", "pending results", "pending", pending)
-		return nil
-	}
-
-	used, err := s.SearchesLastDay(ctx)
-	if err != nil {
-		return err
-	}
-
-	if used >= dailySearchBudget {
-		l.Info("search held back", "query", id, "reason", "daily budget", "used", used)
-		return nil
 	}
 
 	il := calls.With("discovery_search_query_id", id)
 
-	results, err := se.Search(ctx, il, Query{Q: item.Query, Lang: item.Lang})
-	if errors.Is(err, errSearchRejected) {
-		l.Warn("search rejected", "query", id, "err", err)
+	results := item.Results
+	if item.SearchedAt == nil {
+		var searched bool
 
-		if err := s.MarkRejected(ctx, id); err != nil {
-			return fmt.Errorf("err mark rejected: %w", err)
+		results, searched, err = search(ctx, s, item, se, l, il)
+		if err != nil || !searched {
+			return err
 		}
-
-		return nil
-	}
-
-	if err != nil {
-		return fmt.Errorf("err search %s: %w", id, err)
-	}
-
-	// Brave billed the search, so its results are kept even when the worker is shutting down.
-	if err := s.SaveResults(context.WithoutCancel(ctx), id, results); err != nil {
-		return fmt.Errorf("err save results %s: %w", id, err)
 	}
 
 	if !sched.Active(time.Now()) {
@@ -128,4 +122,49 @@ func searchQuery(ctx context.Context, s searchStore, id string, se Searcher, f *
 	l.Info("search query", "query", id, "results", len(results), "kept", len(kept))
 
 	return nil
+}
+
+// Reports false when the search was held back or rejected.
+func search(ctx context.Context, s searchStore, item SearchItem, se Searcher, l, il *slog.Logger) ([]SearchResult, bool, error) {
+	pending, err := s.PendingResults(ctx, dedupeWindow)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if pending >= maxPendingResults {
+		l.Info("search held back", "query", item.ID, "reason", "pending results", "pending", pending)
+		return nil, false, nil
+	}
+
+	used, err := s.SearchesLastDay(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if used >= dailySearchBudget {
+		l.Info("search held back", "query", item.ID, "reason", "daily budget", "used", used)
+		return nil, false, nil
+	}
+
+	results, err := se.Search(ctx, il, Query{Q: item.Query, Lang: item.Lang})
+	if errors.Is(err, errSearchRejected) {
+		l.Warn("search rejected", "query", item.ID, "err", err)
+
+		if err := s.MarkRejected(ctx, item.ID); err != nil {
+			return nil, false, fmt.Errorf("err mark rejected: %w", err)
+		}
+
+		return nil, false, nil
+	}
+
+	if err != nil {
+		return nil, false, fmt.Errorf("err search %s: %w", item.ID, err)
+	}
+
+	// Brave billed the search, so its results are kept even when the worker is shutting down.
+	if err := s.SaveResults(context.WithoutCancel(ctx), item.ID, results); err != nil {
+		return nil, false, fmt.Errorf("err save results %s: %w", item.ID, err)
+	}
+
+	return results, true, nil
 }

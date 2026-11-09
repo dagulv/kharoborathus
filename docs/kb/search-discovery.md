@@ -12,7 +12,7 @@ Searches the web with the Brave Search API for other sources on events found in 
 - [discover.go](../../internal/adapter/search/discover.go): `Discover` is step 3. It runs inside the transaction that inserts a post and returns new query ids. Step 2, which calls it, does not exist yet.
 - [prompts/discovery.md](../../internal/adapter/search/prompts/discovery.md): the events part of step 2's DeepSeek prompt, as `EventsSystemPrompt` and `EventsUserPrompt`.
 - [search.go](../../internal/adapter/search/search.go): `RunSearch` is step 4. It reads query ids from a channel, searches through [brave.go](../../internal/adapter/search/brave.go) and filters with [result_filter.go](../../internal/adapter/search/result_filter.go).
-- No catch-up job yet. Rows a step leaves unhandled stay unhandled.
+- `RunSearch` also runs a catch-up for queries the event chain left unfinished.
 
 ## Design
 
@@ -26,9 +26,9 @@ Searches the web with the Brave Search API for other sources on events found in 
 6. Otherwise trusted posts insert a new query. A `query` text conflict links to the existing row and is not searched again. Untrusted posts never create queries.
 7. After commit, step 2 sends new query ids with `Enqueue`. A full channel drops the id and logs it.
 
-**Step 4: RunSearch.** One query at a time, whenever an id arrives.
+**Step 4: RunSearch.** One query at a time, whenever an id arrives or the catch-up ticks.
 
-1. Skip queries with `searched_at` set.
+1. Skip queries that are done or rejected. A searched query without `kept` goes straight to the filter.
 2. Leave the query untouched while 200 or more search results are pending within 7 days, or 322 searches were paid in the last day.
 3. Search Brave in the language of the query's earliest linked post.
 4. Save the raw results in `result.results`, even during shutdown, since Brave billed them.
@@ -40,6 +40,13 @@ Searches the web with the Brave Search API for other sources on events found in 
 | set | NULL | Rejected by Brave with 400 or 422. Never retried. | No |
 | set | `results`, no `kept` | Searched, not filtered. | Yes |
 | set | `results` and `kept` | Done. | Yes |
+
+**Catch-up.** Every minute while DeepSeek's schedule is open, in the same loop as the ids.
+
+1. Take up to 10 queries from the last 7 days with no `searched_at`, or with `results` and no `kept`. These are ids dropped by a full channel, held back by a limit, failed, or searched while DeepSeek was closed.
+2. Unfiltered paid results go first, then newest queries.
+3. Skip queries whose linked posts are all gone.
+4. Stop at the first error.
 
 Rules:
 
@@ -83,6 +90,7 @@ Results are read from `web.results` and `news.results` and deduplicated by URL. 
 | Pending search results limit | 200                | One day of ingest at its daily cap.                   |
 | Outbound links per post      | 10                 | Old link extraction cap.                              |
 | Search queue                 | 100                | Channel buffer, `SearchQueue`.                        |
+| Catch-up                     | 10 a minute        | Brave calls stay well under the daily cap.            |
 
 ## Open questions
 

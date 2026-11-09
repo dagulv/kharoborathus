@@ -16,17 +16,24 @@ import (
 )
 
 type fakeStore struct {
-	item     SearchItem
-	pending  int
-	used     int
-	rejected []string
-	saved    [][]SearchResult
-	kept     [][]int
-	urls     [][]string
-	savedCtx error
+	item       SearchItem
+	unfinished []string
+	listed     int
+	pending    int
+	used       int
+	rejected   []string
+	saved      [][]SearchResult
+	kept       [][]int
+	urls       [][]string
+	savedCtx   error
 }
 
 func (s *fakeStore) GetQuery(context.Context, string) (SearchItem, error) { return s.item, nil }
+
+func (s *fakeStore) ListUnfinished(_ context.Context, _, limit int) ([]string, error) {
+	s.listed = limit
+	return s.unfinished, nil
+}
 
 func (s *fakeStore) PendingResults(context.Context, int) (int, error) { return s.pending, nil }
 
@@ -82,10 +89,11 @@ func runSearch(ctx context.Context, s *fakeStore, se *fakeSearcher, llm *fakeLLM
 	return searchQuery(ctx, s, "q", se, NewResultFilter(llm), sched, l, l)
 }
 
-func TestSearchSkipsSearched(t *testing.T) {
+func TestSearchSkipsDone(t *testing.T) {
 	now := time.Now()
 	s := &fakeStore{item: testItem()}
 	s.item.SearchedAt = &now
+	s.item.Done = true
 	se := &fakeSearcher{}
 
 	if err := runSearch(context.Background(), s, se, &fakeLLM{}, schedule.Always); err != nil || se.calls != 0 || s.writes() != 0 {
@@ -175,6 +183,46 @@ func TestSearchClosedSchedule(t *testing.T) {
 	}
 }
 
+func TestSearchFiltersSaved(t *testing.T) {
+	now := time.Now()
+	s := &fakeStore{item: testItem()}
+	s.item.SearchedAt = &now
+	s.item.Results = searchResults
+	se := &fakeSearcher{}
+
+	if err := runSearch(context.Background(), s, se, &fakeLLM{answer: filterAnswer{Keep: []int{1}}}, schedule.Always); err != nil {
+		t.Fatal(err)
+	}
+
+	if se.calls != 0 || len(s.saved) != 0 || len(s.kept) != 1 || !slices.Equal(s.urls[0], []string{"https://b.example/2"}) {
+		t.Errorf("calls %d, saved %d, kept %v, urls %v", se.calls, len(s.saved), s.kept, s.urls)
+	}
+}
+
+func TestCatchUp(t *testing.T) {
+	s := &fakeStore{item: testItem(), unfinished: []string{"q", "q"}}
+	se := &fakeSearcher{results: searchResults}
+	l := slog.New(slog.DiscardHandler)
+
+	if err := catchUp(context.Background(), s, se, NewResultFilter(&fakeLLM{answer: filterAnswer{}}), schedule.Always, l, l); err != nil {
+		t.Fatal(err)
+	}
+
+	if s.listed != catchUpBatch || se.calls != 2 || len(s.kept) != 2 {
+		t.Errorf("listed %d, calls %d, kept %d", s.listed, se.calls, len(s.kept))
+	}
+}
+
+func TestCatchUpStopsOnError(t *testing.T) {
+	s := &fakeStore{item: testItem(), unfinished: []string{"q", "q"}}
+	se := &fakeSearcher{err: port.ErrUnavailable}
+	l := slog.New(slog.DiscardHandler)
+
+	if err := catchUp(context.Background(), s, se, NewResultFilter(&fakeLLM{}), schedule.Always, l, l); err == nil || se.calls != 1 {
+		t.Errorf("err %v, calls %d", err, se.calls)
+	}
+}
+
 func TestSearchFilterError(t *testing.T) {
 	s := &fakeStore{item: testItem()}
 
@@ -239,8 +287,21 @@ func TestStoreSearch(t *testing.T) {
 		t.Errorf("item %+v", item)
 	}
 
+	if unfinished, err := s.ListUnfinished(ctx, dedupeWindow, 10); err != nil || !slices.Equal(unfinished, ids[:1]) {
+		t.Errorf("unfinished before search %v, %v", unfinished, err)
+	}
+
 	if err := s.SaveResults(ctx, item.ID, searchResults); err != nil {
 		t.Fatal(err)
+	}
+
+	saved, err := s.GetQuery(ctx, item.ID)
+	if err != nil || saved.Done || len(saved.Results) != 3 || saved.Results[2].URL != "https://c.example/3" || saved.Results[2].PageAge == "" {
+		t.Errorf("saved %+v, %v", saved, err)
+	}
+
+	if unfinished, err := s.ListUnfinished(ctx, dedupeWindow, 10); err != nil || !slices.Equal(unfinished, ids[:1]) {
+		t.Errorf("unfinished before filter %v, %v", unfinished, err)
 	}
 
 	if n, err := s.SearchesLastDay(ctx); err != nil || n != 1 {
@@ -253,6 +314,14 @@ func TestStoreSearch(t *testing.T) {
 
 	if n, err := s.PendingResults(ctx, dedupeWindow); err != nil || n != 1 {
 		t.Errorf("pending %d, %v", n, err)
+	}
+
+	if filtered, err := s.GetQuery(ctx, item.ID); err != nil || !filtered.Done {
+		t.Errorf("filtered %+v, %v", filtered, err)
+	}
+
+	if unfinished, err := s.ListUnfinished(ctx, dedupeWindow, 10); err != nil || len(unfinished) != 0 {
+		t.Errorf("unfinished after filter %v, %v", unfinished, err)
 	}
 
 	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries WHERE id = $1 AND result->'kept' = '[0]' AND result->'results'->0->>'url' = 'https://a.example/1'`, item.ID); n != 1 {
