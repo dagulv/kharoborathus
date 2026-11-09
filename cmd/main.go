@@ -129,7 +129,14 @@ func app(ctx context.Context) (err error) {
 	source.Routes(adminMux, &sourceStore, syncs, l.WithGroup("source"), calls)
 	mux.Handle("/admin/", auth.RequireSession(&sessionStore, l.WithGroup("auth"), adminMux))
 
-	server := &http.Server{Addr: env.HttpHost, Handler: mux}
+	// No WriteTimeout: /admin/listing probes a site for up to a minute before it answers.
+	server := &http.Server{
+		Addr:              env.HttpHost,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 
 	g, ctx := errgroup.WithContext(ctx)
 
