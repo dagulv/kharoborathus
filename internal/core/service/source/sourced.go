@@ -39,6 +39,7 @@ func Run(ctx context.Context, s *Service, fetchers map[string]Fetcher, l *slog.L
 	}
 
 	go route(ctx, s.sourceStream(ctx, l.WithGroup("sourceStream")), ins, l)
+	go s.retryPending(ctx, l.WithGroup("retryPending"))
 
 	return pipeline.New[domain.RawPost]().
 		Next(workers, s.Extract).

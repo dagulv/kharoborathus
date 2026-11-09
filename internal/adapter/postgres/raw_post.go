@@ -118,6 +118,28 @@ func (s *RawPostStore) GetRawPost(ctx context.Context, id string) (domain.RawPos
 	return p, nil
 }
 
+// The age gap keeps the job off posts the live pipeline is handling.
+func (s *RawPostStore) ListPending(ctx context.Context, limit int, minAge time.Duration) ([]domain.RawPost, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT `+rawPostColumns+` FROM raw_posts
+		WHERE status = 'pending' AND created_at < now() - $2::interval
+		ORDER BY created_at
+		LIMIT $1
+		`, limit, minAge)
+	if err != nil {
+		return nil, fmt.Errorf("err query pending raw posts: %w", err)
+	}
+
+	posts, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (domain.RawPost, error) {
+		return scanRawPost(row, domain.RawPost{})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("err scan pending raw posts: %w", err)
+	}
+
+	return posts, nil
+}
+
 // Posts that keep failing go behind the rest, and the age gap keeps the job off posts the live path is handling.
 func (s *RawPostStore) ListUnenriched(ctx context.Context, limit int, minAge time.Duration, maxRetries int) ([]string, error) {
 	rows, err := s.db.Query(ctx, `

@@ -11,6 +11,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/core/port"
+	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/dbtest"
 	"github.com/dagulv/kharoborathus/internal/lib/pipeline"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
@@ -68,6 +69,11 @@ func TestIsArticleError(t *testing.T) {
 }
 
 func qualityService(t *testing.T, c port.Classifier) (*Service, domain.RawPost) {
+	s, p, _ := qualityServiceDB(t, c)
+	return s, p
+}
+
+func qualityServiceDB(t *testing.T, c port.Classifier) (*Service, domain.RawPost, *database.Database) {
 	db := dbtest.New(t)
 	ctx := context.Background()
 
@@ -90,7 +96,7 @@ func qualityService(t *testing.T, c port.Classifier) (*Service, domain.RawPost) 
 	p.Title = "Volvo köper Northvolt"
 	p.Content = article
 
-	return &s, p
+	return &s, p, db
 }
 
 func insertAndCheck(t *testing.T, s *Service, p domain.RawPost, url string) (domain.RawPost, error) {
