@@ -30,10 +30,10 @@ type listing struct {
 	WordPress  *fetchers.WordPress `json:"wordpress,omitempty"`
 }
 
-// Served on the internal port, which only the admin reaches.
+// The admin group. main guards /admin/ with the session middleware.
 func Routes(mux *http.ServeMux, s *postgres.SourceStore, syncs chan<- domain.Source, l, calls *slog.Logger) {
-	mux.HandleFunc("POST /sources/{id}/sync", syncSource(s, syncs, l))
-	mux.HandleFunc("GET /listing", listingRoute(safehttp.NewClient(homepageTimeout), l, calls))
+	mux.HandleFunc("POST /admin/sources/{id}/sync", syncSource(s, syncs, l))
+	mux.HandleFunc("GET /admin/listing", listingRoute(safehttp.NewClient(homepageTimeout), l, calls))
 }
 
 // listingRoute lists what the admin can add a url as, best first.

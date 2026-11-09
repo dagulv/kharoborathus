@@ -18,6 +18,7 @@ import (
 	adapter "github.com/dagulv/kharoborathus/internal/adapter/robot"
 	discovery "github.com/dagulv/kharoborathus/internal/adapter/search"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
+	"github.com/dagulv/kharoborathus/internal/core/service/auth"
 	"github.com/dagulv/kharoborathus/internal/core/service/enrich"
 	"github.com/dagulv/kharoborathus/internal/core/service/posts"
 	"github.com/dagulv/kharoborathus/internal/core/service/source"
@@ -76,6 +77,7 @@ func app(ctx context.Context) (err error) {
 	rawPostStore := postgres.NewRawPostStore(db)
 	postStore := postgres.NewPostStore(db)
 	tagStore := postgres.NewTagStore(db)
+	sessionStore := postgres.NewSessionStore(db)
 	discoveryStore := discovery.NewStore(db)
 
 	llm, err := adapter.NewDeepSeek(env, l.WithGroup("deepseek"))
@@ -122,26 +124,22 @@ func app(ctx context.Context) (err error) {
 	mux := http.NewServeMux()
 	posts.Routes(mux, &postStore, l.WithGroup("posts"))
 
-	// The proxy publishes only the public port, so sync and listing stay reachable from the admin alone.
-	internalMux := http.NewServeMux()
-	source.Routes(internalMux, &sourceStore, syncs, l.WithGroup("source"), calls)
+	// The port is public, so every admin route sits behind a session the web app forwards.
+	adminMux := http.NewServeMux()
+	source.Routes(adminMux, &sourceStore, syncs, l.WithGroup("source"), calls)
+	mux.Handle("/admin/", auth.RequireSession(&sessionStore, l.WithGroup("auth"), adminMux))
 
-	servers := []*http.Server{
-		{Addr: env.HttpHost, Handler: mux},
-		{Addr: env.InternalHttpHost, Handler: internalMux},
-	}
+	server := &http.Server{Addr: env.HttpHost, Handler: mux}
 
 	g, ctx := errgroup.WithContext(ctx)
 
-	for _, server := range servers {
-		g.Go(func() error {
-			if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				return fmt.Errorf("err serve %s: %w", server.Addr, err)
-			}
+	g.Go(func() error {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("err serve %s: %w", server.Addr, err)
+		}
 
-			return nil
-		})
-	}
+		return nil
+	})
 
 	g.Go(func() error {
 		<-ctx.Done()
@@ -149,14 +147,11 @@ func app(ctx context.Context) (err error) {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 
-		var errs []error
-		for _, server := range servers {
-			if err := server.Shutdown(shutdownCtx); err != nil {
-				errs = append(errs, fmt.Errorf("err shutdown %s: %w", server.Addr, err))
-			}
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("err shutdown %s: %w", server.Addr, err)
 		}
 
-		return errors.Join(errs...)
+		return nil
 	})
 
 	g.Go(func() error {
