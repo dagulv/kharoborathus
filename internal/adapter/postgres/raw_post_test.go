@@ -224,3 +224,14 @@ func TestFailEnrich(t *testing.T) {
 		t.Errorf("status %q, retries %d, %v", got.Status, got.RetryCount, err)
 	}
 }
+
+func TestGetSourceInvalidID(t *testing.T) {
+	db, _, _ := rawPostDB(t)
+	s := NewSourceStore(db)
+
+	for _, id := range []string{"00000000-0000-0000-0000-000000000000", "nope"} {
+		if _, err := s.GetSource(context.Background(), id); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("%s: err %v", id, err)
+		}
+	}
+}

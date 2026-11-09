@@ -79,8 +79,18 @@ func (s *SourceStore) ListSources(ctx context.Context, filter domain.SourceFilte
 	}
 }
 
+// An id that is not a uuid is reported as not found.
 func (s *SourceStore) GetSource(ctx context.Context, id string) (domain.Source, error) {
-	return scanSource(s.db.QueryRow(ctx, `SELECT `+sourceColumns+` FROM sources WHERE id = $1 AND deleted_at IS NULL`, id))
+	source, err := scanSource(s.db.QueryRow(ctx, `SELECT `+sourceColumns+` FROM sources WHERE id = $1 AND deleted_at IS NULL`, id))
+	if isInvalidText(err) {
+		err = pgx.ErrNoRows
+	}
+
+	if err != nil {
+		return source, fmt.Errorf("err get source %s: %w", id, err)
+	}
+
+	return source, nil
 }
 
 func scanSource(row pgx.Row) (source domain.Source, err error) {
