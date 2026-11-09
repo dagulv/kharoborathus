@@ -50,10 +50,10 @@ func (s *fakeStore) SaveResults(ctx context.Context, _ string, results []SearchR
 	return nil
 }
 
-func (s *fakeStore) SaveKept(_ context.Context, _ SearchItem, kept []int, urls []string) error {
+func (s *fakeStore) SaveKept(_ context.Context, _ SearchItem, kept []int, urls []string) ([]string, error) {
 	s.kept = append(s.kept, kept)
 	s.urls = append(s.urls, urls)
-	return nil
+	return urls, nil
 }
 
 func (s *fakeStore) writes() int { return len(s.rejected) + len(s.saved) + len(s.kept) }
@@ -86,7 +86,7 @@ func testItem() SearchItem {
 
 func runSearch(ctx context.Context, s *fakeStore, se *fakeSearcher, llm *fakeLLM, sched schedule.Schedule) error {
 	l := slog.New(slog.DiscardHandler)
-	return searchQuery(ctx, s, "q", se, NewResultFilter(llm), sched, l, l)
+	return searchQuery(ctx, s, "q", make(chan string, 10), se, NewResultFilter(llm), sched, l, l)
 }
 
 func TestSearchSkipsDone(t *testing.T) {
@@ -170,6 +170,20 @@ func TestSearchFiltered(t *testing.T) {
 	}
 }
 
+func TestSearchEnqueuesKept(t *testing.T) {
+	s := &fakeStore{item: testItem()}
+	links := make(chan string, 10)
+	l := slog.New(slog.DiscardHandler)
+
+	if err := searchQuery(context.Background(), s, "q", links, &fakeSearcher{results: searchResults}, NewResultFilter(&fakeLLM{answer: filterAnswer{Keep: []int{2, 0}}}), schedule.Always, l, l); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(links) != 2 {
+		t.Errorf("enqueued %d links", len(links))
+	}
+}
+
 func TestSearchClosedSchedule(t *testing.T) {
 	s := &fakeStore{item: testItem()}
 	llm := &fakeLLM{answer: filterAnswer{Keep: []int{0}}}
@@ -204,7 +218,7 @@ func TestCatchUp(t *testing.T) {
 	se := &fakeSearcher{results: searchResults}
 	l := slog.New(slog.DiscardHandler)
 
-	if err := catchUp(context.Background(), s, se, NewResultFilter(&fakeLLM{answer: filterAnswer{}}), schedule.Always, l, l); err != nil {
+	if err := catchUp(context.Background(), s, make(chan string, 10), se, NewResultFilter(&fakeLLM{answer: filterAnswer{}}), schedule.Always, l, l); err != nil {
 		t.Fatal(err)
 	}
 
@@ -218,7 +232,7 @@ func TestCatchUpStopsOnError(t *testing.T) {
 	se := &fakeSearcher{err: port.ErrUnavailable}
 	l := slog.New(slog.DiscardHandler)
 
-	if err := catchUp(context.Background(), s, se, NewResultFilter(&fakeLLM{}), schedule.Always, l, l); err == nil || se.calls != 1 {
+	if err := catchUp(context.Background(), s, make(chan string, 10), se, NewResultFilter(&fakeLLM{}), schedule.Always, l, l); err == nil || se.calls != 1 {
 		t.Errorf("err %v, calls %d", err, se.calls)
 	}
 }
@@ -308,8 +322,8 @@ func TestStoreSearch(t *testing.T) {
 		t.Errorf("searches %d, %v", n, err)
 	}
 
-	if err := s.SaveKept(ctx, item, []int{0}, []string{"https://a.example/1"}); err != nil {
-		t.Fatal(err)
+	if linkIDs, err := s.SaveKept(ctx, item, []int{0}, []string{"https://a.example/1"}); err != nil || len(linkIDs) != 1 {
+		t.Fatalf("link ids %v, %v", linkIDs, err)
 	}
 
 	if n, err := s.PendingResults(ctx, dedupeWindow); err != nil || n != 1 {
@@ -359,7 +373,7 @@ func TestSearchHeldBackLogged(t *testing.T) {
 		var buf bytes.Buffer
 		l := slog.New(slog.NewTextHandler(&buf, nil))
 
-		if err := searchQuery(context.Background(), s, "q", &fakeSearcher{}, NewResultFilter(&fakeLLM{}), schedule.Always, l, l); err != nil {
+		if err := searchQuery(context.Background(), s, "q", nil, &fakeSearcher{}, NewResultFilter(&fakeLLM{}), schedule.Always, l, l); err != nil {
 			t.Fatal(err)
 		}
 

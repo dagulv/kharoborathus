@@ -123,13 +123,14 @@ func app(ctx context.Context) (err error) {
 	}
 
 	enrichService := enrich.Service{
-		DB:         db,
-		RawPosts:   &rawPostStore,
-		Posts:      &postStore,
-		Tags:       &tagStore,
-		LLM:        llm,
-		Classifier: classifier,
-		SearchIDs:  searchIDs,
+		DB:            db,
+		RawPosts:      &rawPostStore,
+		Posts:         &postStore,
+		Tags:          &tagStore,
+		LLM:           llm,
+		Classifier:    classifier,
+		SearchIDs:     searchIDs,
+		DiscoveredIDs: discoveredIDs,
 	}
 
 	mux := http.NewServeMux()
@@ -196,7 +197,7 @@ func app(ctx context.Context) (err error) {
 			return nil
 		}
 
-		return discovery.RunSearch(ctx, &discoveryStore, searchIDs, searcher, resultFilter, llm.Schedule(), l.WithGroup("search"), calls)
+		return discovery.RunSearch(ctx, &discoveryStore, searchIDs, discoveredIDs, searcher, resultFilter, llm.Schedule(), l.WithGroup("search"), calls)
 	})
 
 	if err = g.Wait(); err != nil && !errors.Is(err, context.Canceled) {

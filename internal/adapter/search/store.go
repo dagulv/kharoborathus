@@ -135,28 +135,37 @@ func (s *Store) SaveResults(ctx context.Context, id string, results []SearchResu
 	return nil
 }
 
-func (s *Store) SaveKept(ctx context.Context, item SearchItem, kept []int, urls []string) error {
+// Returns the ids of the queued urls.
+func (s *Store) SaveKept(ctx context.Context, item SearchItem, kept []int, urls []string) (ids []string, err error) {
 	b, err := json.Marshal(kept)
 	if err != nil {
-		return fmt.Errorf("err marshal kept: %w", err)
+		return nil, fmt.Errorf("err marshal kept: %w", err)
 	}
 
-	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `UPDATE discovery_search_queries SET result = jsonb_set(result, '{kept}', $2::jsonb) WHERE id = $1`, item.ID, b); err != nil {
 			return fmt.Errorf("err save kept: %w", err)
 		}
 
-		if _, err := tx.Exec(ctx, `
+		rows, err := tx.Query(ctx, `
 			INSERT INTO discovery_posts (url, from_post_id, discovery_search_query_id)
 			SELECT u, $2, $3 FROM unnest($1::text[]) AS u
 			WHERE NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = u)
 			ON CONFLICT (url) DO NOTHING
-			`, urls, item.FromPostID, item.ID); err != nil {
+			RETURNING id
+			`, urls, item.FromPostID, item.ID)
+		if err != nil {
 			return fmt.Errorf("err queue kept results: %w", err)
+		}
+
+		if ids, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
+			return fmt.Errorf("err scan kept results: %w", err)
 		}
 
 		return nil
 	})
+
+	return ids, err
 }
 
 func postSource(ctx context.Context, tx pgx.Tx, post domain.Post) (trusted bool, baseURL string, err error) {
@@ -171,21 +180,28 @@ func postSource(ctx context.Context, tx pgx.Tx, post domain.Post) (trusted bool,
 	return trusted, baseURL, nil
 }
 
-func insertLinks(ctx context.Context, tx pgx.Tx, postID string, urls []string) error {
+func insertLinks(ctx context.Context, tx pgx.Tx, postID string, urls []string) ([]string, error) {
 	if len(urls) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	if _, err := tx.Exec(ctx, `
+	rows, err := tx.Query(ctx, `
 		INSERT INTO discovery_posts (url, from_post_id)
 		SELECT u, $2 FROM unnest($1::text[]) AS u
 		WHERE NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = u)
 		ON CONFLICT (url) DO NOTHING
-		`, urls, postID); err != nil {
-		return fmt.Errorf("err insert outbound links: %w", err)
+		RETURNING id
+		`, urls, postID)
+	if err != nil {
+		return nil, fmt.Errorf("err insert outbound links: %w", err)
 	}
 
-	return nil
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("err scan outbound links: %w", err)
+	}
+
+	return ids, nil
 }
 
 func actionKeys(ctx context.Context, tx pgx.Tx) (quality map[string]bool, aliases map[string]string, err error) {

@@ -24,7 +24,7 @@ Searches the web with the Brave Search API for other sources on events found in 
 4. `normalized_entity` is the entity as a tag key, like `volvo_cars`.
 5. A query with the same `normalized_entity` and `action` created within 7 days gets the post linked to it in `discovery_search_query_posts`. That link is the `same_event` record. No new search.
 6. Otherwise trusted posts insert a new query. A `query` text conflict links to the existing row and is not searched again. Untrusted posts never create queries.
-7. After commit, step 2 sends new query ids with `Enqueue`. A full channel drops the id and logs it.
+7. After commit, step 2 sends new query ids with `Enqueue` and new `discovery_posts` ids with `EnqueueLink`. A full channel drops the id and logs it.
 
 **Step 4: RunSearch.** One query at a time, whenever an id arrives or the catch-up ticks.
 
@@ -32,7 +32,7 @@ Searches the web with the Brave Search API for other sources on events found in 
 2. Leave the query untouched while 200 or more search results are pending within 7 days, or 322 searches were paid in the last day.
 3. Search Brave in the language of the query's earliest linked post.
 4. Save the raw results in `result.results`, even during shutdown, since Brave billed them.
-5. While DeepSeek's off-peak schedule is active, filter the results. Write the kept indexes to `result.kept` and queue the kept URLs in `discovery_posts` with the query id, skipping URLs already in `posts`.
+5. While DeepSeek's off-peak schedule is active, filter the results. Write the kept indexes to `result.kept` and queue the kept URLs in `discovery_posts` with the query id, skipping URLs already in `posts`. New rows go to discovered ingest with `EnqueueLink`.
 
 | `searched_at` | `result` | State | Paid |
 |---|---|---|---|

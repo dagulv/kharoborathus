@@ -9,22 +9,28 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Returns only new query ids, for step 4. Untrusted posts only join events a trusted post already found.
-func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword) ([]string, error) {
+// New rows only, for the steps after commit.
+type Found struct {
+	Queries []string
+	Links   []string
+}
+
+// Untrusted posts only join events a trusted post already found.
+func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword) (f Found, err error) {
 	trusted, baseURL, err := postSource(ctx, tx, post)
 	if err != nil {
-		return nil, err
+		return Found{}, err
 	}
 
 	if trusted {
-		if err := insertLinks(ctx, tx, post.ID, outboundLinks(post.Content, baseURL)); err != nil {
-			return nil, err
+		if f.Links, err = insertLinks(ctx, tx, post.ID, outboundLinks(post.Content, baseURL)); err != nil {
+			return Found{}, err
 		}
 	}
 
 	quality, aliases, err := actionKeys(ctx, tx)
 	if err != nil {
-		return nil, err
+		return Found{}, err
 	}
 
 	type event struct{ entity, action, query string }
@@ -45,21 +51,19 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 		return cmp.Or(cmp.Compare(a.entity, b.entity), cmp.Compare(a.action, b.action))
 	})
 
-	var ids []string
-
 	for _, e := range resolved {
 		if err := lockEvent(ctx, tx, e.entity, e.action); err != nil {
-			return nil, err
+			return Found{}, err
 		}
 
 		id, found, err := recentQuery(ctx, tx, e.entity, e.action, dedupeWindow)
 		if err != nil {
-			return nil, err
+			return Found{}, err
 		}
 
 		if found {
 			if err := linkQuery(ctx, tx, id, post.ID); err != nil {
-				return nil, err
+				return Found{}, err
 			}
 
 			continue
@@ -71,19 +75,19 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 
 		id, created, err := insertQuery(ctx, tx, e.entity, e.action, e.query)
 		if err != nil {
-			return nil, err
+			return Found{}, err
 		}
 
 		if err := linkQuery(ctx, tx, id, post.ID); err != nil {
-			return nil, err
+			return Found{}, err
 		}
 
 		if created {
-			ids = append(ids, id)
+			f.Queries = append(f.Queries, id)
 		}
 	}
 
-	return ids, nil
+	return f, nil
 }
 
 func resolveAction(action string, quality map[string]bool, aliases map[string]string) (string, bool) {
