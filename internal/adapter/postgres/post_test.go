@@ -161,3 +161,52 @@ func TestGetPost(t *testing.T) {
 		}
 	}
 }
+
+func TestListPostsFeedOrder(t *testing.T) {
+	db, s, volvo, ericsson := postsDB(t)
+	ctx := context.Background()
+
+	// Published long ago but stored last, like a backfilled article.
+	if _, err := db.Exec(ctx, `UPDATE posts SET posted_at = now() - interval '30 days' WHERE id = $1`, ericsson.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, posts := listIDs(t, s, domain.PostFilter{})
+	if !slices.Equal(ids, []string{volvo.ID, ericsson.ID}) {
+		t.Errorf("ids %v", ids)
+	}
+
+	if posts[0].DomainURL != "https://a.example" {
+		t.Errorf("domain url %q", posts[0].DomainURL)
+	}
+}
+
+func TestListPostsAfter(t *testing.T) {
+	_, s, volvo, ericsson := postsDB(t)
+
+	if ids, _ := listIDs(t, s, domain.PostFilter{After: ericsson.ID}); !slices.Equal(ids, []string{volvo.ID}) {
+		t.Errorf("after ericsson: %v", ids)
+	}
+
+	if ids, _ := listIDs(t, s, domain.PostFilter{After: volvo.ID}); len(ids) != 0 {
+		t.Errorf("after the last: %v", ids)
+	}
+}
+
+func TestListPostsAfterInvalid(t *testing.T) {
+	_, s, volvo, _ := postsDB(t)
+
+	cases := map[string]domain.PostFilter{
+		"unknown id": {After: "00000000-0000-0000-0000-000000000000"},
+		"not a uuid": {After: "nope"},
+		"with order": {After: volvo.ID, Filter: query.Filter{OrderBy: "title"}},
+	}
+
+	for name, f := range cases {
+		for _, err := range s.ListPosts(context.Background(), f) {
+			if !errors.Is(err, domain.ErrInvalidFilter) {
+				t.Errorf("%s: err %v", name, err)
+			}
+		}
+	}
+}

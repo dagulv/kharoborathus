@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/lib/query"
@@ -39,6 +40,7 @@ type Post struct {
 	URL          string     `json:"url"`
 	Lang         string     `json:"lang"`
 	DomainID     string     `json:"domainId"` // Used for icon/brand and link, resolved from url
+	DomainURL    string     `json:"domainUrl"`
 	Title        string     `json:"title"`
 	ShortContent string     `json:"shortContent"` // Plain text short content, llm summary of content
 	Content      string     `json:"content"`      // Markdown content
@@ -49,10 +51,14 @@ type Post struct {
 	Simhash      *int64     `json:"-"`
 }
 
+var ErrInvalidFilter = errors.New("invalid filter")
+
 type PostFilter struct {
 	query.Filter
 
 	Tags []string `query:"tag"`
+	// A keyset cursor: the id of the last post already seen. Only valid with the default order.
+	After string `query:"after"`
 }
 
 type SourceDiscoveredByPost struct {
