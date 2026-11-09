@@ -37,11 +37,17 @@ func listPosts(s Store, l *slog.Logger) http.HandlerFunc {
 				OrderBy: q.Get("orderBy"),
 				Search:  q.Get("search"),
 			},
-			Tags: q["tag"],
+			Tags:  q["tag"],
+			After: q.Get("after"),
 		}
 
 		// Collected first, so a failure mid-list is a 500 and never a truncated 200.
 		posts, err := iterx.Collect(s.ListPosts(r.Context(), filter))
+		if errors.Is(err, domain.ErrInvalidFilter) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		if err != nil {
 			l.Error("list posts", "err", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

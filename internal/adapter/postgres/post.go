@@ -62,18 +62,43 @@ const invalidTextRepresentation = "22P02"
 
 // Only enabled, active tag keys are public. Proposed keys stay on the row for promotion to count.
 const listPostsQuery = `
-	SELECT p.id, p.source_id, p.domain_id, p.url, p.lang, p.title, p.short_content, p.content, v.tags, p.authors, p.posted_at, p.created_at
+	SELECT p.id, p.source_id, p.domain_id, d.base_url, p.url, p.lang, p.title, p.short_content, p.content, v.tags, p.authors, p.posted_at, p.created_at
 	FROM posts p
+	JOIN domains d ON d.id = p.domain_id
 	CROSS JOIN LATERAL (
 		SELECT COALESCE(array_agg(u.key ORDER BY u.ord), '{}') AS tags
 		FROM unnest(p.tags) WITH ORDINALITY AS u (key, ord)
 		WHERE EXISTS (SELECT 1 FROM tags t WHERE t.key = u.key AND t.enabled AND t.status = 'active')
 	) v`
 
+// Newest publication first by default, with created_at for posts whose date is unknown.
+const feedOrder = `coalesce(p.posted_at, p.created_at) DESC, p.id DESC`
+
 func (s *PostStore) ListPosts(ctx context.Context, filter domain.PostFilter) iter.Seq2[domain.Post, error] {
 	return func(yield func(domain.Post, error) bool) {
 		args := []any{filter.GetLimit(), filter.GetOffset()}
 		conds := []string{"true"}
+
+		order := feedOrder
+		if filter.OrderBy != "" || filter.Order != "" {
+			col, dir := filter.GetSort()
+			order = fmt.Sprintf(`p.%s %s, p.id %[2]s`, col, dir)
+		}
+
+		if filter.After != "" {
+			if order != feedOrder {
+				yield(domain.Post{}, fmt.Errorf("after with a custom order: %w", domain.ErrInvalidFilter))
+				return
+			}
+
+			if err := s.checkCursor(ctx, filter.After); err != nil {
+				yield(domain.Post{}, err)
+				return
+			}
+
+			args = append(args, filter.After)
+			conds = append(conds, fmt.Sprintf(`(coalesce(p.posted_at, p.created_at), p.id) < (SELECT coalesce(posted_at, created_at), id FROM posts WHERE id = $%d)`, len(args)))
+		}
 
 		if len(filter.Tags) > 0 {
 			args = append(args, filter.Tags)
@@ -101,10 +126,8 @@ func (s *PostStore) ListPosts(ctx context.Context, filter domain.PostFilter) ite
 			)`, len(args)))
 		}
 
-		col, dir := filter.GetSort()
-
-		rows, err := s.db.Query(ctx, fmt.Sprintf(`%s WHERE %s ORDER BY p.%s %s, p.id %[4]s LIMIT $1 OFFSET $2`,
-			listPostsQuery, strings.Join(conds, " AND "), col, dir), args...)
+		rows, err := s.db.Query(ctx, fmt.Sprintf(`%s WHERE %s ORDER BY %s LIMIT $1 OFFSET $2`,
+			listPostsQuery, strings.Join(conds, " AND "), order), args...)
 		if err != nil {
 			yield(domain.Post{}, fmt.Errorf("err query posts: %w", err))
 			return
@@ -129,6 +152,28 @@ func (s *PostStore) ListPosts(ctx context.Context, filter domain.PostFilter) ite
 	}
 }
 
+// A cursor that names no post would silently return an empty page.
+func (s *PostStore) checkCursor(ctx context.Context, after string) error {
+	var exists bool
+
+	err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM posts WHERE id = $1)`, after).Scan(&exists)
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == invalidTextRepresentation {
+		return fmt.Errorf("after %q is not a post id: %w", after, domain.ErrInvalidFilter)
+	}
+
+	if err != nil {
+		return fmt.Errorf("err check cursor: %w", err)
+	}
+
+	if !exists {
+		return fmt.Errorf("after %q names no post: %w", after, domain.ErrInvalidFilter)
+	}
+
+	return nil
+}
+
 // An id that is not a uuid is reported as not found.
 func (s *PostStore) GetPost(ctx context.Context, id string) (domain.Post, error) {
 	p, err := scanPost(s.db.QueryRow(ctx, listPostsQuery+` WHERE p.id = $1`, id))
@@ -146,7 +191,7 @@ func (s *PostStore) GetPost(ctx context.Context, id string) (domain.Post, error)
 }
 
 func scanPost(row pgx.Row) (p domain.Post, err error) {
-	err = row.Scan(&p.ID, &p.SourceID, &p.DomainID, &p.URL, &p.Lang, &p.Title, &p.ShortContent, &p.Content, &p.Tags, &p.Authors, &p.PostedAt, &p.CreatedAt)
+	err = row.Scan(&p.ID, &p.SourceID, &p.DomainID, &p.DomainURL, &p.URL, &p.Lang, &p.Title, &p.ShortContent, &p.Content, &p.Tags, &p.Authors, &p.PostedAt, &p.CreatedAt)
 
 	return
 }
