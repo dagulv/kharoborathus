@@ -117,3 +117,27 @@ func TestSyncSource(t *testing.T) {
 		}
 	}
 }
+
+func TestRoutesUnderAdmin(t *testing.T) {
+	store := postgres.NewSourceStore(dbtest.New(t))
+	mux := http.NewServeMux()
+	Routes(mux, &store, make(chan domain.Source), slog.New(slog.DiscardHandler), slog.New(slog.DiscardHandler))
+
+	cases := []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodGet, "/admin/listing", http.StatusBadRequest},
+		{http.MethodPost, "/admin/sources/nope/sync", http.StatusNotFound},
+		{http.MethodGet, "/listing", http.StatusNotFound},
+	}
+
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(c.method, c.path, nil))
+
+		if rec.Code != c.want {
+			t.Errorf("%s %s: %d", c.method, c.path, rec.Code)
+		}
+	}
+}
