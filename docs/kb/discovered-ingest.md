@@ -1,87 +1,50 @@
 # Discovered ingest
 
 **Status:** done
-**Related:** [link-extraction](link-extraction.md), [search-discovery](search-discovery.md), [classifier-gate](classifier-gate.md), [source-lifecycle](source-lifecycle.md), [post-linking](post-linking.md)
+**Related:** [search-discovery](search-discovery.md), [classifier-gate](classifier-gate.md), [source-lifecycle](source-lifecycle.md), [post-linking](post-linking.md)
 
 ## Summary
 
-A new `ingest` service turns queued URLs into posts. It reuses the source pipeline's pieces but gates before summarizing, so rejected URLs cost no LLM call.
+Turns `discovery_posts` rows into raw posts with step 1's stages: extract, markdown, simhash, insert, quality check. Accepted raw posts then go through enrich like any other.
 
 ## Current state
 
-[ingest.go](../../internal/service/ingest/ingest.go) runs every minute while `discovered_ingest` is on. It reuses `FetchHTML`, the [extractor](extraction.md), `source.Markdown`, `Summarizer` and the hard gate `Tagger.Gate`. Admin shows `link_events` status counts on the overview.
+[discovered.go](../../internal/core/service/source/discovered.go): `Discovered.Run` reads ids from a channel and runs a catch-up every minute. It does not start without Jev, since then every page would be accepted.
 
 ## Design
 
-Chosen over a `queue` adapter in the source pipeline. That adapter would summarize before gating and mix trusted with untrusted posts.
+One link at a time, so the daily cap cannot race.
 
-1. Read `pending` rows from `link_events` created inside the pending window, respecting the daily cap and per-domain rate. Runs only while the `discovered_ingest` switch is on, see [rollout](rollout.md). Older rows stay `pending`, so links queued while the switch was off are not fetched stale.
-2. Check `robots.txt` for the domain.
-3. Fetch, resolve domain and store it in `domain_id`, extract, convert to markdown.
-4. Reject on failed extract checks, short content or a missing title.
-5. Reject with `status = 'duplicate'` when the simhash matches a recent post, see [post linking](post-linking.md).
-6. Run the [gate](classifier-gate.md). Store scores in `gate_scores`.
-7. On reject, set `status = 'rejected'`. Only scores are kept. Raw content waits for the S3 TODO in the README.
-8. On accept:
-   - Use the domain's oldest enabled source, whatever its status, or else its oldest source. Otherwise create a `proposed` one, see [source lifecycle](source-lifecycle.md). The post still had to pass the gate either way.
-   - Record `source_discovered_by_post` for the first post that led there.
-   - Summarize and insert the post.
-   - Insert a `discovered` link, see [post linking](post-linking.md).
-   - Mark `tag_checked`, since the gate already tagged it.
+1. Skip rows that are not `pending` or older than 7 days. Older links are stale news and stay `pending`.
+2. Hold back while 200 rows were checked in the last 24 hours.
+3. A url already in `raw_posts` is `duplicate`.
+4. A domain whose sources are all disabled or deleted is `failed`, before any request.
+5. Fetch through the shared per-host pacer. Redirects are followed.
+6. The final url is stored. Its domain and source decide everything after the fetch.
+7. No content is `rejected`. A page dated more than 7 days back is `rejected`. Undated pages pass.
+8. A blocked final domain is `failed`.
+9. Use the domain's oldest enabled source. Otherwise create a `proposed` one and record the referring post in `source_discovered_by_post`.
+10. Insert the raw post. A url conflict is `duplicate`. Otherwise the row is `accepted`.
+11. Run the quality check. A failed check leaves the raw post `pending` for step 1's retry.
 
 Rules:
 
-- One link per host per tick, fresh links before retries. The 10-second pacer only separates a host's `robots.txt` fetch from its page fetch.
-- The daily cap is a rolling 24 hours of `checked_at`.
-- `robots.txt` disallow sets `failed` without retries, since it is no gate decision. A missing `robots.txt` allows everything. 5xx, 429 and network errors retry like a failed fetch. Results are cached per host for 24 hours.
-- No enabled, active gate tag means no tick. Otherwise every link would be rejected for good.
-- Classifier unavailable stops the tick and leaves the link untouched. Any other gate error charges the link one attempt and stops the tick.
-- Private, loopback and link-local addresses are refused and set `failed`.
-- A redirect to another host sets `failed`, since `robots.txt` and the pacer covered only the original host. Same-host redirects store the final URL.
-- Pages with an extracted date older than the pending window are rejected as `stale`. Undated pages pass.
-- Ingest does not run while the classifier is mocked, since the mock passes almost any page.
-- Failed extract checks and short content are one check: `Extractor.Content` returns an error, and the link is rejected with `no content`. A missing title rejects with `no title`.
-- A URL conflict on insert sets `duplicate` with `url exists`.
-- Domains that differ only in scheme share their sources, so a block on `https://x` also stops `http://x`. Subdomains are separate sites.
-- Deleted sources count, so a domain whose source you deleted is not proposed again. When every source of the domain is disabled or deleted, the link fails with `source disabled` and nothing is inserted, so disabling a source blocks its domain. The check runs on the link's own domain before robots.txt or any page fetch, so a blocked domain gets no request, and again inside the insert transaction.
-- `source_discovered_by_post` records the referring post once, when the proposed source is created.
-- Language comes from `<html lang>`.
-- Accepted posts do not touch `tags.last_matched_at`.
-
-## Schema changes
-
-```sql
-CREATE TABLE IF NOT EXISTS link_events (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  url TEXT UNIQUE NOT NULL,
-  via TEXT NOT NULL, -- link | search
-  from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-  discovery_events_id UUID REFERENCES discovery_events (id) ON DELETE SET NULL,
-  domain_id UUID REFERENCES domains (id), -- set on fetch, drives source promotion
-  status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
-  gate_scores JSONB NOT NULL DEFAULT '{}',
-  error TEXT,
-  attempts INT NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  checked_at TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS link_events_pending_idx ON link_events (created_at)
-WHERE
-  status = 'pending';
-
-CREATE INDEX IF NOT EXISTS link_events_domain_idx ON link_events (domain_id, status);
-```
+- `accepted` means stored as a raw post. The raw post holds the quality outcome.
+- Fetch errors set `failed` without retries. Database errors leave the row `pending`.
+- A proposed source is enabled only so it is not blocked. It is neither scraped nor trusted, so its posts never queue more links or searches.
+- Language comes from `<html lang>`, else the source's language.
+- The catch-up takes up to 20 rows a minute, newest first, and stops at the first error.
+- `discovery_related_posts` is not written yet.
 
 ## Defaults
 
-| Parameter       | Value                    | Why                         |
-| --------------- | ------------------------ | --------------------------- |
-| Daily fetch cap | 200 URLs                 | Scale slowly.               |
-| Per-domain rate | 1 request per 10 seconds | Politeness.                 |
-| Max attempts    | 3                        | Then `failed`.              |
-| Pending window  | 7 days                   | Older links are stale news. |
+| Parameter       | Value    | Why                         |
+| --------------- | -------- | --------------------------- |
+| Daily fetch cap | 200 URLs | Scale slowly.               |
+| Pending window  | 7 days   | Older links are stale news. |
+| Stale page      | 7 days   | Same as the pending window. |
+| Queue           | 100      | `DiscoveredQueue`.          |
 
 ## Open questions
 
-- None.
+- No `robots.txt` check yet.
