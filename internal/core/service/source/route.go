@@ -14,15 +14,12 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
 	SyncQueue       = 16
 	discoverTimeout = time.Minute
 	homepageTimeout = 20 * time.Second
-
-	invalidTextRepresentation = "22P02"
 )
 
 type listing struct {
@@ -80,9 +77,7 @@ func listingRoute(client *http.Client, l, calls *slog.Logger) http.HandlerFunc {
 func syncSource(s *postgres.SourceStore, syncs chan<- domain.Source, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		source, err := s.GetSource(r.Context(), r.PathValue("id"))
-
-		var pgErr *pgconn.PgError
-		if errors.Is(err, pgx.ErrNoRows) || (errors.As(err, &pgErr) && pgErr.Code == invalidTextRepresentation) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 			return
 		}
