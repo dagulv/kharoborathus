@@ -26,6 +26,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/pace"
+	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/migrations"
 	"golang.org/x/sync/errgroup"
@@ -79,6 +80,7 @@ func app(ctx context.Context) (err error) {
 	tagStore := postgres.NewTagStore(db)
 	sessionStore := postgres.NewSessionStore(db)
 	discoveryStore := discovery.NewStore(db)
+	discoveredStore := postgres.NewDiscoveredStore(db)
 
 	llm, err := adapter.NewDeepSeek(env, l.WithGroup("deepseek"))
 	if err != nil {
@@ -106,10 +108,19 @@ func app(ctx context.Context) (err error) {
 	searcher, searchErr := discovery.NewBrave(env)
 	searchIDs := make(chan string, discovery.SearchQueue)
 	enrichIDs := make(chan string, enrich.Queue)
+	discoveredIDs := make(chan string, source.DiscoveredQueue)
 
 	syncs := make(chan domain.Source, source.SyncQueue)
 
 	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, classifier, enrichIDs, schedule.Always, syncs)
+
+	discovered := source.Discovered{
+		Service: &sourceService,
+		Store:   &discoveredStore,
+		Client:  safehttp.NewClient(20 * time.Second),
+		Pacer:   pacer,
+		Calls:   calls,
+	}
 
 	enrichService := enrich.Service{
 		DB:         db,
@@ -167,6 +178,16 @@ func app(ctx context.Context) (err error) {
 
 	g.Go(func() error {
 		return enrichService.Run(ctx, enrichIDs, l.WithGroup("enrich"))
+	})
+
+	g.Go(func() error {
+		// Without the quality check every discovered page would be accepted.
+		if classifier == nil {
+			l.Warn("discovered ingest off", "reason", "no classifier")
+			return nil
+		}
+
+		return discovered.Run(ctx, discoveredIDs, l.WithGroup("discovered"))
 	})
 
 	g.Go(func() error {

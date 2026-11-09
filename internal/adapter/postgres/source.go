@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"time"
@@ -109,6 +110,66 @@ func scanSource(row pgx.Row) (source domain.Source, err error) {
 	)
 
 	return
+}
+
+// The domain's oldest usable source. Deleted sources count, so a domain whose sources are all disabled or deleted is blocked.
+func (s *SourceStore) DomainSource(ctx context.Context, domainID string) (source domain.Source, blocked bool, err error) {
+	var usable bool
+
+	row := s.db.QueryRow(ctx, `
+		SELECT `+sourceColumns+`, enabled AND deleted_at IS NULL AS usable
+		FROM sources
+		WHERE domain_id = $1
+		ORDER BY usable DESC, created_at
+		LIMIT 1
+		`, domainID)
+
+	err = row.Scan(
+		&source.ID,
+		&source.DomainID,
+		&source.Adapter,
+		&source.URL,
+		&source.Enabled,
+		&source.Status,
+		&source.Rate,
+		&source.Lang,
+		&source.Metadata,
+		&source.CreatedAt,
+		&usable,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Source{}, false, nil
+	}
+
+	if err != nil {
+		return domain.Source{}, false, fmt.Errorf("err get domain source %s: %w", domainID, err)
+	}
+
+	if !usable {
+		return domain.Source{}, true, nil
+	}
+
+	return source, false, nil
+}
+
+// Enabled only so it is not blocked. A proposed source is neither scraped nor trusted.
+func (s *SourceStore) CreateProposed(ctx context.Context, domainID, url, fromPostID string) (id string, err error) {
+	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO sources (domain_id, adapter, url, enabled, status) VALUES ($1, 'page', $2, true, 'proposed')
+			RETURNING id
+			`, domainID, url).Scan(&id); err != nil {
+			return fmt.Errorf("err insert proposed source: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx, `INSERT INTO source_discovered_by_post (source_id, post_id) VALUES ($1, $2)`, id, fromPostID); err != nil {
+			return fmt.Errorf("err insert source discovered by post: %w", err)
+		}
+
+		return nil
+	})
+
+	return id, err
 }
 
 // Only scraped sources are backfilled, so a proposed source waits for its promotion.
