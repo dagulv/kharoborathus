@@ -135,6 +135,9 @@ CREATE INDEX IF NOT EXISTS posts_tags_idx ON posts USING gin (tags);
 
 CREATE INDEX IF NOT EXISTS posts_posted_at_idx ON posts (posted_at DESC);
 
+-- The feed's default order, newest publication first with created_at when the date is unknown.
+CREATE INDEX IF NOT EXISTS posts_feed_idx ON posts ((coalesce(posted_at, created_at)) DESC, id DESC);
+
 CREATE INDEX IF NOT EXISTS posts_ts_idx ON posts USING gin (ts);
 
 CREATE TABLE IF NOT EXISTS source_discovered_by_post (

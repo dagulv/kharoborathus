@@ -237,3 +237,30 @@ func TestListPostsTagFilterUsesIndex(t *testing.T) {
 		t.Errorf("plan does not use posts_tags_idx:\n%s", strings.Join(rows, "\n"))
 	}
 }
+
+func TestFeedOrderUsesIndex(t *testing.T) {
+	db, _, _, _ := postsDB(t)
+	ctx := context.Background()
+
+	if _, err := db.Exec(ctx, `SET enable_seqscan = off`); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := db.Query(ctx, `EXPLAIN `+listPostsQuery+` WHERE true ORDER BY `+feedOrder+` LIMIT 30`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var rows []string
+	for r.Next() {
+		var line string
+		if err := r.Scan(&line); err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, line)
+	}
+
+	if !slices.ContainsFunc(rows, func(l string) bool { return strings.Contains(l, "posts_feed_idx") }) {
+		t.Errorf("plan does not use posts_feed_idx:\n%s", strings.Join(rows, "\n"))
+	}
+}
