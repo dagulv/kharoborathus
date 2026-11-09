@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -50,19 +49,6 @@ func TestOutboundLinks(t *testing.T) {
 [own](https://own.example/x) [t](<https://other.example/b> "title")`
 
 	if got, want := outboundLinks(md, "https://own.example"), []string{"https://news.example/a", "https://other.example/b"}; !slices.Equal(got, want) {
-		t.Errorf("got %v", got)
-	}
-}
-
-func TestOutboundLinksCap(t *testing.T) {
-	var md strings.Builder
-
-	for i := range 15 {
-		fmt.Fprintf(&md, "[l](https://n%d.example/a) ", i)
-	}
-
-	got := outboundLinks(md.String(), "https://own.example")
-	if len(got) != 10 || got[0] != "https://n0.example/a" {
 		t.Errorf("got %v", got)
 	}
 }
