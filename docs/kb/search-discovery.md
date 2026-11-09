@@ -88,7 +88,6 @@ Results are read from `web.results` and `news.results` and deduplicated by URL. 
 | Monthly budget alert         | $50                | About 10k queries at $5 per 1k.                       |
 | Daily search cap             | 322                | $50 a month at $5 per 1k queries over a 31-day month. |
 | Pending search results limit | 200                | One day of ingest at its daily cap.                   |
-| Outbound links per post      | 10                 | Old link extraction cap.                              |
 | Search queue                 | 100                | Channel buffer, `SearchQueue`.                        |
 | Catch-up                     | 10 a minute        | Brave calls stay well under the daily cap.            |
 
