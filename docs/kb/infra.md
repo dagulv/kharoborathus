@@ -54,9 +54,9 @@ Routing in Haloy:
 
 Haloy's proxy routes by hostname only. It has no path rules, no auth and no compression.
 
-- The API domain goes to the Go app's public port 3001, which serves only `/posts` and `/posts/{id}`. This is the public API.
+- The API domain goes to the Go app's only port, 3001. `/posts` and `/posts/{id}` are the public API. Everything under `/admin/` needs a session: the web app forwards the admin's session token as `Authorization: Bearer <token>`, and the Go app checks its sha256 against `sessions` like `hooks.server.ts` does.
 - The site domain serves the public feed at `/`, paged by `GET /posts?after=<post id>`, and the admin. The admin checks sessions itself in `hooks.server.ts`. `/login` checks an email and password against the `users` table and stores a random session token in an httpOnly cookie. The `sessions` table holds only the token's sha256, so a database leak gives no usable cookie. The hook guards `/admin`, every remote function under `/_app/remote` and every request that is not GET or HEAD. A GET to `/admin` without a valid session redirects to `/login`; anything else gets 401. `/healthz` stays open for Haloy's health check. adapter-node serves the static build, the JS bundles and `robots.txt`, before the hook, so those stay public. They hold code, not data.
-- `/sources/{id}/sync` lives on the Go app's internal port 3002, which no proxy publishes. Only the admin calls it, at `api:3002` on the `haloy` network.
+- The web app calls the Go app at `api:3001` on the `haloy` network: `/posts` for the feed, and `/admin/listing` and `/admin/sources/{id}/sync` for the admin.
 - The Go app uses static naming, so its container is always called `api`. That forces the replace strategy, which also keeps two scrapers from overlapping. Feeds are down for a few seconds per Go deploy. The admin deploys rolling.
 - Responses are not compressed.
 

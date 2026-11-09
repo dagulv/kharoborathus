@@ -27,7 +27,7 @@ targets:
           env: POSTGRES_DB
 
   api:
-    # A fixed name lets the admin reach the internal port at api:3002.
+    # A fixed name lets the web app reach the API at api:3001.
     # Replace also keeps two scrapers from overlapping during a deploy.
     naming_strategy: static
     deployment_strategy: replace
@@ -71,9 +71,6 @@ targets:
       - name: API_URL
         from:
           env: API_URL
-      - name: POSTS_API_URL
-        from:
-          env: POSTS_API_URL
       - name: POSTGRES_CONNECTION_STRING
         from:
           env: POSTGRES_CONNECTION_STRING
