@@ -5,17 +5,13 @@ export type Source = {
 	adapter: string;
 	url: string;
 	enabled: boolean;
-	status: 'proposed' | 'active' | 'dormant';
-	origin: 'manual' | 'discovered';
+	status: 'proposed' | 'active' | 'flagged';
 	rate: number;
-	targetTags: string[];
 	metadata: Record<string, string>;
 	createdAt: Date;
 	deletedAt: Date | null;
 	postCount: number;
 	lastPostedAt: Date | null;
-	flaggedAt: Date | null;
-	gateRate: number | null;
 };
 
 export type PostSummary = {
@@ -49,10 +45,8 @@ export type Post = PostSummary & {
 export type Tag = {
 	key: string;
 	enabled: boolean;
-	status: 'active' | 'dormant';
-	gate: boolean;
-	matchRate: number | null;
-	lastMatchedAt: Date | null;
+	status: 'proposed' | 'active';
+	type: string;
 	createdAt: Date;
 	terms: string[];
 	postCount: number;
@@ -69,13 +63,6 @@ export type TagProposal = {
 export type TagAlias = {
 	alias: string;
 	key: string;
-};
-
-export type Switch = {
-	key: string;
-	enabled: boolean;
-	updatedAt: Date;
-	readiness: string | null;
 };
 
 export type ListingCandidate = {

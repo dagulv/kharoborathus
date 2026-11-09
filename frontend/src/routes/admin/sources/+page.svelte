@@ -22,33 +22,15 @@
 		setTimeout(() => syncState.delete(id), 3000);
 	}
 
-	const flagged = $derived(sources.filter((s) => s.flaggedAt && !s.deletedAt));
-	const pct = new Intl.NumberFormat('sv-SE', { style: 'percent', maximumFractionDigits: 0 });
+	const flagged = $derived(sources.filter((s) => s.status === 'flagged' && !s.deletedAt));
 
-	const targetInput = new SvelteMap<string, string>();
 	const reviewState = new SvelteMap<string, 'pending' | 'failed'>();
 
-	function parseTags(text: string) {
-		return [
-			...new Set(
-				text
-					.split(',')
-					.map((t) => t.trim())
-					.filter(Boolean)
-			)
-		];
-	}
-
 	async function review(source: Source, enabled: boolean) {
-		const targetTags = parseTags(targetInput.get(source.id) ?? source.targetTags.join(', '));
-
 		reviewState.set(source.id, 'pending');
 		try {
-			await reviewSource({ id: source.id, enabled, targetTags }).updates(
-				listSources({ includeDeleted })
-			);
+			await reviewSource({ id: source.id, enabled }).updates(listSources({ includeDeleted }));
 			reviewState.delete(source.id);
-			targetInput.delete(source.id);
 		} catch {
 			reviewState.set(source.id, 'failed');
 		}
@@ -74,10 +56,7 @@
 {#if flagged.length}
 	<section class="mb-6 rounded border border-amber-300 bg-amber-50 p-4">
 		<h2 class="font-medium">Flagged <span class="text-zinc-500">({flagged.length})</span></h2>
-		<p class="mb-3 text-sm text-zinc-600">
-			Fewer than 70% of the last 50 posts passed the shadow gate. Keep saves the target tags below
-			and restarts the count.
-		</p>
+		<p class="mb-3 text-sm text-zinc-600">Keep makes a source active again. Disable stops it.</p>
 		<ul class="space-y-2">
 			{#each flagged as source (source.id)}
 				{@const status = reviewState.get(source.id)}
@@ -89,15 +68,6 @@
 					>
 						{source.url}
 					</a>
-					<span class="text-zinc-600 tabular-nums">
-						{source.gateRate === null ? '—' : pct.format(source.gateRate)} pass
-					</span>
-					<input
-						class="w-56 rounded border border-zinc-300 bg-white px-2 py-0.5"
-						placeholder="target tags, comma separated"
-						value={targetInput.get(source.id) ?? source.targetTags.join(', ')}
-						oninput={(e) => targetInput.set(source.id, e.currentTarget.value)}
-					/>
 					<button
 						type="button"
 						class="rounded border border-zinc-300 bg-white px-2 py-0.5 text-xs hover:bg-zinc-100 disabled:opacity-50"
@@ -129,7 +99,6 @@
 				<th class="px-3 py-2 font-medium">Adapter</th>
 				<th class="px-3 py-2 font-medium">Status</th>
 				<th class="px-3 py-2 text-right font-medium">Rate</th>
-				<th class="px-3 py-2 font-medium">Target tags</th>
 				<th class="px-3 py-2 text-right font-medium">Posts</th>
 				<th class="px-3 py-2 font-medium">Last post</th>
 				<th class="px-3 py-2 font-medium">Created</th>
@@ -160,27 +129,13 @@
 						{:else}
 							<span class="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600">disabled</span>
 						{/if}
-						{#if source.flaggedAt && !source.deletedAt}
-							<span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">flagged</span>
-						{/if}
 						{#if source.status !== 'active'}
 							<span class="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700"
 								>{source.status}</span
 							>
 						{/if}
-						{#if source.origin === 'discovered'}
-							<span class="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600">discovered</span
-							>
-						{/if}
 					</td>
 					<td class="px-3 py-2 text-right tabular-nums">{source.rate}m</td>
-					<td class="px-3 py-2">
-						<div class="flex flex-wrap gap-1">
-							{#each source.targetTags as tag (tag)}
-								<span class="rounded bg-zinc-100 px-1.5 py-0.5 text-xs">{tag}</span>
-							{/each}
-						</div>
-					</td>
 					<td class="px-3 py-2 text-right tabular-nums">
 						<a class="text-blue-600 hover:underline" href="/admin/posts?source={source.id}"
 							>{source.postCount}</a
@@ -219,7 +174,7 @@
 					</td>
 				</tr>
 			{:else}
-				<tr><td colspan="9" class="px-3 py-6 text-center text-zinc-500">No sources</td></tr>
+				<tr><td colspan="8" class="px-3 py-6 text-center text-zinc-500">No sources</td></tr>
 			{/each}
 		</tbody>
 	</table>

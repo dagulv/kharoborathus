@@ -6,7 +6,7 @@
 
 	const LINK_STATUSES = ['pending', 'accepted', 'rejected', 'duplicate', 'failed'];
 
-	// Mirrors dailySearchBudget in internal/service/discovery/search.go
+	// Mirrors dailySearchBudget in internal/adapter/search/search.go
 	const SEARCH_BUDGET = 322;
 </script>
 
@@ -23,7 +23,7 @@
 	{/each}
 </div>
 
-<h2 class="mt-8 mb-2 font-medium">Link queue</h2>
+<h2 class="mt-8 mb-2 font-medium">Discovered links</h2>
 
 <div class="grid grid-cols-2 gap-4 sm:grid-cols-5">
 	{#each LINK_STATUSES as status (status)}
