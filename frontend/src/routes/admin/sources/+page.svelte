@@ -22,7 +22,10 @@
 		setTimeout(() => syncState.delete(id), 3000);
 	}
 
-	const flagged = $derived(sources.filter((s) => s.status === 'flagged' && !s.deletedAt));
+	// A disabled flagged source keeps its flag but has already been reviewed.
+	const flagged = $derived(
+		sources.filter((s) => s.status === 'flagged' && s.enabled && !s.deletedAt)
+	);
 
 	const reviewState = new SvelteMap<string, 'pending' | 'failed'>();
 

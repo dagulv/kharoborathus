@@ -331,14 +331,14 @@ export const mergeTag = command(v.object({ from: tagKey, to: tagKey }), async ({
 	await Promise.all([listTags().refresh(), listAliases().refresh()]);
 });
 
-// Keeping a flagged source makes it active again. Disabling it stops it being fetched.
+// Keeping a flagged source makes it active again. Disabling it keeps the flag, so it gets reviewed before it runs again.
 export const reviewSource = command(
 	v.object({ id: uuid, enabled: v.boolean() }),
 	async ({ id, enabled }) => {
 		const sql = db();
 		const [source] = await sql`
 			UPDATE sources
-			SET enabled = ${enabled}, status = 'active'
+			SET enabled = ${enabled}, status = CASE WHEN ${enabled} THEN 'active' ELSE status END
 			WHERE id = ${id} AND deleted_at IS NULL
 			RETURNING 1
 		`;
