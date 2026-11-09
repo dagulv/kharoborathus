@@ -1,4 +1,4 @@
-import { listFeed } from '#lib/server/feed.js';
+import { listPosts } from '#lib/server/posts.js';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async () => ({ posts: await listFeed() });
+export const load: PageServerLoad = async () => ({ posts: await listPosts() });
