@@ -71,6 +71,7 @@ type fixture struct {
 	llm      *fakeLLM
 	jev      *fakeClassifier
 	ids      chan string
+	links    chan string
 	rawPosts *postgres.RawPostStore
 }
 
@@ -97,9 +98,10 @@ func setup(t *testing.T) fixture {
 		llm:      &fakeLLM{answer: goodAnswer},
 		jev:      &fakeClassifier{scores: map[string]float64{"acquisition": 0.9}},
 		ids:      make(chan string, 10),
+		links:    make(chan string, 10),
 		rawPosts: &rawPosts,
 	}
-	f.s = &Service{DB: db, RawPosts: &rawPosts, Posts: &posts, Tags: &tags, LLM: f.llm, Classifier: f.jev, SearchIDs: f.ids}
+	f.s = &Service{DB: db, RawPosts: &rawPosts, Posts: &posts, Tags: &tags, LLM: f.llm, Classifier: f.jev, SearchIDs: f.ids, DiscoveredIDs: f.links}
 
 	return f
 }
@@ -181,8 +183,8 @@ func TestEnrich(t *testing.T) {
 		t.Errorf("tags %v", p.Tags)
 	}
 
-	if len(f.ids) != 1 {
-		t.Errorf("enqueued %d query ids", len(f.ids))
+	if len(f.ids) != 1 || len(f.links) != 1 {
+		t.Errorf("enqueued %d query ids, %d links", len(f.ids), len(f.links))
 	}
 }
 

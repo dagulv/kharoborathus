@@ -28,7 +28,7 @@ type searchStore interface {
 	SearchesLastDay(ctx context.Context) (int, error)
 	MarkRejected(ctx context.Context, id string) error
 	SaveResults(ctx context.Context, id string, results []SearchResult) error
-	SaveKept(ctx context.Context, item SearchItem, kept []int, urls []string) error
+	SaveKept(ctx context.Context, item SearchItem, kept []int, urls []string) ([]string, error)
 }
 
 // A dropped id keeps searched_at NULL, so catchUp finds it.
@@ -42,18 +42,27 @@ func Enqueue(ids chan<- string, l *slog.Logger, id string) bool {
 	}
 }
 
+// A dropped id stays pending, so the ingest catch-up finds it.
+func EnqueueLink(ids chan<- string, l *slog.Logger, id string) {
+	select {
+	case ids <- id:
+	default:
+		l.Warn("discovered queue full", "discovery_post", id)
+	}
+}
+
 // One query at a time, so the budget and pending checks cannot race.
-func RunSearch(ctx context.Context, s searchStore, ids <-chan string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
+func RunSearch(ctx context.Context, s searchStore, ids <-chan string, links chan<- string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
 	tick := sched.Tick(ctx, time.Minute)
 
 	for {
 		select {
 		case id := <-ids:
-			if err := searchQuery(ctx, s, id, se, f, sched, l, calls); err != nil {
+			if err := searchQuery(ctx, s, id, links, se, f, sched, l, calls); err != nil {
 				l.Error("search query", "query", id, "err", err)
 			}
 		case <-tick:
-			if err := catchUp(ctx, s, se, f, sched, l, calls); err != nil && ctx.Err() == nil {
+			if err := catchUp(ctx, s, links, se, f, sched, l, calls); err != nil && ctx.Err() == nil {
 				l.Error("search catch up", "err", err)
 			}
 		case <-ctx.Done():
@@ -63,14 +72,14 @@ func RunSearch(ctx context.Context, s searchStore, ids <-chan string, se Searche
 }
 
 // Stops at the first error, so an outage costs one call a tick instead of a whole batch.
-func catchUp(ctx context.Context, s searchStore, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
+func catchUp(ctx context.Context, s searchStore, links chan<- string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
 	ids, err := s.ListUnfinished(ctx, dedupeWindow, catchUpBatch)
 	if err != nil {
 		return err
 	}
 
 	for _, id := range ids {
-		if err := searchQuery(ctx, s, id, se, f, sched, l, calls); err != nil {
+		if err := searchQuery(ctx, s, id, links, se, f, sched, l, calls); err != nil {
 			return err
 		}
 	}
@@ -78,7 +87,7 @@ func catchUp(ctx context.Context, s searchStore, se Searcher, f *ResultFilter, s
 	return nil
 }
 
-func searchQuery(ctx context.Context, s searchStore, id string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
+func searchQuery(ctx context.Context, s searchStore, id string, links chan<- string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
 	item, err := s.GetQuery(ctx, id)
 	if err != nil || item.Done {
 		return err
@@ -115,8 +124,13 @@ func searchQuery(ctx context.Context, s searchStore, id string, se Searcher, f *
 		kept = []int{}
 	}
 
-	if err := s.SaveKept(context.WithoutCancel(ctx), item, kept, filterLinks(urls, item.BaseURL)); err != nil {
+	linkIDs, err := s.SaveKept(context.WithoutCancel(ctx), item, kept, filterLinks(urls, item.BaseURL))
+	if err != nil {
 		return fmt.Errorf("err save kept %s: %w", id, err)
+	}
+
+	for _, linkID := range linkIDs {
+		EnqueueLink(links, l, linkID)
 	}
 
 	l.Info("search query", "query", id, "results", len(results), "kept", len(kept))

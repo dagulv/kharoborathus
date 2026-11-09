@@ -9,7 +9,7 @@ Turns `discovery_posts` rows into raw posts with step 1's stages: extract, markd
 
 ## Current state
 
-[discovered.go](../../internal/core/service/source/discovered.go): `Discovered.Run` reads ids from a channel and runs a catch-up every minute. It does not start without Jev, since then every page would be accepted.
+[discovered.go](../../internal/core/service/source/discovered.go): `Discovered.Run` reads the ids enrich and search send for new rows, and runs a catch-up every minute for rows a full channel dropped. It does not start without Jev, since then every page would be accepted.
 
 ## Design
 

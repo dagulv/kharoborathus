@@ -56,24 +56,29 @@ func discoverDB(t *testing.T) *database.Database {
 	return db
 }
 
-func discover(t *testing.T, db *database.Database, post domain.Post, events ...Keyword) (ids []string) {
+func discover(t *testing.T, db *database.Database, post domain.Post, events ...Keyword) []string {
+	return discoverAll(t, db, post, events...).Queries
+}
+
+func discoverAll(t *testing.T, db *database.Database, post domain.Post, events ...Keyword) (f Found) {
 	t.Helper()
 
 	if err := pgx.BeginFunc(context.Background(), db, func(tx pgx.Tx) (err error) {
-		ids, err = Discover(context.Background(), tx, post, events)
+		f, err = Discover(context.Background(), tx, post, events)
 		return err
 	}); err != nil {
 		t.Fatalf("err discover: %v", err)
 	}
 
-	return ids
+	return f
 }
 
 func TestDiscoverNewQuery(t *testing.T) {
 	db := discoverDB(t)
 	post := seedPost(t, db, seed{Trusted: true, Content: volvoArticle})
 
-	ids := discover(t, db, post, volvoTakeover)
+	f := discoverAll(t, db, post, volvoTakeover)
+	ids := f.Queries
 	if len(ids) != 1 {
 		t.Fatalf("got ids %v", ids)
 	}
@@ -86,7 +91,11 @@ func TestDiscoverNewQuery(t *testing.T) {
 		t.Errorf("query links %d", n)
 	}
 
-	if n := count(t, db, `SELECT count(*) FROM discovery_posts WHERE url = 'https://news.example/a' AND from_post_id = $1 AND discovery_search_query_id IS NULL`, post.ID); n != 1 {
+	if len(f.Links) != 1 {
+		t.Fatalf("got links %v", f.Links)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_posts WHERE id = $1 AND url = 'https://news.example/a' AND from_post_id = $2 AND discovery_search_query_id IS NULL`, f.Links[0], post.ID); n != 1 {
 		t.Errorf("discovery posts %d", n)
 	}
 }
@@ -214,9 +223,9 @@ func TestDiscoverConcurrent(t *testing.T) {
 	}
 	defer txA.Rollback(ctx)
 
-	idsA, err := Discover(ctx, txA, seedPost(t, db, seed{Trusted: true, Content: volvoArticle}), []Keyword{volvoTakeover})
-	if err != nil || len(idsA) != 1 {
-		t.Fatalf("a: ids %v, %v", idsA, err)
+	foundA, err := Discover(ctx, txA, seedPost(t, db, seed{Trusted: true, Content: volvoArticle}), []Keyword{volvoTakeover})
+	if err != nil || len(foundA.Queries) != 1 {
+		t.Fatalf("a: ids %v, %v", foundA.Queries, err)
 	}
 
 	type result struct {
@@ -231,7 +240,8 @@ func TestDiscoverConcurrent(t *testing.T) {
 	go func() {
 		var r result
 		r.err = pgx.BeginFunc(ctx, db, func(tx pgx.Tx) (err error) {
-			r.ids, err = Discover(ctx, tx, post, []Keyword{{Entity: "Volvo Cars", Action: "acquisition", Query: "Volvo Cars förvärvar Northvolt"}})
+			f, err := Discover(ctx, tx, post, []Keyword{{Entity: "Volvo Cars", Action: "acquisition", Query: "Volvo Cars förvärvar Northvolt"}})
+			r.ids = f.Queries
 			return err
 		})
 		done <- r

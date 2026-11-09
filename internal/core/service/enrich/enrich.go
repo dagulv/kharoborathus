@@ -31,6 +31,8 @@ type Service struct {
 	// Nil when Jev is not configured. Posts then get proposed keys only.
 	Classifier port.Classifier
 	SearchIDs  chan<- string
+	// New discovery_posts ids, for discovered ingest.
+	DiscoveredIDs chan<- string
 
 	tags tagCache
 }
@@ -43,7 +45,7 @@ type answer struct {
 
 // A closed schedule or shutdown is not an attempt. Any other error fails the raw post and counts a retry.
 func (s *Service) Enrich(ctx context.Context, l *slog.Logger, rawPostID string) error {
-	queryIDs, err := s.enrich(ctx, l, rawPostID)
+	found, err := s.enrich(ctx, l, rawPostID)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -61,37 +63,41 @@ func (s *Service) Enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		return err
 	}
 
-	for _, id := range queryIDs {
+	for _, id := range found.Queries {
 		discovery.Enqueue(s.SearchIDs, l, id)
+	}
+
+	for _, id := range found.Links {
+		discovery.EnqueueLink(s.DiscoveredIDs, l, id)
 	}
 
 	return nil
 }
 
-func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) ([]string, error) {
+func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) (discovery.Found, error) {
 	p, err := s.RawPosts.GetRawPost(ctx, rawPostID)
 	if err != nil {
-		return nil, err
+		return discovery.Found{}, err
 	}
 
 	if p.Status != domain.StatusAccepted && (p.Status != domain.StatusFailed || p.RetryCount >= maxRetries) {
-		return nil, nil
+		return discovery.Found{}, nil
 	}
 
 	exists, err := s.Posts.PostExists(ctx, p.URL)
 	if err != nil || exists {
-		return nil, err
+		return discovery.Found{}, err
 	}
 
 	if !s.LLM.Schedule().Active(time.Now()) {
-		return nil, nil
+		return discovery.Found{}, nil
 	}
 
 	l = l.With("raw_post_id", p.ID, "url", p.URL)
 
 	set, err := s.tags.get(ctx, p.Lang, s.loadTags)
 	if err != nil {
-		return nil, err
+		return discovery.Found{}, err
 	}
 
 	active := set.active
@@ -101,7 +107,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 	// Before DeepSeek, so a Jev outage never wastes a paid call.
 	if s.Classifier != nil {
 		if tags, err = jevTags(ctx, s.Classifier, l, p.Title, p.Content, active); err != nil {
-			return nil, err
+			return discovery.Found{}, err
 		}
 	}
 
@@ -115,7 +121,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 
 	prompt, err := userPrompt(p.Lang, set.keys, quality, p.Content)
 	if err != nil {
-		return nil, err
+		return discovery.Found{}, err
 	}
 
 	temp := 0.2
@@ -123,12 +129,12 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 	var a answer
 
 	if err := s.LLM.Unmarshal(ctx, l, port.Request{System: systemPrompt, Prompt: prompt, Temperature: &temp}, &a); err != nil {
-		return nil, fmt.Errorf("err enrich answer: %w", err)
+		return discovery.Found{}, fmt.Errorf("err enrich answer: %w", err)
 	}
 
 	trusted, err := s.Posts.Trusted(ctx, p.SourceID)
 	if err != nil {
-		return nil, err
+		return discovery.Found{}, err
 	}
 
 	proposals := make([]postgres.Proposal, 0, maxProposals)
@@ -160,7 +166,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		Simhash:      p.Simhash,
 	}
 
-	var queryIDs []string
+	var found discovery.Found
 
 	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if trusted {
@@ -183,14 +189,14 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 			return err
 		}
 
-		queryIDs, err = discovery.Discover(ctx, tx, post, a.Events)
+		found, err = discovery.Discover(ctx, tx, post, a.Events)
 		return err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("err save post: %w", err)
+		return discovery.Found{}, fmt.Errorf("err save post: %w", err)
 	}
 
-	return queryIDs, nil
+	return found, nil
 }
 
 func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
