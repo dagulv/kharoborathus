@@ -9,5 +9,9 @@ export const variables = defineEnvVars({
 	API_URL: {
 		schema: (value) => (value || 'http://localhost:3002').replace(/\/+$/, ''),
 		description: 'Base URL of the Go app internal HTTP server'
+	},
+	POSTS_API_URL: {
+		schema: (value) => (value || 'http://localhost:3001').replace(/\/+$/, ''),
+		description: 'Base URL of the Go app public HTTP server, which serves posts'
 	}
 });
