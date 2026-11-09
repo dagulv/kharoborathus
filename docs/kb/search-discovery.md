@@ -18,7 +18,7 @@ Searches the web with the Brave Search API for other sources on events found in 
 
 **Step 3: Discover.** Inside step 2's transaction, no LLM.
 
-1. Trusted posts, from an enabled source with `status = 'active'`, queue up to 10 outbound markdown links in `discovery_posts` with no query id.
+1. Trusted posts, from an enabled source with `status = 'active'`, queue their outbound markdown links in `discovery_posts` with no query id.
 2. Events are grounded: the entity must be in the article and in the query.
 3. Actions are normalized like tag keys and mapped through `tag_aliases`. Only active, enabled `quality` tags pass.
 4. `normalized_entity` is the entity as a tag key, like `volvo_cars`.

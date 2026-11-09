@@ -7,11 +7,8 @@ import (
 	"strings"
 )
 
-const (
-	maxLinksPerPost = 10
-	// Longer URLs break the unique btree indexes on discovery_posts.url and posts.url.
-	maxLinkLength = 2000
-)
+// Longer URLs break the unique btree indexes on discovery_posts.url and posts.url.
+const maxLinkLength = 2000
 
 var markdownLink = regexp.MustCompile(`(!?)\[[^\[\]]*\]\(<?([^\s()<>]+)>?(?:\s+"[^"]*")?\)`)
 
@@ -36,9 +33,7 @@ func outboundLinks(markdown, ownBaseURL string) []string {
 		raw = append(raw, m[2])
 	}
 
-	links := filterLinks(raw, ownBaseURL)
-
-	return links[:min(len(links), maxLinksPerPost)]
+	return filterLinks(raw, ownBaseURL)
 }
 
 func filterLinks(raw []string, ownBaseURL string) []string {
