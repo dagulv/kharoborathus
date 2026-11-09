@@ -17,6 +17,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
 	adapter "github.com/dagulv/kharoborathus/internal/adapter/robot"
 	discovery "github.com/dagulv/kharoborathus/internal/adapter/search"
+	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/core/service/enrich"
 	"github.com/dagulv/kharoborathus/internal/core/service/posts"
 	"github.com/dagulv/kharoborathus/internal/core/service/source"
@@ -104,7 +105,9 @@ func app(ctx context.Context) (err error) {
 	searchIDs := make(chan string, discovery.SearchQueue)
 	enrichIDs := make(chan string, enrich.Queue)
 
-	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, classifier, enrichIDs, schedule.Always, nil)
+	syncs := make(chan domain.Source, source.SyncQueue)
+
+	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, classifier, enrichIDs, schedule.Always, syncs)
 
 	enrichService := enrich.Service{
 		DB:         db,
@@ -119,17 +122,26 @@ func app(ctx context.Context) (err error) {
 	mux := http.NewServeMux()
 	posts.Routes(mux, &postStore, l.WithGroup("posts"))
 
-	server := &http.Server{Addr: env.HttpHost, Handler: mux}
+	// The proxy publishes only the public port, so sync and listing stay reachable from the admin alone.
+	internalMux := http.NewServeMux()
+	source.Routes(internalMux, &sourceStore, syncs, l.WithGroup("source"), calls)
+
+	servers := []*http.Server{
+		{Addr: env.HttpHost, Handler: mux},
+		{Addr: env.InternalHttpHost, Handler: internalMux},
+	}
 
 	g, ctx := errgroup.WithContext(ctx)
 
-	g.Go(func() error {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("err serve %s: %w", server.Addr, err)
-		}
+	for _, server := range servers {
+		g.Go(func() error {
+			if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("err serve %s: %w", server.Addr, err)
+			}
 
-		return nil
-	})
+			return nil
+		})
+	}
 
 	g.Go(func() error {
 		<-ctx.Done()
@@ -137,11 +149,14 @@ func app(ctx context.Context) (err error) {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("err shutdown %s: %w", server.Addr, err)
+		var errs []error
+		for _, server := range servers {
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				errs = append(errs, fmt.Errorf("err shutdown %s: %w", server.Addr, err))
+			}
 		}
 
-		return nil
+		return errors.Join(errs...)
 	})
 
 	g.Go(func() error {
