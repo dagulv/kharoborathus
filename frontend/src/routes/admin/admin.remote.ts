@@ -1,7 +1,8 @@
 import * as v from 'valibot';
 import { error, invalid, redirect } from '@sveltejs/kit';
-import { command, form, query } from '$app/server';
+import { command, form, getRequestEvent, query } from '$app/server';
 import { API_URL } from '$app/env/private';
+import { SESSION_COOKIE } from '#lib/server/auth.js';
 import { db } from '#lib/server/db.js';
 import { LOG_TYPES } from '#lib/types.js';
 import type {
@@ -18,6 +19,11 @@ import type {
 } from '#lib/types.js';
 
 const PAGE_SIZE = 50;
+
+// The Go app's admin routes check the same session, so the admin's token goes along.
+function goAuth() {
+	return { authorization: `Bearer ${getRequestEvent().cookies.get(SESSION_COOKIE) ?? ''}` };
+}
 
 const uuid = v.pipe(v.string(), v.uuid());
 
@@ -187,10 +193,13 @@ const httpURL = v.pipe(
 
 // Lists what the Go app can read a url as, best first. See discover in the Go app.
 export const checkSource = command(httpURL, async (url) => {
-	const res = await fetch(`${API_URL}/listing?url=${encodeURIComponent(url)}`).catch(() => {
+	const res = await fetch(`${API_URL}/admin/listing?url=${encodeURIComponent(url)}`, {
+		headers: goAuth()
+	}).catch(() => {
 		error(502, 'Go app unreachable');
 	});
 
+	if (res.status === 401) error(401, 'Go app rejected the session');
 	if (!res.ok) error(422, `Could not fetch ${url}: ${(await res.text()).trim()}`);
 
 	return (await res.json()) as SourceCheck;
@@ -252,10 +261,14 @@ export const createSource = form(
 );
 
 export const syncSource = command(uuid, async (id) => {
-	const res = await fetch(`${API_URL}/sources/${id}/sync`, { method: 'POST' }).catch(() => {
+	const res = await fetch(`${API_URL}/admin/sources/${id}/sync`, {
+		method: 'POST',
+		headers: goAuth()
+	}).catch(() => {
 		error(502, 'Go app unreachable');
 	});
 
+	if (res.status === 401) error(401, 'Go app rejected the session');
 	if (res.status === 404) error(404, 'Source not found');
 	if (res.status === 409) error(409, 'Source is not active or is disabled');
 	if (!res.ok) error(502, `Go app responded ${res.status}`);

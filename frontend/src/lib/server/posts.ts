@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { POSTS_API_URL } from '$app/env/private';
+import { API_URL } from '$app/env/private';
 import type { FeedPost } from '#lib/types.js';
 
 export const FEED_PAGE_SIZE = 30;
@@ -10,7 +10,7 @@ export async function listPosts(after?: string) {
 	const params = new URLSearchParams({ limit: String(FEED_PAGE_SIZE) });
 	if (after) params.set('after', after);
 
-	const res = await fetch(`${POSTS_API_URL}/posts?${params}`).catch(() => {
+	const res = await fetch(`${API_URL}/posts?${params}`).catch(() => {
 		error(502, 'Go app unreachable');
 	});
 

@@ -1,7 +1,7 @@
 import { loadEnv } from 'vite';
 
-// The deploy's API URLs name the api container, which dev never runs, so dev keeps the localhost default.
-const deployOnly = new Set(['API_URL', 'POSTS_API_URL']);
+// The deploy's API_URL names the api container, which dev never runs, so dev keeps the localhost default.
+const deployOnly = new Set(['API_URL']);
 
 // Shared by vite.config.ts and scripts/, which run outside kit's env handling.
 export function loadDevEnv(mode: string) {
