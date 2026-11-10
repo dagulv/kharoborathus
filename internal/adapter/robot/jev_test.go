@@ -66,6 +66,7 @@ func TestJevErrors(t *testing.T) {
 	}{
 		"rate limited": {http.StatusTooManyRequests, "", port.ErrUnavailable},
 		"overloaded":   {statusJevOverloaded, "", port.ErrUnavailable},
+		"bad gateway":  {http.StatusBadGateway, "", port.ErrUnavailable},
 		"missing":      {http.StatusOK, `{"answers":{}}`, port.ErrIncomplete},
 	}
 
@@ -87,5 +88,13 @@ func TestJevErrors(t *testing.T) {
 
 	if _, err := j.Noul(context.Background(), slog.New(slog.DiscardHandler), "x", map[string]port.NoulQuestion{"a": {Instructions: "?"}}); err == nil || errors.Is(err, port.ErrUnavailable) {
 		t.Errorf("422: got %v", err)
+	}
+
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close()
+	j = jev{client: srv.Client(), url: srv.URL, key: "secret", model: JevModel, l: slog.New(slog.DiscardHandler)}
+
+	if _, err := j.Noul(context.Background(), slog.New(slog.DiscardHandler), "x", map[string]port.NoulQuestion{"a": {Instructions: "?"}}); !errors.Is(err, port.ErrUnavailable) {
+		t.Errorf("unreachable: got %v", err)
 	}
 }
