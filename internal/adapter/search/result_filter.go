@@ -2,13 +2,28 @@ package discovery
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"slices"
+	"strings"
 
 	"github.com/dagulv/kharoborathus/internal/core/port"
+	"golang.org/x/sync/errgroup"
 )
+
+const (
+	keepThreshold = 0.8
+	filterWorkers = 5
+)
+
+var resultQuestion = map[string]port.NoulQuestion{
+	"result": {
+		Instructions: "Does this search result report the given action by the given entity?",
+		Criteria: &port.NoulCriteria{
+			True:  "It reports this same event by this same entity, as a news article, press release, company page or filing from any site, small or large.",
+			False: "It reports another event, mentions the entity or event only in passing, is a listing, search, tag or category page, a stock quote or a company profile, or its text does not show the event.",
+		},
+	},
+}
 
 type SearchResult struct {
 	URL           string   `json:"-"`
@@ -19,68 +34,54 @@ type SearchResult struct {
 	Hostname      string   `json:"hostname"`
 }
 
-type filterResult struct {
-	ID int `json:"id"`
-	SearchResult
-}
-
-type filterAnswer struct {
-	Keep []int `json:"keep"`
-}
-
 type ResultFilter struct {
-	llm port.LLM
+	classifier port.Classifier
 }
 
-func NewResultFilter(llm port.LLM) *ResultFilter {
-	return &ResultFilter{llm: llm}
+func NewResultFilter(c port.Classifier) *ResultFilter {
+	return &ResultFilter{classifier: c}
 }
 
+// One Jev call per result, so no result is judged by another's text.
 func (f *ResultFilter) Keep(ctx context.Context, l *slog.Logger, entity, action string, results []SearchResult) ([]int, error) {
-	if len(results) == 0 {
-		return nil, nil
-	}
+	scores := make([]float64, len(results))
 
-	ids := make([]filterResult, len(results))
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(filterWorkers)
 
 	for i, r := range results {
-		ids[i] = filterResult{ID: i, SearchResult: r}
+		g.Go(func() error {
+			state := map[string]string{
+				"entity":         entity,
+				"action":         action,
+				"title":          r.Title,
+				"description":    r.Description,
+				"extra_snippets": strings.Join(r.ExtraSnippets, "\n"),
+				"page_age":       r.PageAge,
+				"hostname":       r.Hostname,
+			}
+
+			s, err := f.classifier.Noul(ctx, l, state, resultQuestion)
+			if err != nil {
+				return fmt.Errorf("err classify search result %d: %w", i, err)
+			}
+
+			scores[i] = s["result"]
+
+			return nil
+		})
 	}
 
-	b, err := json.Marshal(ids)
-	if err != nil {
-		return nil, fmt.Errorf("err marshal search results: %w", err)
-	}
-
-	prompt, err := render("search_filter_user_prompt", map[string]any{
-		"Entity":  entity,
-		"Action":  action,
-		"Results": string(b),
-	})
-	if err != nil {
+	if err := g.Wait(); err != nil {
 		return nil, err
-	}
-
-	temp := 0.0
-
-	var answer filterAnswer
-
-	if err := f.llm.Unmarshal(ctx, l, port.Request{
-		System:      searchFilterSystem,
-		Prompt:      prompt,
-		Temperature: &temp,
-	}, &answer); err != nil {
-		return nil, fmt.Errorf("err filter search results: %w", err)
 	}
 
 	var kept []int
 
-	for _, id := range answer.Keep {
-		if id < 0 || id >= len(results) || slices.ContainsFunc(kept, func(k int) bool { return results[k].URL == results[id].URL }) {
-			continue
+	for i, s := range scores {
+		if s >= keepThreshold {
+			kept = append(kept, i)
 		}
-
-		kept = append(kept, id)
 	}
 
 	return kept, nil
