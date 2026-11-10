@@ -58,7 +58,7 @@ func (s *Service) checkQuality(ctx context.Context, l *slog.Logger, p domain.Raw
 	article, err := isArticle(ctx, s.Classifier, l.With("source_id", p.SourceID, "url", p.URL), p.Title, p.Content)
 	if err != nil {
 		l.Warn("check quality", "source", p.SourceID, "url", p.URL, "err", err)
-		return p, pipeline.ErrSkip
+		return p, fmt.Errorf("%w: %w", pipeline.ErrSkip, err)
 	}
 
 	p.Status = domain.StatusAccepted

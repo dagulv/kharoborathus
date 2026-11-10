@@ -20,11 +20,13 @@ import (
 type fakeClassifier struct {
 	score     float64
 	err       error
+	calls     int
 	state     map[string]string
 	questions map[string]port.NoulQuestion
 }
 
 func (f *fakeClassifier) Noul(_ context.Context, _ *slog.Logger, state any, questions map[string]port.NoulQuestion) (map[string]float64, error) {
+	f.calls++
 	f.state = state.(map[string]string)
 	f.questions = questions
 

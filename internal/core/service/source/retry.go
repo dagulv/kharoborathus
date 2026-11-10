@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/pipeline"
 )
 
@@ -22,7 +23,8 @@ func (s *Service) retryPending(ctx context.Context, l *slog.Logger) {
 	}
 }
 
-// Stops at the first failed check, so a Jev outage costs one call a tick instead of a whole batch.
+// Stops at a Jev outage, so it costs one call a tick instead of a whole batch.
+// A post Jev fails on is skipped, so it cannot block the posts behind it.
 func (s *Service) retryBatch(ctx context.Context, l *slog.Logger) error {
 	posts, err := s.RawPostStore.ListPending(ctx, retryBatch, retryGap)
 	if err != nil {
@@ -31,8 +33,12 @@ func (s *Service) retryBatch(ctx context.Context, l *slog.Logger) error {
 
 	for _, p := range posts {
 		p, err := s.checkQuality(ctx, l, p)
-		if errors.Is(err, pipeline.ErrSkip) {
+		if errors.Is(err, port.ErrUnavailable) {
 			return nil
+		}
+
+		if errors.Is(err, pipeline.ErrSkip) {
+			continue
 		}
 
 		if err != nil {
