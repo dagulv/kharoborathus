@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -42,9 +43,11 @@ func NewResultFilter(c port.Classifier) *ResultFilter {
 	return &ResultFilter{classifier: c}
 }
 
-// One Jev call per result, so no result is judged by another's text.
+// One Jev call per result, so no result is judged by another's text. A result Jev fails on is dropped,
+// so one bad result cannot block its query. An outage, or failing on every result, fails the filter.
 func (f *ResultFilter) Keep(ctx context.Context, l *slog.Logger, entity, action string, results []SearchResult) ([]int, error) {
 	scores := make([]float64, len(results))
+	errs := make([]error, len(results))
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(filterWorkers)
@@ -62,10 +65,11 @@ func (f *ResultFilter) Keep(ctx context.Context, l *slog.Logger, entity, action 
 			}
 
 			s, err := f.classifier.Noul(ctx, l, state, resultQuestion)
-			if err != nil {
+			if errors.Is(err, port.ErrUnavailable) {
 				return fmt.Errorf("err classify search result %d: %w", i, err)
 			}
 
+			errs[i] = err
 			scores[i] = s["result"]
 
 			return nil
@@ -74,6 +78,19 @@ func (f *ResultFilter) Keep(ctx context.Context, l *slog.Logger, entity, action 
 
 	if err := g.Wait(); err != nil {
 		return nil, err
+	}
+
+	// Each failed call is already a row in the logs table.
+	failed := 0
+
+	for _, err := range errs {
+		if err != nil {
+			failed++
+		}
+	}
+
+	if failed > 0 && failed == len(results) {
+		return nil, fmt.Errorf("err classify every search result: %w", errs[0])
 	}
 
 	var kept []int

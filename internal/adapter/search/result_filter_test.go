@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"sync"
@@ -16,9 +17,10 @@ var searchResults = []SearchResult{
 	{URL: "https://c.example/3", Title: "Volvo förvärvar Northvolt", Description: "Affären", ExtraSnippets: []string{"Mer", "Mest"}, PageAge: "2026-10-16T08:00:00", Hostname: "c.example"},
 }
 
-// Scores a result by its title.
+// Scores a result by its title. fail errors on single titles, err on every one.
 type fakeClassifier struct {
 	scores map[string]float64
+	fail   map[string]error
 	err    error
 
 	mu     sync.Mutex
@@ -31,6 +33,10 @@ func (f *fakeClassifier) Noul(_ context.Context, _ *slog.Logger, state any, _ ma
 	f.mu.Lock()
 	f.states = append(f.states, s)
 	f.mu.Unlock()
+
+	if err := f.fail[s["title"]]; err != nil {
+		return nil, err
+	}
 
 	if f.err != nil {
 		return nil, f.err
@@ -103,5 +109,21 @@ func TestKeepError(t *testing.T) {
 
 	if got, err := NewResultFilter(c).Keep(context.Background(), slog.New(slog.DiscardHandler), "Volvo", "acquisition", searchResults); err == nil || got != nil {
 		t.Errorf("got %v, %v", got, err)
+	}
+}
+
+func TestKeepDropsFailed(t *testing.T) {
+	c := keepNorthvolt()
+	c.fail = map[string]error{"Volvo köper Northvolt": port.ErrIncomplete}
+
+	got, err := NewResultFilter(c).Keep(context.Background(), slog.New(slog.DiscardHandler), "Volvo", "acquisition", searchResults)
+	if err != nil || !slices.Equal(got, []int{2}) {
+		t.Errorf("got %v, %v", got, err)
+	}
+
+	c.err = errors.New("jev: 400 Bad Request")
+
+	if got, err := NewResultFilter(c).Keep(context.Background(), slog.New(slog.DiscardHandler), "Volvo", "acquisition", searchResults); err == nil || got != nil {
+		t.Errorf("every result failed: got %v, %v", got, err)
 	}
 }
