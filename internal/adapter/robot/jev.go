@@ -124,14 +124,14 @@ func (j jev) send(ctx context.Context, l *slog.Logger, body jevRequest, out *jev
 
 	res, err := logs.Client(j.client, l, "jev").Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: err call jev: %w", port.ErrUnavailable, err)
 	}
 	defer res.Body.Close()
 
-	switch res.StatusCode {
-	case http.StatusOK:
+	switch {
+	case res.StatusCode == http.StatusOK:
 		return json.NewDecoder(res.Body).Decode(out)
-	case http.StatusTooManyRequests, http.StatusServiceUnavailable, statusJevOverloaded:
+	case res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= http.StatusInternalServerError:
 		return fmt.Errorf("%w: jev %s", port.ErrUnavailable, res.Status)
 	}
 
