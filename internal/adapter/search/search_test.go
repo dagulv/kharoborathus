@@ -307,7 +307,8 @@ func TestStoreSearch(t *testing.T) {
 		t.Fatalf("link ids %v, %v", linkIDs, err)
 	}
 
-	if n, err := s.PendingResults(ctx, dedupeWindow); err != nil || n != 1 {
+	// The kept result and the posts' outbound link.
+	if n, err := s.PendingResults(ctx, dedupeWindow); err != nil || n != 2 {
 		t.Errorf("pending %d, %v", n, err)
 	}
 
