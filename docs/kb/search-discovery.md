@@ -5,7 +5,7 @@
 
 ## Summary
 
-Searches the web with the Brave Search API for other sources on events found in trusted posts, when the event's action is a quality tag: news, press releases, company pages and filings. An LLM filters results before anything is fetched. Both steps are links in the event chain. No ticker polls for work. See [the design](../superpowers/specs/2026-11-08-event-driven-search-design.md).
+Searches the web with the Brave Search API for other sources on events found in trusted posts, when the event's action is a quality tag: news, press releases, company pages and filings. Jev filters results before anything is fetched. Both steps are links in the event chain. No ticker polls for work. See [the design](../superpowers/specs/2026-11-08-event-driven-search-design.md).
 
 ## Current state
 
@@ -32,7 +32,7 @@ Searches the web with the Brave Search API for other sources on events found in 
 2. Leave the query untouched while 200 or more search results are pending within 7 days, or 322 searches were paid in the last day.
 3. Search Brave in the language of the query's earliest linked post.
 4. Save the raw results in `result.results`, even during shutdown, since Brave billed them.
-5. While DeepSeek's off-peak schedule is active, filter the results. Write the kept indexes to `result.kept` and queue the kept URLs in `discovery_posts` with the query id, skipping URLs already in `posts`. New rows go to discovered ingest with `EnqueueLink`.
+5. Ask Jev about each result in its own call, five at a time. A result scoring 0.8 or more is kept. Write the kept indexes to `result.kept` and queue the kept URLs in `discovery_posts` with the query id, skipping URLs already in `posts`. New rows go to discovered ingest with `EnqueueLink`.
 
 | `searched_at` | `result` | State | Paid |
 |---|---|---|---|
@@ -41,9 +41,9 @@ Searches the web with the Brave Search API for other sources on events found in 
 | set | `results`, no `kept` | Searched, not filtered. | Yes |
 | set | `results` and `kept` | Done. | Yes |
 
-**Catch-up.** Every minute while DeepSeek's schedule is open, in the same loop as the ids.
+**Catch-up.** Every minute, in the same loop as the ids.
 
-1. Take up to 10 queries from the last 7 days with no `searched_at`, or with `results` and no `kept`. These are ids dropped by a full channel, held back by a limit, failed, or searched while DeepSeek was closed.
+1. Take up to 10 queries from the last 7 days with no `searched_at`, or with `results` and no `kept`. These are ids dropped by a full channel, held back by a limit, or failed in the search or the filter.
 2. Unfiltered paid results go first, then newest queries.
 3. Skip queries whose linked posts are all gone.
 4. Stop at the first error.
@@ -51,9 +51,11 @@ Searches the web with the Brave Search API for other sources on events found in 
 Rules:
 
 - 429, 5xx, unreadable responses and other errors leave the query untouched.
-- No results means no LLM call. `kept` is written as `[]`.
-- The filter never sees result URLs and answers with result ids. The entity is passed with underscores as spaces.
-- Without `BRAVE_API_KEY` the search worker does not start.
+- No results means no Jev call. `kept` is written as `[]`.
+- Jev sees the entity, action, title, description, extra snippets, page age and hostname of one result, never its URL. The entity is passed with underscores as spaces.
+- One failed Jev call fails the whole filter. The next try asks about every result again.
+- Without `BRAVE_API_KEY` or a Jev key the search worker does not start. Without Jev, discovered ingest is off too.
+- Jev has no off-peak window, so a query is searched and filtered in one pass.
 
 ### Brave Web Search request
 
@@ -90,6 +92,8 @@ Results are read from `web.results` and `news.results` and deduplicated by URL. 
 | Pending search results limit | 200                | One day of ingest at its daily cap.                   |
 | Search queue                 | 100                | Channel buffer, `SearchQueue`.                        |
 | Catch-up                     | 10 a minute        | Brave calls stay well under the daily cap.            |
+| Keep threshold               | 0.8                | Same as the article check and tags.                   |
+| Filter calls in flight       | 5                  | Up to 40 results a query, one Jev call each.          |
 
 ## Open questions
 

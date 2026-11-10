@@ -37,8 +37,8 @@ Source pipeline per article. Every request to a host waits 5 seconds after the p
 
 AI providers live in [robot/adapter](../../internal/service/robot/adapter):
 
-- DeepSeek is the LLM for rule generation, summaries, tag generation, event extraction and the search result filter.
-- Jev is the classifier. It answers yes or no questions as scores from 0 to 1, including the quality gate on every post.
+- DeepSeek is the LLM for rule generation, summaries, tag generation and event extraction.
+- Jev is the classifier. It answers yes or no questions as scores from 0 to 1, including the quality gate on every post and the search result filter.
 
 Brave Web Search is called from [brave.go](../../internal/service/discovery/brave.go).
 
