@@ -104,7 +104,7 @@ func app(ctx context.Context) (err error) {
 		"wordpress": source.NewFetcher(fetcher.NewWordPress(&rawPostStore, pacer, l), calls),
 	}
 
-	resultFilter := discovery.NewResultFilter(llm)
+	resultFilter := discovery.NewResultFilter(classifier)
 	searcher, searchErr := discovery.NewBrave(env)
 	searchIDs := make(chan string, discovery.SearchQueue)
 	enrichIDs := make(chan string, enrich.Queue)
@@ -197,7 +197,13 @@ func app(ctx context.Context) (err error) {
 			return nil
 		}
 
-		return discovery.RunSearch(ctx, &discoveryStore, searchIDs, discoveredIDs, searcher, resultFilter, llm.Schedule(), l.WithGroup("search"), calls)
+		// Jev filters the results, and ingest could not fetch the kept ones anyway.
+		if classifier == nil {
+			l.Warn("search discovery off", "reason", "no classifier")
+			return nil
+		}
+
+		return discovery.RunSearch(ctx, &discoveryStore, searchIDs, discoveredIDs, searcher, resultFilter, l.WithGroup("search"), calls)
 	})
 
 	if err = g.Wait(); err != nil && !errors.Is(err, context.Canceled) {

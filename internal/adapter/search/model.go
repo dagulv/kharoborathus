@@ -11,7 +11,7 @@ type SearchItem struct {
 	BaseURL    string
 	FromPostID string
 	SearchedAt *time.Time
-	// Searched while the LLM was closed, so saved but not yet filtered.
+	// Saved but not yet filtered, after a failed filter.
 	Results []SearchResult
 	// Filtered, or rejected by the search API.
 	Done bool

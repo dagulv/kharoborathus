@@ -52,17 +52,17 @@ func EnqueueLink(ids chan<- string, l *slog.Logger, id string) {
 }
 
 // One query at a time, so the budget and pending checks cannot race.
-func RunSearch(ctx context.Context, s searchStore, ids <-chan string, links chan<- string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
-	tick := sched.Tick(ctx, time.Minute)
+func RunSearch(ctx context.Context, s searchStore, ids <-chan string, links chan<- string, se Searcher, f *ResultFilter, l, calls *slog.Logger) error {
+	tick := schedule.Always.Tick(ctx, time.Minute)
 
 	for {
 		select {
 		case id := <-ids:
-			if err := searchQuery(ctx, s, id, links, se, f, sched, l, calls); err != nil {
+			if err := searchQuery(ctx, s, id, links, se, f, l, calls); err != nil {
 				l.Error("search query", "query", id, "err", err)
 			}
 		case <-tick:
-			if err := catchUp(ctx, s, links, se, f, sched, l, calls); err != nil && ctx.Err() == nil {
+			if err := catchUp(ctx, s, links, se, f, l, calls); err != nil && ctx.Err() == nil {
 				l.Error("search catch up", "err", err)
 			}
 		case <-ctx.Done():
@@ -72,14 +72,14 @@ func RunSearch(ctx context.Context, s searchStore, ids <-chan string, links chan
 }
 
 // Stops at the first error, so an outage costs one call a tick instead of a whole batch.
-func catchUp(ctx context.Context, s searchStore, links chan<- string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
+func catchUp(ctx context.Context, s searchStore, links chan<- string, se Searcher, f *ResultFilter, l, calls *slog.Logger) error {
 	ids, err := s.ListUnfinished(ctx, dedupeWindow, catchUpBatch)
 	if err != nil {
 		return err
 	}
 
 	for _, id := range ids {
-		if err := searchQuery(ctx, s, id, links, se, f, sched, l, calls); err != nil {
+		if err := searchQuery(ctx, s, id, links, se, f, l, calls); err != nil {
 			return err
 		}
 	}
@@ -87,7 +87,7 @@ func catchUp(ctx context.Context, s searchStore, links chan<- string, se Searche
 	return nil
 }
 
-func searchQuery(ctx context.Context, s searchStore, id string, links chan<- string, se Searcher, f *ResultFilter, sched schedule.Schedule, l, calls *slog.Logger) error {
+func searchQuery(ctx context.Context, s searchStore, id string, links chan<- string, se Searcher, f *ResultFilter, l, calls *slog.Logger) error {
 	item, err := s.GetQuery(ctx, id)
 	if err != nil || item.Done {
 		return err
@@ -103,10 +103,6 @@ func searchQuery(ctx context.Context, s searchStore, id string, links chan<- str
 		if err != nil || !searched {
 			return err
 		}
-	}
-
-	if !sched.Active(time.Now()) {
-		return nil
 	}
 
 	kept, err := f.Keep(ctx, il, strings.ReplaceAll(item.Entity, "_", " "), item.Action, results)

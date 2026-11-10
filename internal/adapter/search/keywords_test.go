@@ -1,44 +1,11 @@
 package discovery
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"log/slog"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/dagulv/kharoborathus/internal/core/port"
-	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 )
-
-type fakeLLM struct {
-	answer any
-	err    error
-	req    port.Request
-}
-
-func (f *fakeLLM) Schedule() schedule.Schedule { return schedule.Always }
-
-func (f *fakeLLM) Prompt(context.Context, *slog.Logger, port.Request) (string, error) {
-	return "", nil
-}
-
-func (f *fakeLLM) Unmarshal(_ context.Context, _ *slog.Logger, req port.Request, out any) error {
-	f.req = req
-
-	if f.err != nil {
-		return f.err
-	}
-
-	b, err := json.Marshal(f.answer)
-	if err != nil {
-		return err
-	}
-
-	return json.Unmarshal(b, out)
-}
 
 const article = `# Volvo investerar i Göteborg
 
