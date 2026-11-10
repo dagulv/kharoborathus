@@ -26,7 +26,7 @@ var resultQuestion = map[string]port.NoulQuestion{
 }
 
 type SearchResult struct {
-	URL           string   `json:"-"`
+	URL           string   `json:"url"`
 	Title         string   `json:"title"`
 	Description   string   `json:"description"`
 	ExtraSnippets []string `json:"extra_snippets,omitempty"`

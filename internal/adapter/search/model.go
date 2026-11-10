@@ -16,9 +16,3 @@ type SearchItem struct {
 	// Filtered, or rejected by the search API.
 	Done bool
 }
-
-// SearchResult hides its URL from the filter prompt, but the stored result needs it.
-type storedResult struct {
-	URL string `json:"url"`
-	SearchResult
-}

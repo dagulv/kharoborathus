@@ -47,15 +47,8 @@ func (s *Store) GetQuery(ctx context.Context, id string) (i SearchItem, err erro
 		return i, nil
 	}
 
-	var stored []storedResult
-	if err = json.Unmarshal(results, &stored); err != nil {
+	if err = json.Unmarshal(results, &i.Results); err != nil {
 		return SearchItem{}, fmt.Errorf("err unmarshal results %s: %w", id, err)
-	}
-
-	i.Results = make([]SearchResult, len(stored))
-	for j, r := range stored {
-		i.Results[j] = r.SearchResult
-		i.Results[j].URL = r.URL
 	}
 
 	return i, nil
@@ -115,12 +108,7 @@ func (s *Store) MarkRejected(ctx context.Context, id string) error {
 }
 
 func (s *Store) SaveResults(ctx context.Context, id string, results []SearchResult) error {
-	stored := make([]storedResult, len(results))
-	for i, r := range results {
-		stored[i] = storedResult{URL: r.URL, SearchResult: r}
-	}
-
-	b, err := json.Marshal(stored)
+	b, err := json.Marshal(results)
 	if err != nil {
 		return fmt.Errorf("err marshal results: %w", err)
 	}
