@@ -29,7 +29,7 @@ Searches the web with the Brave Search API for other sources on events found in 
 **Step 4: RunSearch.** One query at a time, whenever an id arrives or the catch-up ticks.
 
 1. Skip queries that are done or rejected. A searched query without `kept` goes straight to the filter.
-2. Leave the query untouched while 200 or more search results are pending within 7 days, or 322 searches were paid in the last day.
+2. Leave the query untouched while 200 or more discovered links are pending within 7 days, from searches or outbound links, or 322 searches were paid in the last day.
 3. Search Brave in the language of the query's earliest linked post.
 4. Save the raw results in `result.results`, even during shutdown, since Brave billed them.
 5. Ask Jev about each result in its own call, five at a time. A result scoring 0.8 or more is kept. Write the kept indexes to `result.kept` and queue the kept URLs in `discovery_posts` with the query id, skipping URLs already in `posts`. New rows go to discovered ingest with `EnqueueLink`.
@@ -53,7 +53,7 @@ Rules:
 - 429, 5xx, unreadable responses and other errors leave the query untouched.
 - No results means no Jev call. `kept` is written as `[]`.
 - Jev sees the entity, action, title, description, extra snippets, page age and hostname of one result, never its URL. The entity is passed with underscores as spaces.
-- One failed Jev call fails the whole filter. The next try asks about every result again.
+- A result Jev fails on is dropped. Jev being unavailable, or failing on every result, fails the filter, and the next try asks about every result again.
 - Without `BRAVE_API_KEY` or a Jev key the search worker does not start. Without Jev, discovered ingest is off too.
 - Jev has no off-peak window, so a query is searched and filtered in one pass.
 
@@ -89,7 +89,7 @@ Results are read from `web.results` and `news.results` and deduplicated by URL. 
 | Freshness                    | `pw`               | Same event, not old coverage.                         |
 | Monthly budget alert         | $50                | About 10k queries at $5 per 1k.                       |
 | Daily search cap             | 322                | $50 a month at $5 per 1k queries over a 31-day month. |
-| Pending search results limit | 200                | One day of ingest at its daily cap.                   |
+| Pending links limit          | 200                | One day of ingest at its daily cap, which outbound links share. |
 | Search queue                 | 100                | Channel buffer, `SearchQueue`.                        |
 | Catch-up                     | 10 a minute        | Brave calls stay well under the daily cap.            |
 | Keep threshold               | 0.8                | Same as the article check and tags.                   |
