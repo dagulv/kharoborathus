@@ -64,9 +64,9 @@ Deploy:
 
 1. `tofu apply` in `infra/tofu` creates the server. You point the site, API and Haloy API domains at its IPv4 output.
 2. `haloy server add` registers the server with the token cloud-init left in the deploy user's home.
-3. `secrets.sh prod:app haloy.sh deploy <target>...` builds the images locally and uploads them to haloyd, so no registry is needed. The `db` target is protected and deploys only by name.
+3. `secrets.sh prod:app haloy.sh deploy <target>...` builds the images where it runs and uploads them to haloyd, so no registry is needed. The [CI/CD workflow](../../.github/workflows/deploy.yml) runs it for `api` and `web` on pushes to `main` that change them, and pull requests only build those images. The `db` target is protected and deploys only by name, by hand.
 4. Haloy has no per-target env file. It reads the working directory's `.env`, and a `.env.<target>` only for targets named with `-t`, all into one process env. So `haloy.sh` runs Haloy once per target from `infra/<target>/`, and each target resolves only its own env. Haloy passes a container only the values `haloy.yaml` names, so `haloy.sh deploy` refuses a target whose `.env` holds a key that `haloy.yaml` does not pass. Every Haloy command that loads the config resolves all its env values, including `logs` and `status`. Haloy also loads `infra/.env` and `.env.local` from the working directory, `infra/` and `~/.config/haloy`, and `.env.local` overrides the vault. `.gitignore` keeps every `.env.*` except `.env.example` out of git, and none of those files should exist here.
-5. The database starts empty. `kharoborathus migrate` applies the numbered files in `internal/migrations` with tern. In prod the [migrate workflow](../../.github/workflows/migrate.yml) runs it on every push to `main` that touches `internal/migrations`. It reaches the db through `haloy tunnel` over the haloyd API, so it needs no SSH and no published port.
+5. The database starts empty. `kharoborathus migrate` applies the numbered files in `internal/migrations` with tern. In prod the CI/CD workflow runs it on every push to `main` that touches `internal/migrations`, before `api` and `web` deploy. A failed migration skips the deploy. It reaches the db through `haloy tunnel` over the haloyd API, so it needs no SSH and no published port.
 
 Build notes:
 
@@ -80,9 +80,9 @@ Secrets:
 - `secrets.sh` unlocks Bitwarden with the master password, decrypts every file of one vault, or the one file named after a colon, in memory and exports its `stringData` keys, then locks Bitwarden and runs the command. The password and session go through env, never argv. A set `SOPS_AGE_KEY` skips Bitwarden and is unset before the command runs.
 - The Go app and Vite both let the process env win over their `.env`, and both expand `${POSTGRES_PASSWORD}` in a `.env` value from it. The dev Postgres container reads `POSTGRES_PASSWORD` from the process env too.
 - UpCloud credentials: an API token, not a user's password, since it expires within a year, can be limited to your IP and revoked alone. `UPCLOUD_TOKEN` and `TF_VAR_state_passphrase` live in the prod vault's `tofu.yaml`. The OpenTofu state stays local, encrypted and gitignored.
-- Haloy passes each value `haloy.yaml` names to its container. The rest of the prod vault never leaves your machine.
+- Haloy passes each value `haloy.yaml` names to its container. CI decrypts the prod vault with `SOPS_AGE_KEY`, so the age key, and with it every vault secret, is also a GitHub secret.
 - The Haloy API token lives in `~/.config/haloy` locally and in `/etc/haloy` on the server.
-- The migrate workflow needs `HALOY_API_TOKEN` and `POSTGRES_PASSWORD` as secrets of the GitHub `production` environment, with the prod values. Without them Haloy cannot resolve the db target's env and the run fails before the tunnel opens.
+- The CI/CD workflow needs `HALOY_API_TOKEN`, `POSTGRES_PASSWORD` and `SOPS_AGE_KEY` as secrets of the GitHub `production` environment, with the prod values. Without the first two Haloy cannot resolve the db target's env and the migration fails before the tunnel opens. Deploys need the age key for `secrets.sh`.
 
 ## Schema changes
 
