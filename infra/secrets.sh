@@ -51,15 +51,6 @@ if ! sealed=$(yq -e ".vaults.$vault.sealed" "$config" 2>/dev/null); then
 	exit 2
 fi
 
-# The project's own bw login, apart from any other account on this machine.
-# Snap's bw cannot reach hidden folders in $HOME, so the folder sits under its own snap directory.
-export BITWARDENCLI_APPDATA_DIR=${BITWARDENCLI_APPDATA_DIR:-$HOME/snap/bw/common/kharoborathus}
-account=$(yq -e ".vaults.$vault.bitwarden.account" "$config")
-if [[ $(bw status | yq -p json '.userEmail') != "$account" ]]; then
-	echo "log in once: BITWARDENCLI_APPDATA_DIR=$BITWARDENCLI_APPDATA_DIR bw login $account" >&2
-	exit 2
-fi
-
 key=${SOPS_AGE_KEY:-}
 if [[ -z $key ]]; then
     # The project's own bw login, apart from any other account on this machine.
