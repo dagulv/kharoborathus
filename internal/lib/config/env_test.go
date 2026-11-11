@@ -34,9 +34,9 @@ func TestLoadProcessEnvOverridesFile(t *testing.T) {
 func TestLoadFilePrecedence(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
-		"infra/db/.env":  "POSTGRES_USER=from-db\nPOSTGRES_DB=from-db\nPOSTGRES_PASSWORD=from-db\n",
-		"infra/api/.env": "POSTGRES_DB=from-api\nPOSTGRES_PASSWORD=from-api\n",
-		".env":           "POSTGRES_PASSWORD=from-root\n",
+		"infra/db/db.env":   "POSTGRES_USER=from-db\nPOSTGRES_DB=from-db\nPOSTGRES_PASSWORD=from-db\n",
+		"infra/api/api.env": "POSTGRES_DB=from-api\nPOSTGRES_PASSWORD=from-api\n",
+		".env":              "POSTGRES_PASSWORD=from-root\n",
 	}
 	for name, body := range files {
 		path := filepath.Join(dir, name)
