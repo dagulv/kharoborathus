@@ -99,10 +99,10 @@ jobs:
           echo "$HALOY_SHA256  haloy" | sha256sum -c -
           sudo install -m 755 haloy /usr/local/bin/haloy
 
-      # Haloy resolves the db target's env from infra/db/.env. The Go config reads that file only beside a root .env.
+      # The Go config reads infra/db/.env, and only beside a root .env.
       - name: Write env files
         run: |
-          cp infra/db/.env.example infra/db/.env
+          cp infra/db/db.env infra/db/.env
           touch .env
 
       # The db is only on the server's haloy network, so the tunnel goes through the haloyd API on 443.
@@ -154,11 +154,6 @@ jobs:
           $YQ_SHA256  yq
           EOF
           sudo install -m 755 haloy sops yq /usr/local/bin/
-
-      - name: Write env file
-        env:
-          TARGET: ${{ matrix.target }}
-        run: cp "infra/$TARGET/.env.example" "infra/$TARGET/.env"
 
       # secrets.sh skips Bitwarden when SOPS_AGE_KEY is set and unsets it before haloy runs.
       - name: Deploy
