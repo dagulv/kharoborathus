@@ -1,0 +1,169 @@
+name: CI/CD
+
+# Pull requests build the changed images. main migrates, then deploys the changed targets with Haloy.
+# db deploys by hand, since Haloy protects it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  HALOY_VERSION: v0.1.0-beta.73
+  HALOY_SHA256: 6f8a8e213f01972525e858293ab4be96078c46109eb42b3d4d1185265dab51e9
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.deploy.outputs.deploy }}
+      migrate: ${{ steps.changes.outputs.migrate }}
+      targets: ${{ steps.changes.outputs.targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: deploy
+        run: |
+          deploy=false
+          if [[ ($GITHUB_EVENT_NAME == push || $GITHUB_EVENT_NAME == workflow_dispatch) && $GITHUB_REF == refs/heads/main ]]; then
+            deploy=true
+          fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+
+      # A manual run, a new branch or a force push has no usable base, so everything runs.
+      - id: changes
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ $GITHUB_EVENT_NAME == workflow_dispatch ]] || ! files=$(git diff --name-only "$BASE" "$GITHUB_SHA" 2>/dev/null); then
+            files=$'internal/migrations/\ncmd/\nfrontend/'
+          fi
+
+          changed() { grep -qE "$1" <<<"$files"; }
+
+          targets=()
+          changed '^(cmd|internal)/|^go\.(mod|sum)$|^infra/(api/|haloy\.yaml$)' && targets+=('"api"')
+          changed '^frontend/|^infra/(web/|haloy\.yaml$)' && targets+=('"web"')
+
+          migrate=false
+          changed '^internal/migrations/' && migrate=true
+
+          echo "migrate=$migrate" >> "$GITHUB_OUTPUT"
+          echo "targets=[$(IFS=,; echo "${targets[*]}")]" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build-${{ matrix.target }}
+    needs: setup
+    if: needs.setup.outputs.deploy == 'false' && needs.setup.outputs.targets != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.setup.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same context and Dockerfile as the target's build_config in infra/haloy.yaml.
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          context=.
+          [[ $TARGET == web ]] && context=frontend
+          docker build -f "infra/$TARGET/Dockerfile" "$context"
+
+  migrate:
+    needs: setup
+    if: needs.setup.outputs.deploy == 'true' && needs.setup.outputs.migrate == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install haloy
+        run: |
+          curl -fsSL -o haloy "https://github.com/haloydev/haloy/releases/download/$HALOY_VERSION/haloy-linux-amd64"
+          echo "$HALOY_SHA256  haloy" | sha256sum -c -
+          sudo install -m 755 haloy /usr/local/bin/haloy
+
+      # Haloy resolves the db target's env from infra/db/.env. The Go config reads that file only beside a root .env.
+      - name: Write env files
+        run: |
+          cp infra/db/.env.example infra/db/.env
+          touch .env
+
+      # The db is only on the server's haloy network, so the tunnel goes through the haloyd API on 443.
+      - name: Migrate
+        env:
+          HALOY_API_TOKEN: ${{ secrets.HALOY_API_TOKEN }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          infra/haloy.sh tunnel db &
+          tunnel=$!
+          trap 'kill $tunnel' EXIT
+          for i in $(seq 1 30); do
+            (: </dev/tcp/127.0.0.1/5432) 2>/dev/null && break
+            kill -0 $tunnel || exit 1
+            sleep 1
+          done
+          go run ./cmd migrate
+
+  deploy:
+    name: deploy-${{ matrix.target }}
+    needs: [setup, migrate]
+    # A skipped migrate is fine. A failed one keeps new code off the old schema.
+    if: ${{ !cancelled() && needs.setup.outputs.deploy == 'true' && needs.setup.outputs.targets != '[]' && needs.migrate.result != 'failure' }}
+    runs-on: ubuntu-latest
+    environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.setup.outputs.targets) }}
+    concurrency:
+      group: deploy-${{ matrix.target }}
+      cancel-in-progress: false
+    env:
+      SOPS_VERSION: v3.13.3
+      SOPS_SHA256: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
+      YQ_VERSION: v4.54.3
+      YQ_SHA256: 129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install haloy, sops and yq
+        run: |
+          curl -fsSL -o haloy "https://github.com/haloydev/haloy/releases/download/$HALOY_VERSION/haloy-linux-amd64"
+          curl -fsSL -o sops "https://github.com/getsops/sops/releases/download/$SOPS_VERSION/sops-$SOPS_VERSION.linux.amd64"
+          curl -fsSL -o yq "https://github.com/mikefarah/yq/releases/download/$YQ_VERSION/yq_linux_amd64"
+          sha256sum -c - <<EOF
+          $HALOY_SHA256  haloy
+          $SOPS_SHA256  sops
+          $YQ_SHA256  yq
+          EOF
+          sudo install -m 755 haloy sops yq /usr/local/bin/
+
+      - name: Write env file
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cp "infra/$TARGET/.env.example" "infra/$TARGET/.env"
+
+      # secrets.sh skips Bitwarden when SOPS_AGE_KEY is set and unsets it before haloy runs.
+      - name: Deploy
+        env:
+          HALOY_API_TOKEN: ${{ secrets.HALOY_API_TOKEN }}
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+          TARGET: ${{ matrix.target }}
+        run: infra/secrets.sh prod:app infra/haloy.sh deploy "$TARGET"

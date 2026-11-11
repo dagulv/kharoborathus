@@ -92,26 +92,26 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
 
    Generate `POSTGRES_PASSWORD` with `openssl rand -hex 32` and put the same value in `POSTGRES_CONNECTION_STRING`. Characters like `/`, `@` or `$` break the URL or get expanded.
 
-8. In the GitHub repo, create the `production` environment with two secrets: `HALOY_API_TOKEN` from `ssh deploy@<ip> sudo haloyd config get api-token --raw`, and the prod `POSTGRES_PASSWORD`.
+8. In the GitHub repo, create the `production` environment with three secrets: `HALOY_API_TOKEN` from `ssh deploy@<ip> sudo haloyd config get api-token --raw`, the prod `POSTGRES_PASSWORD`, and `SOPS_AGE_KEY` from the Bitwarden field `AGE-SECRET-KEY`. The age key opens both vaults, so CI can read every prod secret, the UpCloud token included.
 
-9. Deploy the database first. Once its logs say it accepts connections, run the `migrate` workflow, then deploy the rest:
+9. Deploy the database first. Once its logs say it accepts connections, run the CI/CD workflow by hand. A manual run migrates, then deploys `api` and `web`:
 
    ```bash
    infra/secrets.sh prod:app infra/haloy.sh deploy db
    infra/secrets.sh prod:app infra/haloy.sh logs db
-   gh workflow run migrate.yml --ref main
+   gh workflow run deploy.yml --ref main
    gh run watch
-   infra/secrets.sh prod:app infra/haloy.sh deploy api web
    ```
 
    `haloy.sh` runs Haloy once per target from that target's directory. Haloy reads the working directory's `.env`, so each target sees only its own env. Any Haloy command that loads the config resolves every env value, so `logs` and `status` need `secrets.sh` too.
 
 ## Later
 
-- Redeploy with `infra/secrets.sh prod:app infra/haloy.sh deploy api web`. Images build locally and upload to the server. Leave `db` out unless its image changed.
+- A push to `main` runs the [CI/CD workflow](../.github/workflows/deploy.yml). It deploys `api` when Go code, `go.mod`, `infra/api` or `haloy.yaml` changed, and `web` when `frontend`, `infra/web` or `haloy.yaml` changed. Pull requests only build those images. `db` never deploys from CI.
+- Redeploy by hand with `infra/secrets.sh prod:app infra/haloy.sh deploy api web`, or `gh workflow run deploy.yml --ref main` for both. Images build where Haloy runs and upload to the server.
 - Logs: `infra/secrets.sh prod:app infra/haloy.sh logs api`. `infra/secrets.sh prod:app infra/haloy.sh rollback-targets api` lists deployment IDs, and `infra/secrets.sh prod:app infra/haloy.sh rollback api -- <id>` rolls back to one.
 - Schema changes go in a new numbered file in `internal/migrations`. Never edit a file that has been applied. `go run ./cmd migrate` applies pending files with tern and records the version in `schema_version`. Tern runs each file through Go's `text/template`, so `{{` in SQL breaks it.
-- A push to `main` that touches `internal/migrations` runs the [migrate workflow](../.github/workflows/migrate.yml) against prod, through `haloy tunnel` to the db. The running api still has the old code, so a migration must work with it. Deploy `api web` once the run passes. Rerun it by hand with `gh workflow run migrate.yml --ref main`.
+- A push to `main` that touches `internal/migrations` migrates prod first, through `haloy tunnel` to the db. The running api still has the old code until its deploy finishes, so a migration must work with it. A failed migration stops the deploy.
 - A dev volume created before the migrations existed has the schema but no `schema_version`, so `migrate` fails on it. Recreate it once with `docker compose down -v`.
 - Add an admin user with `POSTGRES_CONNECTION_STRING=<conn> pnpm user:add <email>` from `frontend`. It prints a generated password: the login has no rate limit or lockout, so only its length stops guessing.
 - Every switch starts off. Turn them on in the admin under Switches.
