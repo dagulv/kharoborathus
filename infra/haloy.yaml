@@ -1,5 +1,5 @@
 # server is haloy_api_domain from terraform.tfvars.
-# Each target reads its safe values from its own <target>/.env, see .env.example there.
+# Each target reads its safe values from its own <target>/<target>.env.
 # Secrets come from the prod vault. Run through haloy.sh, which gives every target its own env:
 # infra/secrets.sh prod infra/haloy.sh deploy api web
 server: haloy.kharoborathus.dagulv.me
