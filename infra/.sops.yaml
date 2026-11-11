@@ -1,19 +1,16 @@
 creation_rules:
+  # Relative to this config file.
   - path_regex: ^secrets/(dev|prod)/.*\.yaml$
     encrypted_regex: ^(data|stringData)$
     age: age1jmly5a93t2qkv7atpsa6yvylleprgejerpy6dsv96dymuhaerc6qc3zdv3
 
-# Paths are relative to this config file. vault requires a cluster, but nothing here deploys to one.
+# Read by secrets.sh, ignored by sops. Paths are relative to this config file.
 vaults:
   dev:
     sealed: secrets/dev/vault.sealed
-    open: secrets/dev/vault.open
-    cluster: none
     bitwarden:
       item: 4aa7bc48-6193-458f-b276-b4e700bb4ffe
   prod:
     sealed: secrets/prod/vault.sealed
-    open: secrets/prod/vault.open
-    cluster: none
     bitwarden:
       item: 4aa7bc48-6193-458f-b276-b4e700bb4ffe
