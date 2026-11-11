@@ -4,15 +4,15 @@ Runs the stack on one UpCloud server with Haloy. Design: [docs/kb/infra.md](../d
 
 ## Secrets
 
-Prod secrets never sit in an env file. They live in two vaults under `secrets/`, encrypted with sops to one age key kept in Bitwarden. `.env` files hold safe values only, one per service:
+Prod secrets never sit in an env file. They live in two vaults under `secrets/`, encrypted with sops to one age key kept in Bitwarden. Each service's `<service>.env` holds safe values only, and is committed:
 
 | Service | Dev env | Prod env | Deploy Dockerfile |
 |---|---|---|---|
-| db | `infra/db/.env`, password from the root `.env` | `infra/db/.env` | `infra/db/Dockerfile` |
-| api, the Go app | The root `.env` over `infra/api/.env` over `infra/db/.env` | `infra/api/.env` | `infra/api/Dockerfile` |
-| web, the admin | The root `.env` over `infra/web/.env` over `infra/db/.env` | `infra/web/.env` | `infra/web/Dockerfile` |
+| db | `infra/db/db.env`, password from the root `.env` | `infra/db/db.env` | `infra/db/Dockerfile` |
+| api, the Go app | The root `.env` over `infra/api/api.env` over `infra/db/db.env` | `infra/api/api.env` | `infra/api/Dockerfile` |
+| web, the admin | The root `.env` over `infra/web/web.env` over `infra/db/db.env` | `infra/web/web.env` | `infra/web/Dockerfile` |
 
-Each has a `.env-sample` or `.env.example` beside it. The dev db also builds from `infra/db/Dockerfile`.
+The dev db also builds from `infra/db/Dockerfile`.
 
 | Vault | File | Keys |
 |---|---|---|
@@ -104,11 +104,7 @@ Running containers keep their old env, and CI does not redeploy for a vault chan
 
    If cloud-init timed out on DNS, haloyd retries its certificate only every 12 hours. Restart it once the records resolve: `ssh deploy@<ip> sudo systemctl restart haloyd`.
 
-7. Copy the safe values, then add the prod vault's `app.yaml` with sops:
-
-   ```bash
-   for t in db api web; do cp infra/$t/.env.example infra/$t/.env; done
-   ```
+7. Add the prod vault's `app.yaml` with sops. The safe values are already committed in each `<service>.env`.
 
    Generate `POSTGRES_PASSWORD` with `openssl rand -hex 32` and put the same value in `POSTGRES_CONNECTION_STRING`. Characters like `/`, `@` or `$` break the URL or get expanded.
 
@@ -123,7 +119,7 @@ Running containers keep their old env, and CI does not redeploy for a vault chan
    gh run watch
    ```
 
-   `haloy.sh` runs Haloy once per target from that target's directory. Haloy reads the working directory's `.env`, so each target sees only its own env. Any Haloy command that loads the config resolves every env value, so `logs` and `status` need `secrets.sh` too.
+   `haloy.sh` runs Haloy once per target from that target's directory, with only that target's `<target>.env` in its env. Any Haloy command that loads the config resolves every env value, so `logs` and `status` need `secrets.sh` too.
 
 ## Later
 
