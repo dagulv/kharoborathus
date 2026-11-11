@@ -9,8 +9,10 @@ vaults:
   dev:
     sealed: secrets/dev/vault.sealed
     bitwarden:
+      account: dagulvsback@gmail.com
       item: 4aa7bc48-6193-458f-b276-b4e700bb4ffe
   prod:
     sealed: secrets/prod/vault.sealed
     bitwarden:
+      account: dagulvsback@gmail.com
       item: 4aa7bc48-6193-458f-b276-b4e700bb4ffe
