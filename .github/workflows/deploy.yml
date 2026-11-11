@@ -99,11 +99,9 @@ jobs:
           echo "$HALOY_SHA256  haloy" | sha256sum -c -
           sudo install -m 755 haloy /usr/local/bin/haloy
 
-      # The Go config reads infra/db/.env, and only beside a root .env.
-      - name: Write env files
-        run: |
-          cp infra/db/db.env infra/db/.env
-          touch .env
+      # The Go config reads infra/db/db.env only beside a root .env.
+      - name: Write root env file
+        run: touch .env
 
       # The db is only on the server's haloy network, so the tunnel goes through the haloyd API on 443.
       - name: Migrate
