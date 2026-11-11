@@ -4,7 +4,7 @@ Runs the stack on one UpCloud server with Haloy. Design: [docs/kb/infra.md](../d
 
 ## Secrets
 
-Prod secrets never sit in an env file. They live in two SOPS vaults under `secrets/`, managed with the `vault` tool and encrypted to one age key kept in Bitwarden. `.env` files hold safe values only, one per service:
+Prod secrets never sit in an env file. They live in two vaults under `secrets/`, encrypted with sops to one age key kept in Bitwarden. `.env` files hold safe values only, one per service:
 
 | Service | Dev env | Prod env | Deploy Dockerfile |
 |---|---|---|---|
@@ -20,7 +20,7 @@ Each has a `.env-sample` or `.env.example` beside it. The dev db also builds fro
 | prod | `kharoborathus/app.yaml` | The dev keys plus `POSTGRES_CONNECTION_STRING` |
 | prod | `kharoborathus/tofu.yaml` | `UPCLOUD_TOKEN`, `TF_VAR_state_passphrase` |
 
-Each file is a Kubernetes `Secret` with the keys under `stringData`, since that is what `vault` manages. Nothing here deploys to a cluster, so `vault diff` and `vault apply` don't apply.
+Each file is a Kubernetes `Secret` with the keys under `stringData`. [.sops.yaml](.sops.yaml) encrypts only `data` and `stringData`, so key names stay readable. Nothing here deploys to a cluster.
 
 `secrets.sh` runs a command with one vault's secrets in its environment. It asks for the Bitwarden master password, decrypts in memory and locks Bitwarden again. `prod:tofu` or `prod:app` limits it to one file, so each command sees only the secrets it needs:
 
@@ -37,13 +37,33 @@ To skip the prompt in dev, `setup.sh` writes the dev vault's secrets into the ro
 infra/setup.sh
 ```
 
-Change a secret from inside `infra/`:
+Change secrets with sops from inside `infra/`. sops finds `.sops.yaml` by searching upward from the working directory, and new files need its rule. First load the age key from Bitwarden:
 
 ```bash
-vault edit secrets/prod/vault.sealed/kharoborathus/app.yaml
+export BW_SESSION=$(bw unlock --raw)
+export SOPS_AGE_KEY=$(bw get item 4aa7bc48-6193-458f-b276-b4e700bb4ffe | jq -r '.fields[] | select(.name == "AGE-SECRET-KEY") | .value')
 ```
 
-Add one by writing the manifest to the open directory, for example `secrets/prod/vault.open/kharoborathus/tofu.yaml`, then running `vault seal --vault prod`.
+Edit a file. sops decrypts it in `$EDITOR` and encrypts it again on save:
+
+```bash
+sops edit secrets/prod/vault.sealed/kharoborathus/app.yaml
+```
+
+Add a file by writing the `Secret` manifest in plain text under `secrets/<vault>/vault.sealed/kharoborathus/`, then encrypting it in place. Check its values read `ENC[...]` before committing:
+
+```bash
+sops encrypt --in-place secrets/prod/vault.sealed/kharoborathus/tofu.yaml
+```
+
+Then drop the key:
+
+```bash
+unset SOPS_AGE_KEY BW_SESSION
+bw lock
+```
+
+Running containers keep their old env, and CI does not redeploy for a vault change. Redeploy the targets that use the changed keys.
 
 ## First time
 
@@ -53,7 +73,7 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
    go install github.com/haloydev/haloy/cmd/haloy@v0.1.0-beta.73
    ```
 
-2. Create an UpCloud API token under Account > API Tokens, limited to your IP. It lasts at most 365 days, so renew it before it expires. Seal it as `UPCLOUD_TOKEN` in the prod vault's `tofu.yaml`, with a state passphrase of at least 16 characters.
+2. Create an UpCloud API token under Account > API Tokens, limited to your IP. It lasts at most 365 days, so renew it before it expires. Add it as `UPCLOUD_TOKEN` to the prod vault's `tofu.yaml` with sops, with a state passphrase of at least 16 characters.
 
 3. Put your SSH public key and the Haloy API domain in `terraform.tfvars`. The server ignores later changes to either, so a wrong key locks you out:
 
@@ -84,7 +104,7 @@ Add one by writing the manifest to the open directory, for example `secrets/prod
 
    If cloud-init timed out on DNS, haloyd retries its certificate only every 12 hours. Restart it once the records resolve: `ssh deploy@<ip> sudo systemctl restart haloyd`.
 
-7. Copy the safe values, then seal the prod vault's `app.yaml`:
+7. Copy the safe values, then add the prod vault's `app.yaml` with sops:
 
    ```bash
    for t in db api web; do cp infra/$t/.env.example infra/$t/.env; done

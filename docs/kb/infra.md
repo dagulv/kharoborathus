@@ -23,7 +23,7 @@ Tools:
 | OpenTofu with the `UpCloudLtd/upcloud` provider | Creates the server and its backups | Infra as code, as asked. |
 | cloud-init | Installs Docker, a firewall, haloyd and a `deploy` user on first boot | Ships with the Ubuntu template, so no extra tool is needed. |
 | Haloy v0.1.0-beta.73 | Builds, ships and runs the three services. Its proxy serves HTTPS | One config file replaces kustomize overlays, with zero-downtime deploys, rollbacks and certificates and no registry. |
-| SOPS with age, through the `vault` tool | Encrypts secrets in git | Same flow as the other infra repos. The age key lives in Bitwarden, never on disk. |
+| SOPS with age | Encrypts secrets in git | Same format as the other infra repos. The age key lives in Bitwarden, never on disk. |
 
 Kustomize, kubectl and kubectx are left out. Kustomize only renders Kubernetes manifests, and this setup has no cluster.
 
@@ -76,7 +76,7 @@ Build notes:
 Secrets:
 
 - No prod secret sits in an env file. Each service's env file holds its safe values: user names, database names, hosts and ports. In dev, `infra/setup.sh` may write the dev vault's secrets into the root `.env`, which is gitignored and mode 600.
-- Secrets live in the `dev` and `prod` SOPS vaults, one Kubernetes `Secret` manifest per file, since that is the format `vault` manages. Only `data` and `stringData` are encrypted. Both vaults share one age key, kept in a Bitwarden custom field `AGE-SECRET-KEY`. `vault` requires a cluster name, so they name `none`.
+- Secrets live in the `dev` and `prod` SOPS vaults, one Kubernetes `Secret` manifest per file, edited with `sops edit`. Only `data` and `stringData` are encrypted. Both vaults share one age key, kept in a Bitwarden custom field `AGE-SECRET-KEY`. sops ignores the `vaults:` section of `.sops.yaml`, left from the `vault` tool.
 - `secrets.sh` unlocks Bitwarden with the master password, decrypts every file of one vault, or the one file named after a colon, in memory and exports its `stringData` keys, then locks Bitwarden and runs the command. The password and session go through env, never argv. A set `SOPS_AGE_KEY` skips Bitwarden and is unset before the command runs.
 - The Go app and Vite both let the process env win over their `.env`, and both expand `${POSTGRES_PASSWORD}` in a `.env` value from it. The dev Postgres container reads `POSTGRES_PASSWORD` from the process env too.
 - UpCloud credentials: an API token, not a user's password, since it expires within a year, can be limited to your IP and revoked alone. `UPCLOUD_TOKEN` and `TF_VAR_state_passphrase` live in the prod vault's `tofu.yaml`. The OpenTofu state stays local, encrypted and gitignored.
