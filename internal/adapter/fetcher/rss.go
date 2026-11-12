@@ -26,8 +26,6 @@ type rssDocument struct {
 	Tags     []string
 	PostedAt time.Time
 	Page     []byte
-
-	excerpt bool // the item had no full content, only its description
 }
 
 type rss struct {
@@ -77,7 +75,6 @@ func (r rss) FetchFeed(ctx context.Context, l *slog.Logger, url string) (<-chan 
 
 			if doc.Content == "" {
 				doc.Content = item.Description
-				doc.excerpt = true
 			}
 
 			if item.PublishedParsed != nil {
@@ -112,19 +109,16 @@ func (r rss) Filter(ctx context.Context, data rssDocument) (bool, error) {
 	return !exists, nil
 }
 
-// An excerpt item gets its article fetched for trim, which falls back to the excerpt when extraction fails.
+// Every item gets its article fetched, since a feed's content may be cut short. A failed fetch keeps the feed's content.
 func (r rss) FetchPost(ctx context.Context, l *slog.Logger, data rssDocument) (rssDocument, error) {
-	if !data.excerpt {
-		return data, nil
-	}
-
 	if err := r.pacer.Wait(ctx, data.URL); err != nil {
 		return data, err
 	}
 
 	page, err := FetchHTML(ctx, logs.Client(r.client, l, "page"), data.URL)
 	if err != nil {
-		return data, fmt.Errorf("err fetch article: %w", err)
+		l.Debug("fetch article", "url", data.URL, "err", err)
+		return data, nil
 	}
 
 	data.Page = page
