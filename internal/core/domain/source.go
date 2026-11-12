@@ -30,6 +30,8 @@ type Source struct {
 type SourceFilter struct {
 	query.Filter
 
-	Enabled sql.Null[bool]   `json:"enabled"`
-	Status  sql.Null[string] `json:"status"`
+	Enabled  sql.Null[bool]   `json:"enabled"`
+	Status   sql.Null[string] `json:"status"`
+	DomainID sql.Null[string] `json:"domainId"`
+	Adapter  sql.Null[string] `json:"adapter"`
 }
