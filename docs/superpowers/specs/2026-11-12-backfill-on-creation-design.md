@@ -2,12 +2,12 @@
 
 ## Intent
 
-A feed or listing page shows only a source's newest posts. A WordPress site also serves its whole archive through the REST API. Every new source should read that archive once, whatever its adapter.
+A feed shows only a source's newest posts. Some sites expose their history in other ways. A WordPress site, for one, serves its whole archive through the REST API. Every new source should read its history once, through whatever strategy its adapter supports.
 
 The backfill was dropped in the core and adapter refactor. What remains:
 
 - `FindWordPress` and the `wordpress` fetcher in `internal/adapter/fetcher/wordpress.go`.
-- The `wordpress` entry in the `fetchers` map in `cmd/main.go`.
+- The `wordpress` entry in the `fetchers` map in `cmd/main.go`, a source type that no `sources` row uses.
 - Nothing sends a source to it, and `sources.backfilled_at` is gone.
 
 This design brings it back as an event: creating a source, or pressing a button on it, starts a backfill. It also makes source ingestion need nothing but plain HTTP requests, so no fetch waits on DeepSeek, Jev or Brave.
@@ -16,7 +16,7 @@ This design brings it back as an event: creating a source, or pressing a button 
 
 - A new source backfills automatically, right after it is created.
 - An admin can backfill any source again with a button.
-- Backfill works for `rss` and `page` sources alike.
+- Backfill is a strategy of the `rss` adapter, not a source type. New strategies slot in without a new adapter.
 - Every request to a host goes through the shared `pace.Pacer`.
 - Every post's article page is fetched, for every adapter. Extract keeps the better of the page's content and the feed's content.
 - Each post is inserted on its own, as soon as its page is fetched. No transaction spans a listing or a backfill.
@@ -29,7 +29,8 @@ This design brings it back as an event: creating a source, or pressing a button 
 - Resuming an interrupted backfill by itself. The button reruns it.
 - Backfilling existing sources automatically. The button covers them.
 - The rate check in `sourceStream`.
-- Archive APIs other than WordPress.
+- Strategies other than WordPress.
+- Backfill for `page` sources.
 - Storing listing bodies.
 - Search for old posts. It will likely matter later, so the gate below is one condition that is easy to lift.
 - A Jev cap. Jev stays uncapped, limited only by its availability.
@@ -60,31 +61,56 @@ Two callers in `frontend/src/routes/admin/admin.remote.ts`:
 - `reviewSource` calls the endpoint when it activates a source that was `proposed`. That is the first time the source is scraped. A `flagged` source made active again does not backfill.
 - A new `backfillSource` command, next to `syncSource`, behind a "Backfill" button on each source in `frontend/src/routes/admin/sources/+page.svelte`.
 
-### Run
+### Backfill strategies
 
-One goroutine reads the backfill channel:
+Backfill belongs to an adapter, not a source type. An adapter that can read history implements an optional interface in `internal/core/port/fetcher.go`:
 
-1. `FindWordPress` with the shared pacer on `source.URL`. It finds the API from a page or a feed, so it works for `rss` and `page` sources. Its requests log as type `wordpress`.
-2. No API, a 401 or 404, or an error: log it and stop.
-3. Otherwise send a copy of the source with adapter `wordpress`, the posts endpoint as URL and the language `FindWordPress` found.
+```go
+type Backfiller[T any] interface {
+	Backfill(ctx context.Context, l *slog.Logger, url string) (<-chan T, error)
+}
+```
 
-The goroutine's output channel is the `wordpress` plugin's input. `wordpress` leaves the `ins` map that `route` in `sourced.go` feeds, since no `sources` row has that adapter.
+`Backfill` returns the source's history in the adapter's own item type. The items then run through that adapter's `Filter`, `FetchPost` and `ProcessFeed`, the same as feed items.
 
-- The copies never go through `sourceStream`, so `dispatch` never sets a pause for them. The source keeps its own rate.
-- They never go through `route` either. A `wordpress` worker stays busy for a whole archive, so with all 5 busy, a send blocks. Through `route` that would stall every live `rss` and `page` source. Outside it, only the backfill goroutine waits, and the endpoint answers `503` once its channel is full.
+`rss` implements it with an ordered list of strategies:
 
-### Read
+```go
+// archive streams a feed's history. ok is false when the site does not support it.
+type archive func(ctx context.Context, l *slog.Logger, url string) (items <-chan rssDocument, ok bool, err error)
+```
 
-The existing `wordpress` plugin reads the copy:
+- `Backfill` tries each strategy in order. It uses the first one that reports `ok`.
+- When none does, it returns `ErrNoArchive`. That is logged at info.
+- An error from a strategy ends the backfill and is logged.
 
-- `FetchFeed` already returns a channel. It pages through the API, 20 posts per request, newest first, each page paced, and sends each post as it reads it. Nothing waits for the whole archive.
+The first and only strategy is WordPress:
+1. `FindWordPress` with the rss adapter's pacer on the feed URL. Its requests log as type `wordpress`.
+2. No API, or a 401 or 404: `ok` is false.
+3. Otherwise page through `wp/v2/posts`, 20 posts per request, newest first, each page paced. Each post is sent as an `rssDocument` as soon as it is read. Its `Lang` is the language `FindWordPress` found.
+
+The `wordpress` adapter, its `fetchers` entry in `cmd/main.go` and `NewWordPress` go away. `FindWordPress` and the API paging stay in `internal/adapter/fetcher/wordpress.go`, as rss strategy code.
+
+`page` implements no `Backfiller` for now, so a `page` source does not backfill. Pointing the WordPress strategy at a page URL is a later change, since `FindWordPress` already reads page heads.
+
+Later strategies, such as RFC 5005 feed paging or a sitemap, are new entries in the list.
+
+### Backfill lanes
+
+`Run` in `sourced.go` builds a second plugin for each adapter that implements `Backfiller`. That plugin's first stage calls `Backfill` instead of `FetchFeed`, and it has its own workers.
+
+- A second `route` goroutine reads the backfill channel and sends each source to the backfill plugin for its adapter.
+- An adapter with no `Backfiller` logs "no backfill strategy" and drops the source.
+- The source is sent unchanged, since its `ID`, `URL` and `Lang` are what the strategy needs.
+
+- The backfill route never goes through `sourceStream`, so `dispatch` never sets a pause. The source keeps its own rate.
+- The live `route` never sees a backfill. A backfill worker stays busy for a whole archive, so with all its workers busy, the backfill route blocks. Only backfills wait, and the endpoint answers `503` once its channel is full.
 - `Filter` skips posts already in `raw_posts`, so a rerun fetches only what is missing. A rerun of a 400-post archive costs 20 API requests, about 100 s.
-- A page that fails ends the read, as now. The button reruns it.
-- The `wordpress` plugin has its own workers, apart from `rss` and `page`. A large archive waits on the pacer for its own host only.
+- A page that fails ends the backfill. The button reruns it.
 
 ### Always fetch the article page
 
-`rss.FetchPost` fetches the article page for every item, not only excerpt items. The `excerpt` flag goes away. `wordpress` embeds `rss`, so it gets this too.
+`rss.FetchPost` fetches the article page for every item, not only excerpt items. The `excerpt` flag goes away. WordPress archive items run through the same `FetchPost`, so they get this too.
 
 `ProcessFeed` sets `RawContent` to the page and keeps the feed's title, content, authors and date.
 
@@ -117,25 +143,27 @@ Drop `dailyFetchCap` and `CheckedLastDay` from `internal/core/service/source/dis
 - **No record of a backfill.** Admin cannot see whether a source was backfilled. Only the `wordpress` rows in `logs` show it.
 - **A crash ends a backfill.** The button reruns it.
 - **A new `page` source may wait a tick or more for its first posts.** Until its link rule is saved off-peak.
-- **No fairness across hosts inside a plugin.** A plugin's 5 post workers share one queue. 20 new items on one busy host hold all 5 behind its pacer for about 100 s. Two backfills at once share the `wordpress` workers the same way, so a large archive slows a second one down. The `page` plugin works this way today.
+- **No fairness across hosts inside a plugin.** A plugin's 5 post workers share one queue. 20 new items on one busy host hold all 5 behind its pacer for about 100 s. Two backfills at once share the `rss` backfill workers the same way, so a large archive slows a second one down. The `page` plugin works this way today.
 - **A backfill slows its own source's live fetches a little.** They share the host's pacer slots, so each live request waits behind the few backfill requests already queued, up to about 30 s.
 
 ## Calls made without asking
 
-- Backfill copies feed the `wordpress` plugin directly, outside `sourceStream` and `route`.
+- Backfills go through their own route and per-adapter plugins, outside `sourceStream` and the live `route`.
+- `page` sources get no backfill for now.
+- No strategy found is logged at info, not as an error.
 - Activating a `proposed` source backfills it. Reactivating a `flagged` one does not.
 - Old posts still join recent search queries, and a post with no posted date counts as new.
 - Outbound links from old posts are kept.
 - A failed backfill call does not fail the source form.
 - Feed content wins only when it is longer than the page's extracted content.
 - A failed page fetch falls back to the feed content instead of skipping the post.
-- `wordpress` posts also fetch the article page, with the API content as fallback.
+- WordPress archive posts also fetch the article page, with the API content as fallback.
 
 ## Left to the builder
 
 - Backfill channel buffer size.
 - Button placement and wording, matching the Sync button.
-- Tests. At least: the endpoint's status codes, a backfill copy reaching the `wordpress` plugin without a pause on its source, `rss.FetchPost` always fetching, the content choice, a failed page fetch falling back to feed content, the discovered ingest without its cap, and an old post creating no search query while still joining a recent one.
+- Tests. At least: the endpoint's status codes, the strategy order, `ErrNoArchive`, a backfill reaching the `rss` backfill plugin without a pause on its source, `rss.FetchPost` always fetching, the content choice, a failed page fetch falling back to feed content, the discovered ingest without its cap, and an old post creating no search query while still joining a recent one.
 - Updating `docs/kb/backfill.md` and `docs/kb/discovered-ingest.md`.
 
 ## Defaults
