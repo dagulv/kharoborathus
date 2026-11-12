@@ -21,6 +21,7 @@ type field string
 
 const (
 	fieldLinks    field = "links"
+	fieldPages    field = "pages"
 	fieldContent  field = "content"
 	fieldTitle    field = "title"
 	fieldAuthors  field = "authors"

@@ -87,7 +87,7 @@ func TestGenerateField(t *testing.T) {
 
 	llm := &fakeLLM{answers: []any{abstain, good}}
 
-	rule, err := newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateField(context.Background(), slog.New(slog.DiscardHandler), fieldAuthors, pages(s, 0, 8))
+	rule, err := newExtractor(llm, nil, nil, nil, slog.New(slog.DiscardHandler)).generateField(context.Background(), slog.New(slog.DiscardHandler), fieldAuthors, pages(s, 0, 8))
 	if err != nil || rule.Abstained() || *rule.Selector != *good.Selector {
 		t.Fatalf("rule %+v, %v", rule, err)
 	}
@@ -98,14 +98,14 @@ func TestGenerateField(t *testing.T) {
 
 	llm = &fakeLLM{answers: []any{abstain, invented}}
 
-	rule, err = newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateField(context.Background(), slog.New(slog.DiscardHandler), fieldAuthors, pages(s, 0, 8))
+	rule, err = newExtractor(llm, nil, nil, nil, slog.New(slog.DiscardHandler)).generateField(context.Background(), slog.New(slog.DiscardHandler), fieldAuthors, pages(s, 0, 8))
 	if err != nil || !rule.Abstained() || rule.Reasoning != abstain.Reasoning {
 		t.Errorf("abstain should be a stored answer: %+v, %v", rule, err)
 	}
 
 	llm = &fakeLLM{answers: []any{invented}}
 
-	if _, err := newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateField(context.Background(), slog.New(slog.DiscardHandler), fieldAuthors, pages(s, 0, 8)); !errors.Is(err, ErrNoRule) || !errors.Is(err, ErrSelectorUngrounded) {
+	if _, err := newExtractor(llm, nil, nil, nil, slog.New(slog.DiscardHandler)).generateField(context.Background(), slog.New(slog.DiscardHandler), fieldAuthors, pages(s, 0, 8)); !errors.Is(err, ErrNoRule) || !errors.Is(err, ErrSelectorUngrounded) {
 		t.Errorf("no usable candidate: %v", err)
 	}
 }

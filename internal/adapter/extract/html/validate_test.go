@@ -56,7 +56,7 @@ func TestGenerateContent(t *testing.T) {
 	weaker.Exclude = []string{".promo", ".updated"}
 
 	llm := &fakeLLM{answers: []any{weaker, invented, goodRule()}}
-	tr := newExtractor(llm, nil, slog.New(slog.DiscardHandler))
+	tr := newExtractor(llm, nil, nil, nil, slog.New(slog.DiscardHandler))
 
 	rule, err := tr.generateContent(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 8))
 	if err != nil {
@@ -73,7 +73,7 @@ func TestGenerateContent(t *testing.T) {
 
 	llm = &fakeLLM{answers: []any{invented, ContentRule{Include: nil, Reasoning: "no clear container"}}}
 
-	if _, err := newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateContent(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 8)); !errors.Is(err, ErrNoRule) ||
+	if _, err := newExtractor(llm, nil, nil, nil, slog.New(slog.DiscardHandler)).generateContent(context.Background(), slog.New(slog.DiscardHandler), pages(s, 0, 8)); !errors.Is(err, ErrNoRule) ||
 		!errors.Is(err, ErrSelectorUngrounded) || !errors.Is(err, ErrAbstained) {
 		t.Errorf("no usable candidate: %v", err)
 	}

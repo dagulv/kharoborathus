@@ -16,6 +16,7 @@ import (
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/core/port"
+	"github.com/dagulv/kharoborathus/internal/lib/pace"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 )
@@ -67,7 +68,7 @@ func wait(t *htmlExtractor) {
 }
 
 func TestCollectOncePerPage(t *testing.T) {
-	tr := newExtractor(&idleLLM{}, nil, discard)
+	tr := newExtractor(&idleLLM{}, nil, nil, nil, discard)
 	d := domain.Domain{ID: "d"}
 	s := site{body: "article-body"}
 
@@ -82,7 +83,7 @@ func TestCollectOncePerPage(t *testing.T) {
 
 func TestCollectOnlyRequested(t *testing.T) {
 	store := &fakeStore{}
-	tr := newExtractor(&fakeLLM{answers: []any{goodRule()}}, store, discard)
+	tr := newExtractor(&fakeLLM{answers: []any{goodRule()}}, store, nil, nil, discard)
 	d := domain.Domain{ID: "d"}
 
 	for _, p := range pages(site{body: "article-body", updated: "x"}, 0, ruleSamples) {
@@ -97,7 +98,7 @@ func TestCollectOnlyRequested(t *testing.T) {
 }
 
 func TestCollectSkipsFailedField(t *testing.T) {
-	tr := newExtractor(&idleLLM{}, nil, discard)
+	tr := newExtractor(&idleLLM{}, nil, nil, nil, discard)
 	d := domain.Domain{ID: "d"}
 	tr.fail(fieldAuthors, d.ID)
 
@@ -109,7 +110,7 @@ func TestCollectSkipsFailedField(t *testing.T) {
 }
 
 func TestGenerateUnavailableKeepsSamples(t *testing.T) {
-	tr := newExtractor(&idleLLM{}, nil, discard)
+	tr := newExtractor(&idleLLM{}, nil, nil, nil, discard)
 	d := domain.Domain{ID: "d"}
 	samples := pages(site{body: "article-body"}, 0, ruleSamples)
 
@@ -121,7 +122,7 @@ func TestGenerateUnavailableKeepsSamples(t *testing.T) {
 }
 
 func TestCollectEvictsOldestDomain(t *testing.T) {
-	tr := newExtractor(&idleLLM{}, nil, discard)
+	tr := newExtractor(&idleLLM{}, nil, nil, nil, discard)
 
 	for i := range maxSampleDomains + 1 {
 		tr.collect(context.Background(), discard, domain.Domain{ID: strconv.Itoa(i)}, fieldContent, sample{URL: fmt.Sprintf("https://d%d.example/a", i)})
@@ -152,14 +153,14 @@ func TestClientRefusesPrivate(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := newExtractor(&idleLLM{}, nil, discard).client.Get(srv.URL); !errors.Is(err, safehttp.ErrPrivateAddress) {
+	if _, err := newExtractor(&idleLLM{}, nil, nil, nil, discard).client.Get(srv.URL); !errors.Is(err, safehttp.ErrPrivateAddress) {
 		t.Errorf("err %v", err)
 	}
 }
 
 func TestLinksTriesOneListingFirst(t *testing.T) {
 	llm := &fakeLLM{answers: []any{LinkRule{Reasoning: "no list"}}}
-	tr := newExtractor(llm, nil, discard)
+	tr := newExtractor(llm, nil, nil, nil, discard)
 	d := domain.Domain{ID: "d"}
 	s := listings(1)[0]
 
@@ -185,7 +186,7 @@ func TestLinksTriesOneListingFirst(t *testing.T) {
 
 func TestLinksRetriesOneListingWhenUnavailable(t *testing.T) {
 	llm := &idleLLM{}
-	tr := newExtractor(llm, nil, discard)
+	tr := newExtractor(llm, nil, nil, nil, discard)
 	d := domain.Domain{ID: "d"}
 
 	tr.withoutLinkRule(context.Background(), discard, d, listings(1)[0])
@@ -213,7 +214,7 @@ func TestLinksOneListingSavesRule(t *testing.T) {
 
 	llm := &fakeLLM{answers: []any{LinkRule{Links: str("article.teaser h2 a"), Reasoning: "repeated teasers"}}}
 	store := &fakeStore{}
-	tr := newExtractor(llm, store, discard)
+	tr := newExtractor(llm, store, nil, nil, discard)
 	tr.client = srv.Client()
 
 	if links := tr.withoutLinkRule(context.Background(), discard, domain.Domain{ID: "d"}, sample{URL: srv.URL + "/", Data: []byte(listing(0))}); links != nil {
@@ -227,5 +228,71 @@ func TestLinksOneListingSavesRule(t *testing.T) {
 
 	if _, ok := store.rules[string(fieldLinks)]; !ok {
 		t.Errorf("rules %v", store.rules)
+	}
+}
+
+func TestSaveRuleSendsDomain(t *testing.T) {
+	ruled := make(chan string, 1)
+	tr := newExtractor(&idleLLM{}, &fakeStore{}, nil, ruled, discard)
+	ctx := context.Background()
+
+	if err := tr.saveRule(ctx, "d", fieldLinks, LinkRule{}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case id := <-ruled:
+		if id != "d" {
+			t.Errorf("sent %q", id)
+		}
+	default:
+		t.Fatal("no event for a links rule")
+	}
+
+	if err := tr.saveRule(ctx, "d", fieldContent, ContentRule{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(ruled) != 0 {
+		t.Error("event for a content rule")
+	}
+
+	ruled <- "full"
+
+	done := make(chan struct{})
+	go func() {
+		tr.saveRule(ctx, "d", fieldLinks, LinkRule{})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Error("saveRule blocked on a full channel")
+	}
+}
+
+func TestFetcherPaced(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html></html>`))
+	}))
+	defer srv.Close()
+
+	gap := 50 * time.Millisecond
+	tr := newExtractor(&idleLLM{}, nil, pace.New(gap), nil, discard)
+	tr.client = srv.Client()
+	fetch := tr.fetcher(discard)
+
+	start := time.Now()
+
+	for range 2 {
+		if _, err := fetch(context.Background(), srv.URL+"/"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if elapsed := time.Since(start); elapsed < gap {
+		t.Errorf("two fetches took %v, want at least %v apart", elapsed, gap)
 	}
 }
