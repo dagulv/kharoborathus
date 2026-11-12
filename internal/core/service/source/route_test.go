@@ -70,7 +70,7 @@ func TestListingRoute(t *testing.T) {
 	}
 }
 
-func TestSyncSource(t *testing.T) {
+func TestQueueSource(t *testing.T) {
 	db := dbtest.New(t)
 	ctx := context.Background()
 
@@ -83,37 +83,44 @@ func TestSyncSource(t *testing.T) {
 	}
 
 	store := postgres.NewSourceStore(db)
-	syncs := make(chan domain.Source, 1)
-	handler := syncSource(&store, syncs, slog.New(slog.DiscardHandler))
 
-	sync := func(id string) int {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/sources/"+id+"/sync", nil)
-		req.SetPathValue("id", id)
-		handler(rec, req)
+	for _, name := range []string{"sync", "backfill"} {
+		if _, err := db.Exec(ctx, `UPDATE sources SET enabled = false WHERE id = $1`, sourceID); err != nil {
+			t.Fatal(err)
+		}
 
-		return rec.Code
-	}
+		queue := make(chan domain.Source, 1)
+		handler := queueSource(&store, queue, name, slog.New(slog.DiscardHandler))
 
-	if code := sync(sourceID); code != http.StatusConflict {
-		t.Errorf("disabled: %d", code)
-	}
+		send := func(id string) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/sources/"+id+"/"+name, nil)
+			req.SetPathValue("id", id)
+			handler(rec, req)
 
-	if _, err := db.Exec(ctx, `UPDATE sources SET enabled = true WHERE id = $1`, sourceID); err != nil {
-		t.Fatal(err)
-	}
+			return rec
+		}
 
-	if code := sync(sourceID); code != http.StatusAccepted || len(syncs) != 1 {
-		t.Errorf("active: %d, queued %d", code, len(syncs))
-	}
+		if rec := send(sourceID); rec.Code != http.StatusConflict {
+			t.Errorf("%s disabled: %d", name, rec.Code)
+		}
 
-	if code := sync(sourceID); code != http.StatusServiceUnavailable {
-		t.Errorf("queue full: %d", code)
-	}
+		if _, err := db.Exec(ctx, `UPDATE sources SET enabled = true WHERE id = $1`, sourceID); err != nil {
+			t.Fatal(err)
+		}
 
-	for _, id := range []string{"00000000-0000-0000-0000-000000000000", "nope"} {
-		if code := sync(id); code != http.StatusNotFound {
-			t.Errorf("%s: %d", id, code)
+		if rec := send(sourceID); rec.Code != http.StatusAccepted || len(queue) != 1 {
+			t.Errorf("%s active: %d, queued %d", name, rec.Code, len(queue))
+		}
+
+		if rec := send(sourceID); rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), name+" queue full") {
+			t.Errorf("%s queue full: %d %q", name, rec.Code, rec.Body.String())
+		}
+
+		for _, id := range []string{"00000000-0000-0000-0000-000000000000", "nope"} {
+			if rec := send(id); rec.Code != http.StatusNotFound {
+				t.Errorf("%s %s: %d", name, id, rec.Code)
+			}
 		}
 	}
 }
@@ -121,7 +128,7 @@ func TestSyncSource(t *testing.T) {
 func TestRoutesUnderAdmin(t *testing.T) {
 	store := postgres.NewSourceStore(dbtest.New(t))
 	mux := http.NewServeMux()
-	Routes(mux, &store, make(chan domain.Source), slog.New(slog.DiscardHandler), slog.New(slog.DiscardHandler))
+	Routes(mux, &store, make(chan domain.Source), make(chan domain.Source), slog.New(slog.DiscardHandler), slog.New(slog.DiscardHandler))
 
 	cases := []struct {
 		method, path string
@@ -129,6 +136,7 @@ func TestRoutesUnderAdmin(t *testing.T) {
 	}{
 		{http.MethodGet, "/admin/listing", http.StatusBadRequest},
 		{http.MethodPost, "/admin/sources/nope/sync", http.StatusNotFound},
+		{http.MethodPost, "/admin/sources/nope/backfill", http.StatusNotFound},
 		{http.MethodGet, "/listing", http.StatusNotFound},
 	}
 
