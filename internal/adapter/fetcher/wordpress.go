@@ -96,6 +96,19 @@ func apiRoot(res response) (root, lang string) {
 	return root, lang
 }
 
+// wp/v2/posts lists every post on the site, so only the site root or its main feed may stand for it.
+// A section or category feed would import posts that are not its own.
+func siteWide(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+
+	path := strings.Trim(u.Path, "/")
+
+	return path == "" || path == "feed"
+}
+
 func linkHeader(h http.Header, rel string) string {
 	for _, v := range h.Values("Link") {
 		for link := range strings.SplitSeq(v, ",") {
@@ -183,6 +196,10 @@ func (r rss) wordpress(ctx context.Context, l *slog.Logger, url string) (<-chan 
 // wordpressArchive reads every post behind the page or feed at rawURL, newest first.
 // A failed detection counts as no API, which covers a closed API answering 401 or 404.
 func wordpressArchive(ctx context.Context, client *http.Client, pacer *pace.Pacer, l *slog.Logger, rawURL string) (<-chan rssDocument, bool, error) {
+	if !siteWide(rawURL) {
+		return nil, false, nil
+	}
+
 	wp, err := FindWordPress(ctx, client, pacer, rawURL)
 	if err != nil {
 		l.Warn("find wordpress", "url", rawURL, "err", err)

@@ -26,6 +26,17 @@ func wordpressServer(t *testing.T, root string) *httptest.Server {
 		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel><title>T</title><language>sv-SE</language></channel></rss>`))
 	})
 
+	mux.HandleFunc("/category/x/feed", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", fmt.Sprintf(`<%s>; rel="%s"`, root, wordpressRel))
+		w.Header().Set("Content-Type", "application/rss+xml")
+		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel><title>T</title></channel></rss>`))
+	})
+
+	mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html lang="sv"><head><link rel="%s" href="%s"></head></html>`, wordpressRel, root)
+	})
+
 	mux.HandleFunc("/blog/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintf(w, `<html lang="sv"><head><link rel="%s" href="%s"></head></html>`, wordpressRel, root)
@@ -188,6 +199,19 @@ func TestRSSBackfillNone(t *testing.T) {
 	r.archives = []archive{r.wordpress}
 
 	if _, err := r.Backfill(context.Background(), l, srv.URL+"/plain"); !errors.Is(err, port.ErrNoArchive) {
+		t.Errorf("err %v, want ErrNoArchive", err)
+	}
+}
+
+func TestRSSBackfillCategoryFeed(t *testing.T) {
+	srv := wordpressServer(t, "/wp-json/")
+	l := slog.New(slog.DiscardHandler)
+
+	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond), l: l}
+	r.archives = []archive{r.wordpress}
+
+	// The API lists every post on the site, not only the category's.
+	if _, err := r.Backfill(context.Background(), l, srv.URL+"/category/x/feed"); !errors.Is(err, port.ErrNoArchive) {
 		t.Errorf("err %v, want ErrNoArchive", err)
 	}
 }

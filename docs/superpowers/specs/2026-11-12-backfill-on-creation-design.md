@@ -86,9 +86,10 @@ type archive func(ctx context.Context, l *slog.Logger, url string) (items <-chan
 - A strategy that fails to detect support, such as a closed API answering 401 or 404, reports `ok` false and logs a warning. An error while reading an archive ends the backfill and is logged.
 
 The first and only strategy is WordPress:
-1. `FindWordPress` with the rss adapter's pacer on the feed URL. Its requests log as type `wordpress`.
-2. No API, or any detection error: `ok` is false.
-3. Otherwise page through `wp/v2/posts`, 20 posts per request, newest first, each page paced. Each post is sent as an `rssDocument` as soon as it is read. Its `Lang` is the language `FindWordPress` found.
+1. Only for the site root or its main feed, `/` or `/feed`. `wp/v2/posts` lists every post on the site, so a section or category feed would import posts that are not its own.
+2. `FindWordPress` with the rss adapter's pacer on the feed URL. Its requests log as type `wordpress`.
+3. No API, or any detection error: `ok` is false.
+4. Otherwise page through `wp/v2/posts`, 20 posts per request, newest first, each page paced. Each post is sent as an `rssDocument` as soon as it is read. Its `Lang` is the language `FindWordPress` found.
 
 The `wordpress` adapter, its `fetchers` entry in `cmd/main.go` and `NewWordPress` go away. `FindWordPress` and the API paging stay in `internal/adapter/fetcher/wordpress.go`, as rss strategy code.
 
@@ -125,6 +126,8 @@ type PageRule struct {
 ```
 
 Exactly one of `Next` and `Template` is set. Both null means the model abstained.
+
+A `Template` is an absolute URL learned on one listing, and another page source on the same domain has its own listing. The stored rule therefore keeps the listing it was learned on. A template applies from that listing for page 2, and from its own page n-1 after that. A `Next` selector applies to any listing on the domain.
 
 **Input.** The skeleton keeps neither `rel`, `aria-label` nor link text, so the model could not see "Next" or "Older posts" there. The prompt instead lists candidates from page 1. A candidate is:
 - every element with a URL in `href`, `data-href`, `data-url` or `data-next`,
