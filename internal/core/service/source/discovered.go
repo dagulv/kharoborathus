@@ -21,7 +21,6 @@ const (
 	DiscoveredQueue = 100
 	// Older links and pages are stale news.
 	discoveredWindow = 7
-	dailyFetchCap    = 200
 	discoveredBatch  = 20
 )
 
@@ -35,7 +34,7 @@ type Discovered struct {
 	Calls *slog.Logger
 }
 
-// One link at a time, so the daily cap cannot race.
+// One link at a time.
 func (d Discovered) Run(ctx context.Context, ids <-chan string, l *slog.Logger) error {
 	tick := d.Service.Schedule.Tick(ctx, time.Minute)
 
@@ -75,16 +74,6 @@ func (d Discovered) ingest(ctx context.Context, l *slog.Logger, id string) error
 	link, found, err := d.Store.GetPending(ctx, id, discoveredWindow)
 	if err != nil || !found {
 		return err
-	}
-
-	checked, err := d.Store.CheckedLastDay(ctx)
-	if err != nil {
-		return err
-	}
-
-	if checked >= dailyFetchCap {
-		l.Info("ingest held back", "discovery_post", id, "checked", checked)
-		return nil
 	}
 
 	l = l.With("discovery_post", id, "url", link.URL)
