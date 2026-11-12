@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 )
@@ -192,14 +193,52 @@ func TestNextGeneratesWithoutRule(t *testing.T) {
 		t.Errorf("got %q, %v", got, err)
 	}
 
-	wait(tr)
+	waitRule(t, store, fieldPages)
+}
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
+// Learning runs in its own goroutine that waits for the slot, so the test polls for the saved rule.
+func waitRule(t *testing.T, store *fakeStore, f field) {
+	t.Helper()
 
-	if _, ok := store.rules[string(fieldPages)]; !ok {
-		t.Errorf("rules %v", store.rules)
+	deadline := time.Now().Add(2 * time.Second)
+
+	for time.Now().Before(deadline) {
+		store.mu.Lock()
+		_, ok := store.rules[string(f)]
+		store.mu.Unlock()
+
+		if ok {
+			return
+		}
+
+		time.Sleep(5 * time.Millisecond)
 	}
+
+	t.Errorf("no %s rule saved", f)
+}
+
+func TestNextRetriesWhenBusy(t *testing.T) {
+	defer func(gap time.Duration) { pageRetryGap = gap }(pageRetryGap)
+	pageRetryGap = 10 * time.Millisecond
+
+	srv := pagerServer(t, map[string]string{
+		"/news?page=2": pagedListing(8, "/news?page=3"),
+	})
+
+	store := &fakeStore{}
+	tr := newExtractor(&fakeLLM{answers: []any{PageRule{Next: str("a.older"), Reasoning: "older link"}}}, store, nil, nil, discard)
+	tr.client = srv.Client()
+
+	tr.generating <- struct{}{}
+
+	if got, err := tr.Next(context.Background(), discard, linkRuled(t, nil), srv.URL+"/news", []byte(pagedListing(0, "/news?page=2")), 2); err != nil || got != "" {
+		t.Errorf("got %q, %v", got, err)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+	<-tr.generating
+
+	waitRule(t, store, fieldPages)
 }
 
 func TestNextWithoutLinkRule(t *testing.T) {
