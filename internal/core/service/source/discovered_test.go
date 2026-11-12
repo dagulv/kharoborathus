@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -207,26 +206,25 @@ func TestIngestFinalStatuses(t *testing.T) {
 	}
 }
 
-func TestIngestDailyCap(t *testing.T) {
+func TestIngestNoDailyCap(t *testing.T) {
 	f := discoveredSetup(t)
 	ctx := context.Background()
 
 	if _, err := f.db.Exec(ctx, `
 		INSERT INTO discovery_posts (url, from_post_id, status, checked_at)
-		SELECT 'https://b.example/' || i, $1, 'rejected', now() FROM generate_series(1, $2) AS i
-		`, f.fromPost, dailyFetchCap); err != nil {
+		SELECT 'https://b.example/' || i, $1, 'rejected', now() FROM generate_series(1, 200) AS i
+		`, f.fromPost); err != nil {
 		t.Fatal(err)
 	}
 
-	var logged strings.Builder
 	id := f.queue(t, pageServer(t).URL+"/a")
 
-	if err := f.d.ingest(ctx, slog.New(slog.NewTextHandler(&logged, nil)), id); err != nil {
+	if err := f.d.ingest(ctx, slog.New(slog.DiscardHandler), id); err != nil {
 		t.Fatal(err)
 	}
 
-	if s := f.status(t, id); s != domain.StatusPending || !strings.Contains(logged.String(), "ingest held back") {
-		t.Errorf("status %q, log %q", s, logged.String())
+	if s := f.status(t, id); s != domain.StatusAccepted {
+		t.Errorf("status %q", s)
 	}
 }
 

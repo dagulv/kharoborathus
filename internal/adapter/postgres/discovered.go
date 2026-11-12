@@ -61,14 +61,6 @@ func (s *DiscoveredStore) ListPending(ctx context.Context, windowDays, limit int
 	return ids, nil
 }
 
-func (s *DiscoveredStore) CheckedLastDay(ctx context.Context) (n int, err error) {
-	if err = s.db.QueryRow(ctx, `SELECT count(*) FROM discovery_posts WHERE checked_at > now() - interval '1 day'`).Scan(&n); err != nil {
-		return 0, fmt.Errorf("err count checked discovered posts: %w", err)
-	}
-
-	return n, nil
-}
-
 func (s *DiscoveredStore) SetStatus(ctx context.Context, id, status string) error {
 	if _, err := s.db.Exec(ctx, `UPDATE discovery_posts SET status = $2, checked_at = now() WHERE id = $1`, id, status); err != nil {
 		return fmt.Errorf("err set discovered post status: %w", err)
