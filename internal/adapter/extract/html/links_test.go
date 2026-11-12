@@ -76,7 +76,7 @@ func TestGenerateLinkRule(t *testing.T) {
 
 	llm := &fakeLLM{answers: []any{invented, sections, good}}
 
-	rule, err := newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite)
+	rule, err := newExtractor(llm, nil, nil, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,13 +91,13 @@ func TestGenerateLinkRule(t *testing.T) {
 
 	llm = &fakeLLM{answers: []any{invented, sections, LinkRule{Reasoning: "no list"}}}
 
-	_, err = newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite)
+	_, err = newExtractor(llm, nil, nil, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite)
 	if !errors.Is(err, ErrNoRule) || !errors.Is(err, ErrSelectorUngrounded) || !errors.Is(err, ErrAbstained) ||
 		!strings.Contains(err.Error(), "linked pages are articles") {
 		t.Errorf("no usable candidate: %v", err)
 	}
 
-	if _, err := newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(0), fetchSite); err == nil {
+	if _, err := newExtractor(llm, nil, nil, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(0), fetchSite); err == nil {
 		t.Error("generated from no listings")
 	}
 }
@@ -106,7 +106,7 @@ func TestGenerateLinkRuleSingleListing(t *testing.T) {
 	good := LinkRule{Links: str("article.teaser h2 a"), Reasoning: "repeated teasers"}
 	llm := &fakeLLM{answers: []any{good}}
 
-	rule, err := newExtractor(llm, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(1), fetchSite)
+	rule, err := newExtractor(llm, nil, nil, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(1), fetchSite)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestGenerateLinkRuleSingleListing(t *testing.T) {
 	}
 
 	multi := &fakeLLM{answers: []any{good}}
-	if _, err := newExtractor(multi, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite); err != nil {
+	if _, err := newExtractor(multi, nil, nil, nil, slog.New(slog.DiscardHandler)).generateLinkRule(context.Background(), slog.New(slog.DiscardHandler), listings(3), fetchSite); err != nil {
 		t.Fatal(err)
 	}
 

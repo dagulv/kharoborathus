@@ -19,6 +19,7 @@ import (
 const (
 	SyncQueue       = 16
 	BackfillQueue   = 16
+	RuledQueue      = 16
 	discoverTimeout = time.Minute
 	homepageTimeout = 20 * time.Second
 )

@@ -27,7 +27,7 @@ func TestExtractorFields(t *testing.T) {
 		d.Metadata.Extract[string(f)], _ = json.Marshal(r)
 	}
 
-	tr := newExtractor(&idleLLM{}, nil, discard)
+	tr := newExtractor(&idleLLM{}, nil, nil, nil, discard)
 
 	content, err := tr.Content(ctx, discard, d, s.url(4), page)
 	if err != nil || strings.Contains(content, "Läs också") || !strings.Contains(content, "Artikel 4") {
