@@ -1,11 +1,12 @@
-# Backfill on Source Creation Implementation Plan
+# RSS Backfill Strategies Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Backfill a source's WordPress archive when it is created, approved or a button is pressed. Fetch every post's article page, and keep the fetch path free of DeepSeek, Jev and Brave calls.
+**Goal:** Backfill an rss source's history through adapter strategies, starting with WordPress, when the source is created, approved or a button is pressed. Fetch every post's article page, and keep the fetch path free of DeepSeek, Jev and Brave calls.
 
 **Architecture:**
-- **Backfill trigger.** An admin endpoint sends the source on a Go channel. A backfill goroutine runs `FindWordPress` with the shared pacer. When it finds an archive, it sends a copy with adapter `wordpress` straight into the `wordpress` plugin, which no longer sits behind `route`.
+- **Backfill as a strategy.** An adapter that can read history implements `port.Backfiller`. `rss` implements it with an ordered list of strategies; WordPress, found through `FindWordPress` with the rss adapter's pacer, is the first. The `wordpress` adapter type goes away.
+- **Backfill trigger.** An admin endpoint sends the source on a Go channel. A backfill `route` hands it to a per-adapter backfill plugin with its own workers, outside `sourceStream` and the live `route`.
 - **Article pages.** `rss.FetchPost` always fetches the article page. `Service.extract` keeps the longer of the page and feed content.
 - **Off the fetch path.** Old posts create no search queries, discovered ingest loses its daily cap, and the one-listing link rule runs in the background.
 
@@ -30,7 +31,8 @@
 ## Review Focus
 
 - **A `rss` source whose URL is a feed.** `FindWordPress` must find the API from the feed's `Link` header. Tested in Task 4.
-- **Backfill copy keeps the source's `ID`.** Posts must land on the real source. Tested in Task 4.
+- **Archive posts land on the real source.** Tested in Task 5 by `TestFetcherBackfill`, through the `"a ..."` source id.
+- **Backfill for a `page` source.** It logs and drops the source, and never blocks. Tested in Task 5.
 - **Full backfill queue.** The endpoint answers `503`, and `createSource` still redirects. Tested in Task 5 for Go; checked by hand for the form in Task 6.
 - **Post with no posted date.** It counts as new, so it can still start a search. Tested in Task 3.
 - **Feed content heavy in markup but short in text.** It must not beat a longer page article. Tested in Task 2.
@@ -44,7 +46,7 @@
 - Test: `internal/adapter/fetcher/rss_test.go`
 
 **Interfaces:**
-- Produces: `rss.FetchPost(ctx, l, data rssDocument) (rssDocument, error)` fetches every item's page into `data.Page`. A failed page fetch logs at debug and returns `data, nil`, keeping the feed fields. It returns an error only from `pacer.Wait`. `wordpress` embeds `rss` and inherits this.
+- Produces: `rss.FetchPost(ctx, l, data rssDocument) (rssDocument, error)` fetches every item's page into `data.Page`. A failed page fetch logs at debug and returns `data, nil`, keeping the feed fields. It returns an error only from `pacer.Wait`. Archive items from Task 4 go through the same `FetchPost`.
 
 - [ ] **Step 1: Replace `TestRSSFetchesArticleOfExcerptItem` with `TestRSSFetchesEveryArticle`**
   - `rssServer`: drop the `t.Error` on `/full` and serve `<html><body><article>full page</article></body></html>` there.
@@ -68,7 +70,7 @@ Expected: FAIL. `RawContent["Full"]` is empty, and `Gone` returns an error.
 - [ ] **Step 4: Run the package tests**
 
 Run: `go test ./internal/adapter/fetcher/ -v`
-Expected: PASS, including `TestWordPressFetchesEveryPage`.
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -159,116 +161,133 @@ git add internal/adapter/search/discover.go internal/adapter/search/discover_tes
 git commit -m "Start no search for posts older than the dedupe window"
 ```
 
-### Task 4: Backfill stream
+### Task 4: WordPress as an rss backfill strategy
 
 **Files:**
-- Create: `internal/core/service/source/backfill.go`
-- Test: `internal/core/service/source/backfill_test.go`
+- Modify: `internal/core/port/fetcher.go`
+- Modify: `internal/adapter/fetcher/rss.go`
+- Modify: `internal/adapter/fetcher/wordpress.go`
+- Test: `internal/adapter/fetcher/wordpress_test.go`
 
 **Interfaces:**
-- Consumes: `fetchers.FindWordPress(ctx, client *http.Client, pacer *pace.Pacer, rawURL string) (fetchers.WordPress, error)`. Here `fetchers` is the `internal/adapter/fetcher` import alias, as in `route.go`.
-- Produces:
+- Produces in `port`:
 
 ```go
-const BackfillQueue = 16
+var ErrNoArchive = errors.New("no archive")
 
-type Backfill struct {
-	Client *http.Client
-	Pacer  *pace.Pacer
-	// Third-party requests, one row each in the logs table.
-	Calls *slog.Logger
+// An adapter that can read a source's history. Items run through the adapter's Filter, FetchPost and ProcessFeed.
+type Backfiller[T any] interface {
+	Backfill(ctx context.Context, l *slog.Logger, url string) (<-chan T, error)
 }
-
-// Stream sends a wordpress copy of each source whose site has a REST API. It closes when sources closes or ctx ends.
-func (b Backfill) Stream(ctx context.Context, l *slog.Logger, sources <-chan domain.Source) <-chan domain.Source
 ```
 
-Behaviour:
-- `FindWordPress` uses `logs.Client(b.Client, b.Calls.With("source_id", source.ID), "wordpress")` and `b.Pacer`.
-- An error logs `l.Warn("find wordpress", ...)` and skips the source.
-- An empty `wp.Posts` logs at info and skips it.
-- Otherwise it logs `l.Info("backfill", "source", id, "url", wp.Posts, "posts", wp.Total)` and sends a copy with `Adapter = "wordpress"` and `URL = wp.Posts`. `Lang` becomes `normalizeLang(wp.Lang)` only when that is not empty. Every other field, `ID` included, is unchanged.
-- The output channel is unbuffered. Sends select on `ctx.Done()`.
+- Produces in `fetcher`:
 
-- [ ] **Step 1: Write `TestBackfillStream`**
+```go
+// archive streams a feed's history. ok is false when the site does not support it.
+type archive func(ctx context.Context, l *slog.Logger, url string) (items <-chan rssDocument, ok bool, err error)
+```
 
-An `httptest` server with three handlers:
-- `/` serves `<html lang="sv">` with a `<link rel="https://api.w.org/" href="/wp-json/">`.
-- `/feed` serves an RSS body with the header `Link: <SRV/wp-json/>; rel="https://api.w.org/"`.
-- `/wp-json/wp/v2/posts` sets `X-WP-Total: 3` and serves `[]`.
-- `/plain` serves HTML with no link.
+  - `rss` gains `archives []archive`. `NewRSS` builds the `rss` value, sets `r.archives = []archive{r.wordpress}`, and returns it.
+  - `func (r rss) Backfill(ctx, l, url string) (<-chan rssDocument, error)` tries `r.archives` in order. It returns the first one with `ok`, the first error, or `port.ErrNoArchive`. Add `var _ port.Backfiller[rssDocument] = rss{}`.
+  - `func (r rss) wordpress(ctx, l, url string) (<-chan rssDocument, bool, error)`:
+    - It calls `FindWordPress(ctx, logs.Client(r.client, l, "wordpress"), r.pacer, url)`.
+    - A detection error logs `l.Warn("find wordpress", "url", url, "err", err)` and returns `ok` false. That covers a closed API answering 401 or 404.
+    - An empty `wp.Posts` returns `ok` false.
+    - Otherwise it reads page 1 synchronously, as `wordpress.FetchFeed` does now. An error there returns `nil, true, err`. The other pages stream from a goroutine. Every document gets `Lang = wp.Lang`.
+  - Delete the `wordpress` type, `NewWordPress` and `var _ port.Fetcher[rssDocument] = wordpress{}`. Keep `FindWordPress`, `page` and `document`, now as methods or functions on `rss`.
 
-Send three sources, then close the input:
+- [ ] **Step 1: Write the tests in `wordpress_test.go`**
+  - **Rename `TestWordPressFetchesEveryPage` to `TestRSSBackfillWordPress`.**
+    - Build `r := rss{client: srv.Client(), pacer: pace.New(gap), l: l}`, then `r.archives = []archive{r.wordpress}`.
+    - Call `r.Backfill(ctx, l, srv.URL+"/feed")`.
+    - Keep every existing assertion, and add that every document has `Lang == "sv-SE"`.
+  - **`TestRSSBackfillOrder`.** Set `r.archives` to three fakes:
+    1. One that returns `ok` false.
+    2. One that returns a channel with `rssDocument{URL: "x"}`.
+    3. One that calls `t.Error`.
 
-| Source | URL | Lang |
-|---|---|---|
-| `{ID: "a", Adapter: "page"}` | `srv.URL+"/"` | |
-| `{ID: "b", Adapter: "rss"}` | `srv.URL+"/feed"` | `"en"` |
-| `{ID: "c", Adapter: "page"}` | `srv.URL+"/plain"` | |
+    Assert the only document read is `x`.
+  - **`TestRSSBackfillNone`.** Use the WordPress strategy on `srv.URL+"/plain"`. Assert `errors.Is(err, port.ErrNoArchive)`.
 
-Use `pace.New(time.Millisecond)`. Collect the output until it closes, then assert:
-- There are exactly 2 copies, with IDs `a` and `b`.
-- Both have `Adapter == "wordpress"` and `URL == srv.URL+"/wp-json/wp/v2/posts"`.
-- `a.Lang == "sv"`, and `b.Lang == "en"`, since the feed has no `<language>`.
+- [ ] **Step 2: Run them to verify they fail**
 
-- [ ] **Step 2: Run it to verify it fails**
+Run: `go test ./internal/adapter/fetcher/ -run 'TestRSSBackfill' -v`
+Expected: FAIL to compile, since `archive` and `Backfill` are undefined.
 
-Run: `go test ./internal/core/service/source/ -run TestBackfillStream -v`
-Expected: FAIL to compile, since `Backfill` is undefined.
+- [ ] **Step 3: Implement `port.Backfiller`, `ErrNoArchive`, `rss.Backfill` and `rss.wordpress`. Delete the `wordpress` adapter.**
 
-- [ ] **Step 3: Implement `backfill.go`**
+`cmd/main.go` stops compiling until Task 5. Remove its `"wordpress"` entry now so the build stays green.
 
-- [ ] **Step 4: Run the test**
+- [ ] **Step 4: Run the package tests and build**
 
-Run: `go test ./internal/core/service/source/ -run TestBackfillStream -v`
+Run: `go build ./... && go test ./internal/adapter/fetcher/ -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/core/service/source/backfill.go internal/core/service/source/backfill_test.go
-git commit -m "Stream a wordpress copy of each source with a REST API"
+git add internal/core/port/fetcher.go internal/adapter/fetcher/rss.go internal/adapter/fetcher/wordpress.go internal/adapter/fetcher/wordpress_test.go cmd/main.go
+git commit -m "Read a WordPress archive as a backfill strategy of the rss adapter"
 ```
 
-### Task 5: Endpoint and wiring
+### Task 5: Backfill lanes, endpoint and wiring
 
 **Files:**
-- Modify: `internal/core/service/source/route.go`
+- Modify: `internal/core/service/source/fetch.go`
 - Modify: `internal/core/service/source/sourced.go`
+- Modify: `internal/core/service/source/route.go`
 - Modify: `cmd/main.go`
 - Modify: `docs/kb/backfill.md`
-- Test: `internal/core/service/source/route_test.go`
 - Test: `internal/core/service/source/fetch_test.go`
+- Test: `internal/core/service/source/route_test.go`
 
 **Interfaces:**
-- Consumes: `Backfill`, `BackfillQueue` and `Backfill.Stream` from Task 4.
+- Consumes: `port.Backfiller[T]` and `port.ErrNoArchive` from Task 4.
 - Produces:
-  - `func Routes(mux *http.ServeMux, s *postgres.SourceStore, syncs, backfills chan<- domain.Source, l, calls *slog.Logger)` registers `POST /admin/sources/{id}/backfill`.
-  - `syncSource` becomes `queueSource(s *postgres.SourceStore, queue chan<- domain.Source, name string, l *slog.Logger) http.HandlerFunc`. Both routes use it, with `name` set to `"sync"` or `"backfill"`. The full-queue body reads `name + " queue full"`. Status codes are unchanged: `404`, `409`, `202`, `503`.
-  - `func Run(ctx context.Context, s *Service, fetchers map[string]Fetcher, backfill Fetcher, backfills <-chan domain.Source, l *slog.Logger) error` adds `backfill.Plugin(ctx).Stream(ctx, l.With("adapter", "wordpress"), backfills)` to the merged posts. `route` never sees `backfills`.
+  - **`Fetcher` interface in `sourced.go`** gains:
+
+    ```go
+    // Backfill is false when the adapter has no backfill strategy.
+    Backfill(ctx context.Context) (pipeline.Pipeline[domain.Source, domain.RawPost], bool)
+    ```
+
+  - **`fetcher[T].Backfill`** type-asserts `p.Fetcher.(port.Backfiller[T])`. Its pipeline matches `Plugin` except that its first stage reads with `Backfill` instead of `FetchFeed`.
+    - Make `listFeed` take the read function and a log name, so both pipelines share it.
+    - `port.ErrNoArchive` logs `l.Info("no archive", "source", id)`. Other errors log as `fetchFeed` errors do now.
+  - **`route`** becomes `route(ctx, sources <-chan domain.Source, ins map[string]chan domain.Source, l *slog.Logger, missing string)`. It logs `missing` for an adapter it has no input for. The live route passes `"unknown adapter"`, and the backfill route passes `"no backfill strategy"`.
+  - **`Run`** becomes `func Run(ctx context.Context, s *Service, fetchers map[string]Fetcher, backfills <-chan domain.Source, l *slog.Logger) error`. For each fetcher whose `Backfill` is ok, it makes a backfill input and merges `Stream(ctx, l.With("adapter", name, "backfill", true), in)` into the posts. A second `go route(ctx, backfills, backIns, l, "no backfill strategy")` feeds those inputs.
+  - **`BackfillQueue = 16`** goes next to `SyncQueue` in `route.go`.
+  - **`Routes`** becomes `func Routes(mux *http.ServeMux, s *postgres.SourceStore, syncs, backfills chan<- domain.Source, l, calls *slog.Logger)` and registers `POST /admin/sources/{id}/backfill`.
+  - **`syncSource`** becomes `queueSource(s *postgres.SourceStore, queue chan<- domain.Source, name string, l *slog.Logger) http.HandlerFunc`, used by both routes with `name` set to `"sync"` or `"backfill"`.
+    - The full-queue body reads `name + " queue full"`.
+    - Status codes are unchanged: `404`, `409`, `202`, `503`.
 
 - [ ] **Step 1: Write the tests**
-  - Turn `TestSyncSource` into `TestQueueSource`. It loops over `"sync"` and `"backfill"`, keeps every existing assertion, and adds `rec.Body` containing `name + " queue full"` on the `503`.
-  - Add `{http.MethodPost, "/admin/sources/nope/backfill", http.StatusNotFound}` to `TestRoutesUnderAdmin`, and pass a second channel to `Routes`.
-  - Add `TestRunFeedsBackfillPlugin` in `fetch_test.go`:
+  - **`fakeBackfiller` in `fetch_test.go`.** It embeds `fakeFetcher` and adds `archive map[string][]string`. Its `Backfill` returns the archive items, or `port.ErrNoArchive` for an unknown URL. It also sends each URL it is called with on a `called chan string`, when that is set.
+  - **`TestFetcherBackfill`:**
+    - `NewFetcher(fakeFetcher{}, discard).Backfill(ctx)` reports false.
+    - `NewFetcher` with a `fakeBackfiller` whose feed is `{"https://a.example/feed": {"https://a.example/new"}}` and archive is `{"https://a.example/feed": {"https://a.example/old", "https://a.example/seen"}}` reports true.
+    - Streaming source `{ID: "a", URL: "https://a.example/feed"}` yields exactly `"a https://a.example/old"`.
+  - **`TestRunFeedsBackfillPlugin`:**
     - Use `qualityServiceDB(t, nil)`. Its source is disabled, so `sourceStream` sends nothing.
-    - Use a fake `Fetcher` whose `FetchFeed` sends the URL on a `fetched chan string` and returns a closed channel.
-    - Call `Run(ctx, s, map[string]Fetcher{}, NewFetcher(fake, discard), backfills, discard)` in a goroutine.
-    - Send `domain.Source{ID: "x", Adapter: "wordpress", URL: "https://a.example/wp-json/wp/v2/posts"}` on `backfills`.
-    - Assert `fetched` receives that URL within 2 s, then cancel `ctx`.
+    - Call `Run(ctx, s, map[string]Fetcher{"rss": NewFetcher(backfiller, discard)}, backfills, l)` in a goroutine. `l` writes to a buffer.
+    - Send `{ID: "x", Adapter: "rss", URL: "https://a.example/feed"}` and `{ID: "y", Adapter: "page", URL: "https://b.example/"}` on `backfills`.
+    - Assert `called` receives `https://a.example/feed` within 2 s.
+    - Assert the log contains `no backfill strategy` with `adapter=page`. Then cancel `ctx`.
+  - **`TestQueueSource`.** Turn `TestSyncSource` into it. It loops over `"sync"` and `"backfill"`, keeps every existing assertion, and checks for `name + " queue full"` in the body on the `503`.
+  - **`TestRoutesUnderAdmin`.** Add `{http.MethodPost, "/admin/sources/nope/backfill", http.StatusNotFound}`, and pass a second channel to `Routes`.
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `TEST_POSTGRES_CONN=... go test ./internal/core/service/source/ -run 'TestQueueSource|TestRoutesUnderAdmin|TestRunFeedsBackfillPlugin' -v`
+Run: `TEST_POSTGRES_CONN=... go test ./internal/core/service/source/ -run 'TestFetcherBackfill|TestRunFeedsBackfillPlugin|TestQueueSource|TestRoutesUnderAdmin' -v`
 Expected: FAIL to compile.
 
-- [ ] **Step 3: Implement `queueSource`, the new `Routes` and the new `Run`**
+- [ ] **Step 3: Implement `fetcher[T].Backfill`, the shared `listFeed`, `route`, `Run`, `queueSource` and `Routes`**
 
 - [ ] **Step 4: Wire `cmd/main.go`**
-  - Remove `"wordpress"` from the `fetchers` map.
-  - Add `backfills := make(chan domain.Source, source.BackfillQueue)` next to `syncs`, and pass it to `source.Routes`.
-  - Build `backfill := source.Backfill{Client: safehttp.NewClient(20 * time.Second), Pacer: pacer, Calls: calls}`.
-  - In the `source.Run` goroutine, pass `source.NewFetcher(fetcher.NewWordPress(&rawPostStore, pacer, l), calls)` and `backfill.Stream(ctx, l.WithGroup("backfill"), backfills)`.
+  - Add `backfills := make(chan domain.Source, source.BackfillQueue)` next to `syncs`.
+  - Pass it to `source.Routes` and to `source.Run`.
 
 - [ ] **Step 5: Run every Go test and build**
 
@@ -278,16 +297,18 @@ Expected: PASS.
 - [ ] **Step 6: Rewrite `docs/kb/backfill.md`**
 
 Match the spec:
+- **What backfill is:** a strategy of the `rss` adapter, through `port.Backfiller`, with WordPress as its first strategy.
 - **Trigger:** creation, approval of a proposed source, and the button.
 - **No state.** A rerun skips stored posts.
-- **Paths:** `internal/core/service/source/backfill.go` and `internal/adapter/fetcher/wordpress.go`.
-- **Removed:** `backfilled_at`, the batch of 10 and `RunSummaries`.
+- **Separate lanes**, and `page` sources do not backfill.
+- **Paths:** `internal/adapter/fetcher/wordpress.go`, `internal/core/service/source/fetch.go` and `sourced.go`.
+- **Removed:** the `wordpress` adapter, `backfilled_at`, the batch of 10 and `RunSummaries`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add internal/core/service/source/route.go internal/core/service/source/sourced.go internal/core/service/source/route_test.go internal/core/service/source/fetch_test.go cmd/main.go docs/kb/backfill.md
-git commit -m "Backfill a source through an admin endpoint into the wordpress plugin"
+git add internal/core/service/source/fetch.go internal/core/service/source/sourced.go internal/core/service/source/route.go internal/core/service/source/fetch_test.go internal/core/service/source/route_test.go cmd/main.go docs/kb/backfill.md
+git commit -m "Run backfills in their own lane per adapter from an admin endpoint"
 ```
 
 ### Task 6: Admin triggers
@@ -322,7 +343,7 @@ RETURNING old.status AS was
   - Put it next to Sync, under the same `{#if}` guard.
   - Track its own state in `backfillState`, a `SvelteMap` like `syncState`.
   - Labels: `Backfilling…`, `Requested`, `Failed`, `Backfill`.
-  - Title: `Read the site's WordPress archive, skipping stored posts`.
+  - Title: `Read the source's history, skipping stored posts`.
 
 Use the `svelte:svelte-file-editor` agent or the Svelte MCP autofixer on the `.svelte` file.
 
@@ -332,7 +353,7 @@ Run: `cd frontend && pnpm check && pnpm lint`
 Expected: no errors.
 
 Check by hand against a running stack:
-1. Add a WordPress source. The Go logs show `backfill` with its post count.
+1. Add an rss source for a WordPress site. The `logs` table shows `wordpress` requests, and old posts appear in `raw_posts`.
 2. Press Backfill. It shows `Requested`, and stored posts are skipped.
 3. Stop the Go app and add a source. The form still redirects.
 
