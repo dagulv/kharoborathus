@@ -16,7 +16,8 @@ This design brings it back as an event: creating a source, or pressing a button 
 
 - A new source backfills automatically, right after it is created.
 - An admin can backfill any source again with a button.
-- Backfill is a strategy of the `rss` adapter, not a source type. New strategies slot in without a new adapter.
+- Backfill is a strategy of the source's adapter, not a source type. `rss` and `page` both backfill, and new strategies slot in without a new adapter.
+- No headless browser. Backfill uses plain HTTP GETs only.
 - Every request to a host goes through the shared `pace.Pacer`.
 - Every post's article page is fetched, for every adapter. Extract keeps the better of the page's content and the feed's content.
 - Each post is inserted on its own, as soon as its page is fetched. No transaction spans a listing or a backfill.
@@ -29,8 +30,8 @@ This design brings it back as an event: creating a source, or pressing a button 
 - Resuming an interrupted backfill by itself. The button reruns it.
 - Backfilling existing sources automatically. The button covers them.
 - The rate check in `sourceStream`.
-- Strategies other than WordPress.
-- Backfill for `page` sources.
+- rss strategies other than WordPress.
+- Infinite scroll that builds its next URL only in JavaScript.
 - Storing listing bodies.
 - Search for old posts. It will likely matter later, so the gate below is one condition that is easy to lift.
 - A Jev cap. Jev stays uncapped, limited only by its availability.
@@ -91,9 +92,71 @@ The first and only strategy is WordPress:
 
 The `wordpress` adapter, its `fetchers` entry in `cmd/main.go` and `NewWordPress` go away. `FindWordPress` and the API paging stay in `internal/adapter/fetcher/wordpress.go`, as rss strategy code.
 
-`page` implements no `Backfiller` for now, so a `page` source does not backfill. Pointing the WordPress strategy at a page URL is a later change, since `FindWordPress` already reads page heads.
-
 Later strategies, such as RFC 5005 feed paging or a sitemap, are new entries in the list.
+
+### Page backfill
+
+`page` implements `Backfiller` too, with its own ordered strategies. It never runs a headless browser or JavaScript. Every request is a plain, paced HTTP GET.
+
+1. **WordPress.** The same API reader the rss strategy uses. Each API post becomes a `pageDocument` with its link and language, and its page is fetched like any listing link.
+2. **`rel="next"`.** Follow the `href` of `<link rel="next">` in the head, or of `<a rel="next">` in the body.
+3. **URL patterns.** Build page 2 from the source URL as `/page/2/`, `?page=2`, `?paged=2` and `?p=2`, in that order. Use the first one whose page 2 gives at least one article link page 1 did not, then keep counting up with it.
+4. **Pagination rule.** A DeepSeek-learned rule per domain, see below.
+
+Strategies 2 to 4 read the listing page by page:
+- Each page's article links come from the domain's `links` rule, through `Extractor.Links`. Each link not yet seen in this run is sent at once, so its post is fetched and inserted on its own.
+- The run stops when a page answers an error status, gives no unseen links, gives no next URL, or has a URL already visited. Some sites answer any `?page=N` with page 1, which the unseen-links rule catches.
+- There is no page cap.
+
+**Link rule first.** Strategies 2 to 4 need the domain's `links` rule. Without it, the backfill ends at once and logs at info. Saving the rule starts it again, see Rule events.
+
+**Infinite scroll.** It is covered when the next batch has a URL in the page: a `rel="next"` link, a numbered URL, or a "load more" element with an `href` or `data-*` URL. A site that builds that URL only in JavaScript gets no backfill. It keeps its normal rate-checked fetches.
+
+### Pagination rule
+
+Learned like the `links` rule, in `internal/adapter/extract/html`, and stored in `domains.metadata.extract` under the key `pages`.
+
+```go
+type PageRule struct {
+	Next      *string `json:"next" jsonschema:"nullable"`     // css selector for the element linking to the next, older page
+	Template  *string `json:"template" jsonschema:"nullable"` // url with {n} for the page number
+	Reasoning string  `json:"reasoning"`
+}
+```
+
+Exactly one of `Next` and `Template` is set. Both null means the model abstained.
+
+**Input.** The skeleton keeps neither `rel`, `aria-label` nor link text, so the model could not see "Next" or "Older posts" there. The prompt instead lists candidates from page 1. A candidate is:
+- every element with a URL in `href`, `data-href`, `data-url` or `data-next`,
+- whose URL is on the listing's host and is not page 1 itself,
+- and which the `links` rule does not match.
+
+Each line shows its index, tag, classes, `rel`, `aria-label`, up to 40 characters of its text, and its URL. Candidates are deduped by URL and capped at 80.
+
+**Selector and template rules.**
+- `Next` follows the same selector rules as `links`, and only uses names that appear in the candidates.
+- A `Next` match reads its URL from `href`, then `data-href`, `data-url`, `data-next`.
+- `Template` is a URL on the listing's host with `{n}` in it, built from the candidate URLs. Page 2 is `{n}` = 2.
+
+**Check.** A rule is kept only when:
+1. It gives a page 2 URL on the listing's host, different from page 1.
+2. Page 2, fetched through the pacer, gives at least `minLinks` article links through the `links` rule, and at least half of them are not on page 1.
+3. A `Next` rule also gives a page 3 URL from page 2, different from pages 1 and 2.
+
+**Generation.** It works like the one-listing link rule:
+- It is off-peak only.
+- It runs in the extractor's goroutine and holds the `generating` semaphore.
+- It tries each of the `temperatures`.
+- A failed rule is not retried for `retryGeneration`, 24 hours.
+- `Extractor.Next` asks for it when the domain has a `links` rule but no `pages` rule, and returns no URL meanwhile.
+
+**Extractor fetches.** The extractor's own fetches, for the article checks and for page 2, now go through the shared pacer.
+
+### Rule events
+
+`htmlExtractor` takes a `chan<- string` of domain ids. After saving a `links` or `pages` rule, it sends the domain id without blocking. A full channel drops it with a log line.
+
+A worker reads each domain id and lists that domain's enabled, active `page` sources. It sends each one on the backfill channel without blocking. A new `page` source therefore backfills on its own once its rules exist. A rerun skips stored posts.
 
 ### Backfill lanes
 
@@ -149,7 +212,10 @@ Drop `dailyFetchCap` and `CheckedLastDay` from `internal/core/service/source/dis
 ## Calls made without asking
 
 - Backfills go through their own route and per-adapter plugins, outside `sourceStream` and the live `route`.
-- `page` sources get no backfill for now.
+- Page URL patterns, their order and the candidate cap of 80.
+- The pagination prompt lists candidates instead of a skeleton.
+- Rule events backfill every enabled, active `page` source of the domain.
+- The extractor's fetches go through the shared pacer.
 - No strategy found is logged at info, not as an error.
 - Activating a `proposed` source backfills it. Reactivating a `flagged` one does not.
 - Old posts still join recent search queries, and a post with no posted date counts as new.
@@ -163,7 +229,7 @@ Drop `dailyFetchCap` and `CheckedLastDay` from `internal/core/service/source/dis
 
 - Backfill channel buffer size.
 - Button placement and wording, matching the Sync button.
-- Tests. At least: the endpoint's status codes, the strategy order, `ErrNoArchive`, a backfill reaching the `rss` backfill plugin without a pause on its source, `rss.FetchPost` always fetching, the content choice, a failed page fetch falling back to feed content, the discovered ingest without its cap, and an old post creating no search query while still joining a recent one.
+- Tests. At least: the endpoint's status codes, the strategy order, `ErrNoArchive`, each page strategy and stop condition, the pagination rule check, a rule event starting a backfill, a backfill reaching the `rss` backfill plugin without a pause on its source, `rss.FetchPost` always fetching, the content choice, a failed page fetch falling back to feed content, the discovered ingest without its cap, and an old post creating no search query while still joining a recent one.
 - Updating `docs/kb/backfill.md` and `docs/kb/discovered-ingest.md`.
 
 ## Defaults
