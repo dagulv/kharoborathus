@@ -239,6 +239,10 @@ func (t *htmlExtractor) fetcher(l *slog.Logger) fetchFunc {
 	client := logs.Client(t.client, l, "trim")
 
 	return func(ctx context.Context, url string) ([]byte, error) {
+		if err := t.pacer.Wait(ctx, url); err != nil {
+			return nil, err
+		}
+
 		return fetcher.FetchHTML(ctx, client, url)
 	}
 }

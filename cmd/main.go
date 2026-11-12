@@ -87,16 +87,19 @@ func app(ctx context.Context) (err error) {
 		return fmt.Errorf("err create llm: %w", err)
 	}
 
-	extractor := html.New(llm, &domainStore, l.WithGroup("extract"))
+	// One pacer for every adapter and the extractor, so two sources on one host still wait for each other.
+	pacer := pace.New(source.DomainPace)
+
+	// Domains whose links or pages rule was just saved, so their page sources backfill.
+	ruled := make(chan string, source.RuledQueue)
+
+	extractor := html.New(llm, &domainStore, pacer, ruled, l.WithGroup("extract"))
 
 	classifier, err := adapter.NewJev(env, l.WithGroup("jev"))
 	if err != nil {
 		l.Warn("quality check off, every post that is not a duplicate is accepted", "err", err)
 		classifier = nil
 	}
-
-	// One pacer for every adapter, so two sources on one host still wait for each other.
-	pacer := pace.New(source.DomainPace)
 
 	fetchers := map[string]source.Fetcher{
 		"rss":  source.NewFetcher(fetcher.NewRSS(&rawPostStore, pacer, l), calls),
