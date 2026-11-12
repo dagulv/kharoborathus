@@ -261,3 +261,74 @@ func TestDiscoverConcurrent(t *testing.T) {
 		t.Errorf("query rows %d", n)
 	}
 }
+
+func TestOld(t *testing.T) {
+	stale := time.Now().AddDate(0, 0, -dedupeWindow-1)
+	fresh := time.Now().AddDate(0, 0, -1)
+
+	cases := []struct {
+		postedAt *time.Time
+		want     bool
+	}{
+		{nil, false},
+		{&fresh, false},
+		{&stale, true},
+	}
+
+	for _, c := range cases {
+		if got := old(domain.Post{PostedAt: c.postedAt}); got != c.want {
+			t.Errorf("posted %v: old %v", c.postedAt, got)
+		}
+	}
+}
+
+func TestDiscoverOldPost(t *testing.T) {
+	db := discoverDB(t)
+	post := seedPost(t, db, seed{Trusted: true, Content: volvoArticle})
+	stale := time.Now().AddDate(0, 0, -8)
+	post.PostedAt = &stale
+
+	f := discoverAll(t, db, post, volvoTakeover)
+	if len(f.Queries) != 0 {
+		t.Fatalf("got ids %v", f.Queries)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries`); n != 0 {
+		t.Errorf("query rows %d", n)
+	}
+
+	if len(f.Links) != 1 {
+		t.Errorf("got links %v", f.Links)
+	}
+}
+
+func TestDiscoverOldPostJoinsEvent(t *testing.T) {
+	db := discoverDB(t)
+	first := discover(t, db, seedPost(t, db, seed{Trusted: true, Content: volvoArticle}), volvoTakeover)
+
+	post := seedPost(t, db, seed{Trusted: true, Content: volvoArticle})
+	stale := time.Now().AddDate(0, 0, -8)
+	post.PostedAt = &stale
+
+	if ids := discover(t, db, post, volvoTakeover); len(ids) != 0 {
+		t.Fatalf("got ids %v", ids)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries`); n != 1 {
+		t.Errorf("query rows %d", n)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_query_posts WHERE query_id = $1 AND post_id = $2`, first[0], post.ID); n != 1 {
+		t.Errorf("query links %d", n)
+	}
+}
+
+func TestDiscoverUndatedPost(t *testing.T) {
+	db := discoverDB(t)
+	post := seedPost(t, db, seed{Trusted: true, Content: volvoArticle})
+	post.PostedAt = nil
+
+	if ids := discover(t, db, post, volvoTakeover); len(ids) != 1 {
+		t.Fatalf("got ids %v", ids)
+	}
+}
