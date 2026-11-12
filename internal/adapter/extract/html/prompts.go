@@ -21,6 +21,8 @@ type promptSet struct {
 	fieldFields   map[string]string
 	links         *template.Template
 	linkFields    map[string]string
+	pagesSystem   string
+	pageFields    map[string]string
 }
 
 func loadPrompts() promptSet {
@@ -35,6 +37,8 @@ func loadPrompts() promptSet {
 		fieldFields:   sections(readPrompt("field_rule.md")),
 		links:         template.Must(template.New("links_system.md").Parse(readPrompt("links_system.md"))),
 		linkFields:    sections(readPrompt("link_rule.md")),
+		pagesSystem:   strings.TrimSpace(readPrompt("pages_system.md")),
+		pageFields:    sections(readPrompt("page_rule.md")),
 	}
 }
 
@@ -67,6 +71,30 @@ func (p promptSet) linksSystem(pages int) string {
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+func (p promptSet) candidates(cands []candidate) string {
+	var b strings.Builder
+
+	for i, c := range cands {
+		fmt.Fprintf(&b, "[%d] <%s", i, c.tag)
+
+		if len(c.classes) > 0 {
+			fmt.Fprintf(&b, ` class="%s"`, strings.Join(c.classes, " "))
+		}
+
+		if c.rel != "" {
+			fmt.Fprintf(&b, ` rel="%s"`, c.rel)
+		}
+
+		if c.ariaLabel != "" {
+			fmt.Fprintf(&b, ` aria-label="%s"`, c.ariaLabel)
+		}
+
+		fmt.Fprintf(&b, "> %q -> %s\n", c.text, c.url)
+	}
+
+	return b.String()
 }
 
 func readPrompt(name string) string {
