@@ -82,11 +82,11 @@ type archive func(ctx context.Context, l *slog.Logger, url string) (items <-chan
 
 - `Backfill` tries each strategy in order. It uses the first one that reports `ok`.
 - When none does, it returns `ErrNoArchive`. That is logged at info.
-- An error from a strategy ends the backfill and is logged.
+- A strategy that fails to detect support, such as a closed API answering 401 or 404, reports `ok` false and logs a warning. An error while reading an archive ends the backfill and is logged.
 
 The first and only strategy is WordPress:
 1. `FindWordPress` with the rss adapter's pacer on the feed URL. Its requests log as type `wordpress`.
-2. No API, or a 401 or 404: `ok` is false.
+2. No API, or any detection error: `ok` is false.
 3. Otherwise page through `wp/v2/posts`, 20 posts per request, newest first, each page paced. Each post is sent as an `rssDocument` as soon as it is read. Its `Lang` is the language `FindWordPress` found.
 
 The `wordpress` adapter, its `fetchers` entry in `cmd/main.go` and `NewWordPress` go away. `FindWordPress` and the API paging stay in `internal/adapter/fetcher/wordpress.go`, as rss strategy code.
