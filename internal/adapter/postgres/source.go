@@ -48,6 +48,16 @@ func (s *SourceStore) ListSources(ctx context.Context, filter domain.SourceFilte
 			where += fmt.Sprintf(` AND status = $%d`, len(args))
 		}
 
+		if filter.DomainID.Valid {
+			args = append(args, filter.DomainID.V)
+			where += fmt.Sprintf(` AND domain_id = $%d`, len(args))
+		}
+
+		if filter.Adapter.Valid {
+			args = append(args, filter.Adapter.V)
+			where += fmt.Sprintf(` AND adapter = $%d`, len(args))
+		}
+
 		col, dir := filter.GetSort()
 
 		query := fmt.Sprintf(
