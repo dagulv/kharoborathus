@@ -163,6 +163,7 @@ func app(ctx context.Context) (err error) {
 	discoveredIDs := make(chan string, source.DiscoveredQueue)
 
 	syncs := make(chan domain.Source, source.SyncQueue)
+	backfills := make(chan domain.Source, source.BackfillQueue)
 
 	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, classifier, enrichIDs, schedule.Always, syncs)
 
@@ -190,7 +191,7 @@ func app(ctx context.Context) (err error) {
 
 	// The port is public, so every admin route but login sits behind the session cookie.
 	protected := http.NewServeMux()
-	source.Routes(protected, &sourceStore, syncs, l.WithGroup("source"), calls)
+	source.Routes(protected, &sourceStore, syncs, backfills, l.WithGroup("source"), calls)
 	admin.Routes(protected, admin.Stores{Stats: &statsStore, Sources: &sourceStore, Posts: &postStore, Tags: &tagStore, Logs: &logStore}, l.WithGroup("admin"))
 
 	adminMux := http.NewServeMux()
@@ -231,7 +232,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceService, fetchers, l.WithGroup("sourced"))
+		return source.Run(ctx, &sourceService, fetchers, backfills, l.WithGroup("sourced"))
 	})
 
 	g.Go(func() error {

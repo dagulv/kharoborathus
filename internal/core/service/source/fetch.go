@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
@@ -25,20 +26,42 @@ func NewFetcher[T any](f port.Fetcher[T], calls *slog.Logger) Fetcher {
 
 func (p fetcher[T]) Plugin(_ context.Context) pipeline.Pipeline[domain.Source, domain.RawPost] {
 	return pipeline.New[domain.Source]().
-		NextCh(workers, p.listFeed).
+		NextCh(workers, p.list("fetchFeed", p.FetchFeed)).
 		Next(workers, p.fetchFeed)
 }
 
-func (p fetcher[T]) listFeed(ctx context.Context, l *slog.Logger, in <-chan domain.Source) <-chan fetched[T] {
+func (p fetcher[T]) Backfill(_ context.Context) (pipeline.Pipeline[domain.Source, domain.RawPost], bool) {
+	b, ok := p.Fetcher.(port.Backfiller[T])
+	if !ok {
+		return pipeline.Pipeline[domain.Source, domain.RawPost]{}, false
+	}
+
+	return pipeline.New[domain.Source]().
+		NextCh(workers, p.list("backfill", b.Backfill)).
+		Next(workers, p.fetchFeed), true
+}
+
+func (p fetcher[T]) list(name string, read func(context.Context, *slog.Logger, string) (<-chan T, error)) func(context.Context, *slog.Logger, <-chan domain.Source) <-chan fetched[T] {
+	return func(ctx context.Context, l *slog.Logger, in <-chan domain.Source) <-chan fetched[T] {
+		return p.listFeed(ctx, l, in, name, read)
+	}
+}
+
+func (p fetcher[T]) listFeed(ctx context.Context, l *slog.Logger, in <-chan domain.Source, name string, read func(context.Context, *slog.Logger, string) (<-chan T, error)) <-chan fetched[T] {
 	out := make(chan fetched[T])
 
 	go func() {
 		defer close(out)
 
 		for source := range in {
-			items, err := p.FetchFeed(ctx, p.calls.With("source_id", source.ID), source.URL)
+			items, err := read(ctx, p.calls.With("source_id", source.ID), source.URL)
+			if errors.Is(err, port.ErrNoArchive) {
+				l.Info("no archive", "source", source.ID, "url", source.URL)
+				continue
+			}
+
 			if err != nil {
-				l.Error("fetchFeed", "source", source.ID, "url", source.URL, "err", err)
+				l.Error(name, "source", source.ID, "url", source.URL, "err", err)
 				continue
 			}
 
