@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/jackc/pgx/v5"
@@ -15,7 +16,7 @@ type Found struct {
 	Links   []string
 }
 
-// Untrusted posts only join events a trusted post already found.
+// Untrusted and old posts only join events a trusted, recent post already found.
 func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword) (f Found, err error) {
 	trusted, baseURL, err := postSource(ctx, tx, post)
 	if err != nil {
@@ -69,7 +70,7 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 			continue
 		}
 
-		if !trusted {
+		if !trusted || old(post) {
 			continue
 		}
 
@@ -88,6 +89,11 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 	}
 
 	return f, nil
+}
+
+// An undated post counts as new.
+func old(post domain.Post) bool {
+	return post.PostedAt != nil && post.PostedAt.Before(time.Now().AddDate(0, 0, -dedupeWindow))
 }
 
 func resolveAction(action string, quality map[string]bool, aliases map[string]string) (string, bool) {
