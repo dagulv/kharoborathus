@@ -31,6 +31,8 @@ This design brings it back as an event: creating a source, or pressing a button 
 - The rate check in `sourceStream`.
 - Archive APIs other than WordPress.
 - Storing listing bodies.
+- Search for old posts. It will likely matter later, so the gate below is one condition that is easy to lift.
+- A Jev cap. Jev stays uncapped, limited only by its availability.
 
 ## Anti-goals
 
@@ -54,7 +56,7 @@ POST /admin/sources/{id}/backfill
 
 Two callers in `frontend/src/routes/admin/admin.remote.ts`:
 
-- `createSource` adds `RETURNING id` to its insert and calls the endpoint after the transaction commits. A failed call is logged and does not fail the form. The button covers it.
+- `createSource` adds `RETURNING id` to its insert and calls the endpoint after the transaction commits. A source added by hand is `enabled` and `active` from its insert, so the endpoint accepts it and the backfill starts at once. A failed call is logged and does not fail the form. The button covers it.
 - `reviewSource` calls the endpoint when it activates a source that was `proposed`. That is the first time the source is scraped. A `flagged` source made active again does not backfill.
 - A new `backfillSource` command, next to `syncSource`, behind a "Backfill" button on each source in `frontend/src/routes/admin/sources/+page.svelte`.
 
@@ -96,9 +98,17 @@ A failed page fetch keeps the feed's content with `RawContent` empty, where toda
 
 Extraction needs no rule. With none, `content()` falls back to `contentGeneric`, and the other fields fall back to meta tags.
 
+### Search for old posts
+
+`Discover` in `internal/adapter/search/discover.go` creates no new search query for a post whose posted date is older than `dedupeWindow`, 7 days. It treats it like an untrusted post: it still links the post to a recent query for the same event, so it joins that event's group, but it never starts a Brave search.
+
+- A post with no posted date counts as new.
+- Outbound links are unchanged. Discovered ingest already rejects linked pages older than 7 days, before any Jev call.
+- Quality and enrich run on old posts as on any other.
+
 ### Discovered ingest
 
-Drop `dailyFetchCap` and `CheckedLastDay` from `internal/core/service/source/discovered.go`. The 7-day window and the pacer stay.
+Drop `dailyFetchCap` and `CheckedLastDay` from `internal/core/service/source/discovered.go`. The 7-day window and the pacer stay. Jev stays uncapped. `maxPendingResults` in `search.go` stays at 200.
 
 ## Known tradeoffs
 
@@ -114,6 +124,8 @@ Drop `dailyFetchCap` and `CheckedLastDay` from `internal/core/service/source/dis
 
 - Backfill copies feed the `wordpress` plugin directly, outside `sourceStream` and `route`.
 - Activating a `proposed` source backfills it. Reactivating a `flagged` one does not.
+- Old posts still join recent search queries, and a post with no posted date counts as new.
+- Outbound links from old posts are kept.
 - A failed backfill call does not fail the source form.
 - Feed content wins only when it is longer than the page's extracted content.
 - A failed page fetch falls back to the feed content instead of skipping the post.
@@ -123,7 +135,7 @@ Drop `dailyFetchCap` and `CheckedLastDay` from `internal/core/service/source/dis
 
 - Backfill channel buffer size.
 - Button placement and wording, matching the Sync button.
-- Tests. At least: the endpoint's status codes, a backfill copy reaching the `wordpress` plugin without a pause on its source, `rss.FetchPost` always fetching, the content choice, a failed page fetch falling back to feed content, and the discovered ingest without its cap.
+- Tests. At least: the endpoint's status codes, a backfill copy reaching the `wordpress` plugin without a pause on its source, `rss.FetchPost` always fetching, the content choice, a failed page fetch falling back to feed content, the discovered ingest without its cap, and an old post creating no search query while still joining a recent one.
 - Updating `docs/kb/backfill.md` and `docs/kb/discovered-ingest.md`.
 
 ## Defaults
