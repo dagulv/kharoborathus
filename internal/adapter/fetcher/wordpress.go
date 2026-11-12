@@ -14,14 +14,10 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/pace"
-	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/mmcdole/gofeed"
 )
-
-var _ port.Fetcher[rssDocument] = wordpress{}
 
 // Small pages, since a page carries full post content and a body is cut at maxPageSize.
 const wordpressPageSize = 20
@@ -177,32 +173,34 @@ type wordpressPost struct {
 	} `json:"_embedded"`
 }
 
-// wordpress backfills a source through the REST API. Lang is left empty for the source's own.
-type wordpress struct {
-	rss
+// archive streams a feed's history. ok is false when the site does not support it.
+type archive func(ctx context.Context, l *slog.Logger, url string) (items <-chan rssDocument, ok bool, err error)
+
+func (r rss) wordpress(ctx context.Context, l *slog.Logger, url string) (<-chan rssDocument, bool, error) {
+	return wordpressArchive(ctx, logs.Client(r.client, l, "wordpress"), r.pacer, l, url)
 }
 
-func NewWordPress(posts PostStore, pacer *pace.Pacer, l *slog.Logger) port.Fetcher[rssDocument] {
-	return wordpress{rss{
-		client: safehttp.NewClient(time.Second * 20),
-		pacer:  pacer,
-		posts:  posts,
-		l:      l,
-	}}
-}
-
-// FetchFeed reads every post, newest first. posts is the endpoint from FindWordPress.
-func (r wordpress) FetchFeed(ctx context.Context, l *slog.Logger, posts string) (<-chan rssDocument, error) {
-	u, err := url.Parse(posts)
+// wordpressArchive reads every post behind the page or feed at rawURL, newest first.
+// A failed detection counts as no API, which covers a closed API answering 401 or 404.
+func wordpressArchive(ctx context.Context, client *http.Client, pacer *pace.Pacer, l *slog.Logger, rawURL string) (<-chan rssDocument, bool, error) {
+	wp, err := FindWordPress(ctx, client, pacer, rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("err parse posts url: %w", err)
+		l.Warn("find wordpress", "url", rawURL, "err", err)
+		return nil, false, nil
 	}
 
-	client := logs.Client(r.client, l, "wordpress")
+	if wp.Posts == "" {
+		return nil, false, nil
+	}
 
-	first, pages, err := r.page(ctx, client, u, 1)
+	u, err := url.Parse(wp.Posts)
 	if err != nil {
-		return nil, fmt.Errorf("err fetch page 1: %w", err)
+		return nil, true, fmt.Errorf("err parse posts url: %w", err)
+	}
+
+	first, pages, err := wordpressPage(ctx, client, pacer, u, 1, wp.Lang)
+	if err != nil {
+		return nil, true, fmt.Errorf("err fetch page 1: %w", err)
 	}
 
 	out := make(chan rssDocument)
@@ -214,8 +212,8 @@ func (r wordpress) FetchFeed(ctx context.Context, l *slog.Logger, posts string) 
 
 		for page := 1; ; page++ {
 			if page > 1 {
-				if docs, _, err = r.page(ctx, client, u, page); err != nil {
-					r.l.Error("fetch wordpress page", "url", posts, "page", page, "err", err)
+				if docs, _, err = wordpressPage(ctx, client, pacer, u, page, wp.Lang); err != nil {
+					l.Error("fetch wordpress page", "url", wp.Posts, "page", page, "err", err)
 					return
 				}
 			}
@@ -234,10 +232,10 @@ func (r wordpress) FetchFeed(ctx context.Context, l *slog.Logger, posts string) 
 		}
 	}()
 
-	return out, nil
+	return out, true, nil
 }
 
-func (r wordpress) page(ctx context.Context, client *http.Client, posts *url.URL, page int) ([]rssDocument, int, error) {
+func wordpressPage(ctx context.Context, client *http.Client, pacer *pace.Pacer, posts *url.URL, page int, lang string) ([]rssDocument, int, error) {
 	pageURL := withQuery(posts,
 		"per_page", strconv.Itoa(wordpressPageSize),
 		"page", strconv.Itoa(page),
@@ -245,7 +243,7 @@ func (r wordpress) page(ctx context.Context, client *http.Client, posts *url.URL
 		"_fields", "link,date_gmt,title,content,_links,_embedded",
 	)
 
-	if err := r.pacer.Wait(ctx, pageURL); err != nil {
+	if err := pacer.Wait(ctx, pageURL); err != nil {
 		return nil, 0, err
 	}
 
@@ -265,7 +263,9 @@ func (r wordpress) page(ctx context.Context, client *http.Client, posts *url.URL
 	docs := make([]rssDocument, 0, len(items))
 
 	for _, item := range items {
-		docs = append(docs, item.document())
+		doc := item.document()
+		doc.Lang = lang
+		docs = append(docs, doc)
 	}
 
 	return docs, pages, nil

@@ -2,6 +2,7 @@ package fetcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/pace"
 )
 
@@ -102,16 +104,17 @@ func TestFindWordPressNone(t *testing.T) {
 	}
 }
 
-func TestWordPressFetchesEveryPage(t *testing.T) {
+func TestRSSBackfillWordPress(t *testing.T) {
 	srv := wordpressServer(t, "/wp-json/")
 	l := slog.New(slog.DiscardHandler)
 
 	gap := 50 * time.Millisecond
-	wp := wordpress{rss{client: srv.Client(), pacer: pace.New(gap), l: l}}
+	r := rss{client: srv.Client(), pacer: pace.New(gap), l: l}
+	r.archives = []archive{r.wordpress}
 
 	start := time.Now()
 
-	docs, err := wp.FetchFeed(context.Background(), l, srv.URL+"/wp-json/wp/v2/posts")
+	docs, err := r.Backfill(context.Background(), l, srv.URL+"/feed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,6 +126,12 @@ func TestWordPressFetchesEveryPage(t *testing.T) {
 
 	if len(got) != 3 || got[2].URL != "https://x.example/c" {
 		t.Fatalf("got %+v", got)
+	}
+
+	for _, doc := range got {
+		if doc.Lang != "sv-SE" {
+			t.Errorf("%s: lang %q", doc.URL, doc.Lang)
+		}
 	}
 
 	if elapsed := time.Since(start); elapsed < gap {
@@ -137,5 +146,48 @@ func TestWordPressFetchesEveryPage(t *testing.T) {
 
 	if !slices.Equal(a.Authors, []string{"Olle"}) || !slices.Equal(a.Tags, []string{"Aktier & ekonomi", "fonder"}) {
 		t.Errorf("authors %v tags %v", a.Authors, a.Tags)
+	}
+}
+
+func TestRSSBackfillOrder(t *testing.T) {
+	l := slog.New(slog.DiscardHandler)
+
+	found := make(chan rssDocument, 1)
+	found <- rssDocument{URL: "x"}
+	close(found)
+
+	r := rss{l: l, archives: []archive{
+		func(context.Context, *slog.Logger, string) (<-chan rssDocument, bool, error) { return nil, false, nil },
+		func(context.Context, *slog.Logger, string) (<-chan rssDocument, bool, error) { return found, true, nil },
+		func(context.Context, *slog.Logger, string) (<-chan rssDocument, bool, error) {
+			t.Error("tried a strategy after one was found")
+			return nil, false, nil
+		},
+	}}
+
+	docs, err := r.Backfill(context.Background(), l, "https://a.example/feed")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	for doc := range docs {
+		got = append(got, doc.URL)
+	}
+
+	if !slices.Equal(got, []string{"x"}) {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestRSSBackfillNone(t *testing.T) {
+	srv := wordpressServer(t, "/wp-json/")
+	l := slog.New(slog.DiscardHandler)
+
+	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond), l: l}
+	r.archives = []archive{r.wordpress}
+
+	if _, err := r.Backfill(context.Background(), l, srv.URL+"/plain"); !errors.Is(err, port.ErrNoArchive) {
+		t.Errorf("err %v, want ErrNoArchive", err)
 	}
 }
