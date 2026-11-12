@@ -73,3 +73,21 @@ func TestExtractKeepsFetched(t *testing.T) {
 		t.Errorf("failed content replaced fetched content: %q", p.Content)
 	}
 }
+
+func TestExtractKeepsLongerContent(t *testing.T) {
+	discard := slog.New(slog.DiscardHandler)
+	s := &Service{Extractor: &fakeExtractor{}}
+
+	cases := []struct{ feed, want string }{
+		{"", "extracted"},
+		{"<p>feed article that is longer</p>", "<p>feed article that is longer</p>"},
+		{`<div class="a very long class list here"><b>x</b></div>`, "extracted"},
+	}
+
+	for _, c := range cases {
+		p := s.extract(context.Background(), discard, domain.Domain{}, domain.RawPost{RawContent: "<html></html>", Content: c.feed})
+		if p.Content != c.want {
+			t.Errorf("feed %q: content %q, want %q", c.feed, p.Content, c.want)
+		}
+	}
+}
