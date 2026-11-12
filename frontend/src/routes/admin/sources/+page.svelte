@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { SvelteMap } from 'svelte/reactivity';
-	import { listSources, reviewSource, syncSource } from '../admin.remote';
+	import { backfillSource, listSources, reviewSource, syncSource } from '../admin.remote';
 	import type { Source } from '#lib/types.js';
 
 	const includeDeleted = $derived(page.url.searchParams.has('deleted'));
@@ -20,6 +20,19 @@
 			syncState.set(id, 'failed');
 		}
 		setTimeout(() => syncState.delete(id), 3000);
+	}
+
+	const backfillState = new SvelteMap<string, 'pending' | 'requested' | 'failed'>();
+
+	async function backfill(id: string) {
+		backfillState.set(id, 'pending');
+		try {
+			await backfillSource(id);
+			backfillState.set(id, 'requested');
+		} catch {
+			backfillState.set(id, 'failed');
+		}
+		setTimeout(() => backfillState.delete(id), 3000);
 	}
 
 	// A disabled flagged source keeps its flag but has already been reviewed.
@@ -151,6 +164,7 @@
 					<td class="px-3 py-2 text-right whitespace-nowrap">
 						{#if !source.deletedAt && source.enabled && source.status === 'active'}
 							{@const status = syncState.get(source.id)}
+							{@const backfillStatus = backfillState.get(source.id)}
 							<button
 								type="button"
 								onclick={() => sync(source.id)}
@@ -172,6 +186,28 @@
 										: status === 'failed'
 											? 'Failed'
 											: 'Sync'}
+							</button>
+							<button
+								type="button"
+								onclick={() => backfill(source.id)}
+								disabled={backfillStatus === 'pending'}
+								title="Read the source's history, skipping stored posts"
+								class={[
+									'rounded border px-2 py-0.5 text-xs disabled:opacity-50',
+									backfillStatus === 'failed'
+										? 'border-red-300 text-red-700'
+										: backfillStatus === 'requested'
+											? 'border-green-300 text-green-700'
+											: 'border-zinc-300 hover:bg-zinc-100'
+								]}
+							>
+								{backfillStatus === 'pending'
+									? 'Backfilling…'
+									: backfillStatus === 'requested'
+										? 'Requested'
+										: backfillStatus === 'failed'
+											? 'Failed'
+											: 'Backfill'}
 							</button>
 						{/if}
 					</td>

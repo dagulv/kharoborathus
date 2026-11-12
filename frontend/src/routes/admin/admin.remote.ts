@@ -214,7 +214,7 @@ export const createSource = form(
 			await sql`SELECT 1 FROM sources WHERE url = ${listingURL} AND deleted_at IS NULL`;
 		if (existing) invalid(issue.listing('A source with this feed or page already exists'));
 
-		await sql.begin(async (tx) => {
+		const id = await sql.begin(async (tx) => {
 			const [domain] = await tx<{ id: string }[]>`
 				INSERT INTO domains (base_url)
 				VALUES (${baseURL(new URL(url))})
@@ -222,18 +222,24 @@ export const createSource = form(
 				RETURNING id
 			`;
 
-			await tx`
+			const [source] = await tx<{ id: string }[]>`
 				INSERT INTO sources (domain_id, adapter, url, enabled, rate, lang)
 				VALUES (${domain.id}, ${adapter}, ${listingURL}, true, ${rate}, ${lang})
+				RETURNING id
 			`;
+
+			return source.id;
 		});
+
+		// The source is saved either way. The Backfill button covers a failed request.
+		await queueSource(id, 'backfill').catch((err) => console.error('backfill', id, err));
 
 		redirect(303, '/admin/sources');
 	}
 );
 
-export const syncSource = command(uuid, async (id) => {
-	const res = await fetch(`${API_URL}/admin/sources/${id}/sync`, {
+async function queueSource(id: string, action: 'sync' | 'backfill') {
+	const res = await fetch(`${API_URL}/admin/sources/${id}/${action}`, {
 		method: 'POST',
 		headers: goAuth()
 	}).catch(() => {
@@ -244,7 +250,11 @@ export const syncSource = command(uuid, async (id) => {
 	if (res.status === 404) error(404, 'Source not found');
 	if (res.status === 409) error(409, 'Source is not active or is disabled');
 	if (!res.ok) error(502, `Go app responded ${res.status}`);
-});
+}
+
+export const syncSource = command(uuid, (id) => queueSource(id, 'sync'));
+
+export const backfillSource = command(uuid, (id) => queueSource(id, 'backfill'));
 
 const tagKey = v.pipe(v.string(), v.nonEmpty(), v.maxLength(40));
 
@@ -333,18 +343,24 @@ export const mergeTag = command(v.object({ from: tagKey, to: tagKey }), async ({
 });
 
 // Keeping a flagged source makes it active again. Disabling it keeps the flag, so it gets reviewed before it runs again.
+// Approving a proposed source is its first scrape, so it backfills.
 export const reviewSource = command(
 	v.object({ id: uuid, enabled: v.boolean() }),
 	async ({ id, enabled }) => {
 		const sql = db();
-		const [source] = await sql`
-			UPDATE sources
-			SET enabled = ${enabled}, status = CASE WHEN ${enabled} THEN 'active' ELSE status END
-			WHERE id = ${id} AND deleted_at IS NULL
-			RETURNING 1
+		const [source] = await sql<{ was: string }[]>`
+			UPDATE sources s
+			SET enabled = ${enabled}, status = CASE WHEN ${enabled} THEN 'active' ELSE s.status END
+			FROM (SELECT id, status FROM sources WHERE id = ${id}) old
+			WHERE s.id = old.id AND s.deleted_at IS NULL
+			RETURNING old.status AS was
 		`;
 
 		if (!source) error(404, 'Source not found');
+
+		if (enabled && source.was === 'proposed') {
+			await queueSource(id, 'backfill').catch((err) => console.error('backfill', id, err));
+		}
 	}
 );
 
