@@ -1,11 +1,12 @@
-# RSS Backfill Strategies Implementation Plan
+# Backfill Strategies Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Backfill an rss source's history through adapter strategies, starting with WordPress, when the source is created, approved or a button is pressed. Fetch every post's article page, and keep the fetch path free of DeepSeek, Jev and Brave calls.
+**Goal:** Backfill a source's history through its adapter's strategies, for rss and page sources, when the source is created, approved, gets its rules, or a button is pressed. Plain HTTP only, no headless browser. Fetch every post's article page, and keep the fetch path free of DeepSeek, Jev and Brave calls.
 
 **Architecture:**
-- **Backfill as a strategy.** An adapter that can read history implements `port.Backfiller`. `rss` implements it with an ordered list of strategies; WordPress, found through `FindWordPress` with the rss adapter's pacer, is the first. The `wordpress` adapter type goes away.
+- **Backfill as a strategy.** An adapter that can read history implements `port.Backfiller`. `rss` implements it with an ordered list of strategies; WordPress, found through `FindWordPress` with the rss adapter's pacer, is the first. The `wordpress` adapter type goes away. `page` implements it too, with WordPress, `rel="next"`, URL patterns and a DeepSeek-learned pagination rule.
+- **Rule events.** Saving a `links` or `pages` rule sends the domain id, and that domain's page sources backfill.
 - **Backfill trigger.** An admin endpoint sends the source on a Go channel. A backfill `route` hands it to a per-adapter backfill plugin with its own workers, outside `sourceStream` and the live `route`.
 - **Article pages.** `rss.FetchPost` always fetches the article page. `Service.extract` keeps the longer of the page and feed content.
 - **Off the fetch path.** Old posts create no search queries, discovered ingest loses its daily cap, and the one-listing link rule runs in the background.
@@ -32,7 +33,7 @@
 
 - **A `rss` source whose URL is a feed.** `FindWordPress` must find the API from the feed's `Link` header. Tested in Task 4.
 - **Archive posts land on the real source.** Tested in Task 5 by `TestFetcherBackfill`, through the `"a ..."` source id.
-- **Backfill for a `page` source.** It logs and drops the source, and never blocks. Tested in Task 5.
+- **A listing that answers page 1 for every `?page=N`.** The run must stop after page 1, not loop forever. Tested in Task 11.
 - **Full backfill queue.** The endpoint answers `503`, and `createSource` still redirects. Tested in Task 5 for Go; checked by hand for the form in Task 6.
 - **Post with no posted date.** It counts as new, so it can still start a search. Tested in Task 3.
 - **Feed content heavy in markup but short in text.** It must not beat a longer page article. Tested in Task 2.
@@ -190,8 +191,8 @@ type archive func(ctx context.Context, l *slog.Logger, url string) (items <-chan
 
   - `rss` gains `archives []archive`. `NewRSS` builds the `rss` value, sets `r.archives = []archive{r.wordpress}`, and returns it.
   - `func (r rss) Backfill(ctx, l, url string) (<-chan rssDocument, error)` tries `r.archives` in order. It returns the first one with `ok`, the first error, or `port.ErrNoArchive`. Add `var _ port.Backfiller[rssDocument] = rss{}`.
-  - `func (r rss) wordpress(ctx, l, url string) (<-chan rssDocument, bool, error)`:
-    - It calls `FindWordPress(ctx, logs.Client(r.client, l, "wordpress"), r.pacer, url)`.
+  - `func wordpressArchive(ctx context.Context, client *http.Client, pacer *pace.Pacer, l *slog.Logger, url string) (<-chan rssDocument, bool, error)` is a package function, so `page` can reuse it in Task 11. `func (r rss) wordpress(ctx, l, url)` calls it with `logs.Client(r.client, l, "wordpress")` and `r.pacer`. `wordpressArchive`:
+    - It calls `FindWordPress(ctx, client, pacer, url)`.
     - A detection error logs `l.Warn("find wordpress", "url", url, "err", err)` and returns `ok` false. That covers a closed API answering 401 or 404.
     - An empty `wp.Posts` returns `ok` false.
     - Otherwise it reads page 1 synchronously, as `wordpress.FetchFeed` does now. An error there returns `nil, true, err`. The other pages stream from a goroutine. Every document gets `Lang = wp.Lang`.
@@ -444,4 +445,258 @@ Expected: PASS.
 ```bash
 git add internal/adapter/extract/html/collect.go internal/adapter/extract/html/collect_test.go
 git commit -m "Generate the one-listing link rule in the background"
+```
+
+### Task 9: Paced extractor fetches and rule events
+
+**Files:**
+- Modify: `internal/adapter/extract/html/extractor.go`
+- Modify: `internal/adapter/extract/html/collect.go:240-247`
+- Modify: `cmd/main.go`
+- Modify: every `newExtractor(` call in `internal/adapter/extract/html/*_test.go`
+- Test: `internal/adapter/extract/html/collect_test.go`
+
+**Interfaces:**
+- Produces: `func New(llm port.LLM, domains DomainStore, pacer *pace.Pacer, ruled chan<- string, l *slog.Logger) port.Extractor`, and `newExtractor` with the same parameters.
+  - `t.fetcher(l)` calls `t.pacer.Wait(ctx, url)` before each fetch. A nil pacer never waits.
+  - `saveRule` sends `domainID` on `t.ruled` after a successful save, only for `fieldLinks` and `fieldPages`. The send never blocks. On a full channel it logs `t.l.Warn("rule event dropped", "domain_id", domainID)`. A nil channel sends nothing.
+  - `fieldPages field = "pages"` is added next to `fieldLinks`.
+
+- [ ] **Step 1: Write the tests**
+
+`TestSaveRuleSendsDomain`:
+- `ruled := make(chan string, 1)`.
+- `saveRule(ctx, "d", fieldLinks, LinkRule{})` puts `"d"` on `ruled`.
+- `saveRule` for `fieldContent` sends nothing.
+- A second links save while `ruled` is full returns within 100 ms.
+
+`TestFetcherPaced`:
+- An `httptest` server, and `pace.New(50 * time.Millisecond)`.
+- Two calls to `t.fetcher(discard)` on the same host take at least 50 ms.
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `go test ./internal/adapter/extract/html/ -run 'TestSaveRuleSendsDomain|TestFetcherPaced' -v`
+Expected: FAIL to compile.
+
+- [ ] **Step 3: Implement**
+
+In `cmd/main.go`:
+- Move `pacer := pace.New(source.DomainPace)` above `html.New`.
+- Add `ruled := make(chan string, source.RuledQueue)`.
+- Pass `pacer` and `ruled`.
+
+`RuledQueue` comes from Task 12, so define `const RuledQueue = 16` in `route.go` now.
+
+- [ ] **Step 4: Run the package tests and build**
+
+Run: `go build ./... && go test -race ./internal/adapter/extract/html/`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/adapter/extract/html cmd/main.go internal/core/service/source/route.go
+git commit -m "Pace extractor fetches and send an event when a link rule is saved"
+```
+
+### Task 10: Pagination rule
+
+**Files:**
+- Create: `internal/adapter/extract/html/pages.go`
+- Create: `internal/adapter/extract/html/prompts/pages_system.md`
+- Create: `internal/adapter/extract/html/prompts/page_rule.md`
+- Modify: `internal/adapter/extract/html/prompts.go`
+- Modify: `internal/adapter/extract/html/collect.go`
+- Modify: `internal/core/port/extract.go`
+- Modify: `internal/core/service/source/extract_test.go`, adding `Next` to `fakeExtractor`
+- Test: `internal/adapter/extract/html/pages_test.go`
+
+**Interfaces:**
+- Consumes: `fieldPages`, the pacer and `saveRule` events from Task 9. `applyLinks`, `parseSelector`, `vocabulary.ground`, `temperatures`, `minLinks`, `ErrAbstained`, `ErrNoRule`, `retryGeneration` and the `generating` semaphore are already in the package.
+- Produces:
+  - **`port.Extractor`** gains `Next(ctx context.Context, l *slog.Logger, d domain.Domain, url string, listing []byte) (string, error)`. It returns the URL of the listing page after `url`, or `""` when there is none or no rule yet.
+  - **The rule type**, with JSON keys `next`, `template` and `reasoning`:
+
+    ```go
+    type PageRule struct {
+    	Next      *string `json:"next" jsonschema:"nullable"`
+    	Template  *string `json:"template" jsonschema:"nullable"`
+    	Reasoning string  `json:"reasoning"`
+    }
+    ```
+
+    It has `JSONSchemaExtend`, using `prompts.pageFields`, plus `Abstained`, true when both are nil or blank, and `sanitize`, like `LinkRule`.
+  - **`pageCandidates(listing sample, links LinkRule) []candidate`.** A candidate holds `tag`, `classes`, `rel`, `ariaLabel`, `text` and `url`.
+    - It reads URLs from `href`, `data-href`, `data-url` and `data-next`.
+    - It keeps only URLs on the listing's host that are not the listing itself.
+    - It drops elements the `links` rule matches.
+    - It dedupes by URL, truncates `text` to 40 characters and caps the list at 80.
+  - **`applyPage(rule PageRule, listing sample, n int) (string, error)`.** `n` is the number of the page wanted.
+    - `Next` reads the first match's URL from `href`, then `data-href`, `data-url`, `data-next`.
+    - `Template` replaces `{n}` with `n`.
+    - The result must be on the listing's host and differ from `listing.URL`. Otherwise it returns `""`.
+  - **`checkPageRule(ctx, rule PageRule, links LinkRule, listing sample, fetch fetchFunc) error`**, as in the spec's Check:
+    - page 2 gives at least `minLinks` links, at least half of them new,
+    - and a `Next` rule gives a page 3 different from pages 1 and 2.
+  - **`generatePageRule(ctx, l, listing sample, links LinkRule, fetch fetchFunc) (PageRule, error)`** mirrors `generateLinkRule`. Its system prompt is `prompts.pagesSystem()`. Its user prompt is `prompts.candidates(cands)`, one line per candidate: `[i] <tag class="..." rel="..." aria-label="..."> "text" -> url`.
+  - **`htmlExtractor.Next`:**
+    - With a `pages` rule, it returns `applyPage(rule, s, 2)`.
+    - Without a `links` rule, it returns `""`.
+    - Without a `pages` rule, it starts `generatePageRule` in a goroutine and returns `""`. The goroutine runs only off-peak, when `generating` is free and `fieldPages` is not failing for the domain. On `port.ErrUnavailable` it returns. On another error it calls `t.fail(fieldPages, d.ID)`. On success it calls `saveRule`.
+- **`prompts/pages_system.md`** follows `links_system.md`:
+  - It explains the candidate line format.
+  - It asks for `next`, a selector for the element linking to the next, older page, or `template`, a URL with `{n}` for the page number. Exactly one of the two.
+  - It keeps the same selector rules, with names only from the candidates.
+  - Abstaining with both null is better than a guess.
+- **`prompts/page_rule.md`** has sections `## next`, `## template` and `## reasoning`.
+
+- [ ] **Step 1: Write the tests in `pages_test.go`**
+
+| Test | Asserts |
+|---|---|
+| `TestPageCandidates` | A listing with an article link the rule matches, a `rel="next"` anchor, a `<button data-url="/news?page=2">Load more</button>`, an off-host link and a self link gives exactly 2 candidates, in DOM order, with the right `rel` and text. |
+| `TestApplyPage` | `Next: "a.older"` gives the absolute `href`. `Next: "button.more"` gives its `data-url`. `Template: "https://a.example/news?page={n}"` with `n = 3` gives `...page=3`. A template on another host gives `""`. |
+| `TestCheckPageRule` | Against an `httptest` server whose page 2 has 6 new article links, the rule passes. When page 2 repeats page 1's links, it fails. When a `Next` rule's page 3 equals page 2, it fails. |
+| `TestNextGeneratesWithoutRule` | A domain with a `links` rule and no `pages` rule, and a `fakeLLM` answering a valid `PageRule`. `Next` returns `""`. After `wait(tr)` the store holds key `pages`. |
+| `TestNextWithoutLinkRule` | `Next` returns `""` with no LLM call. |
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `go test ./internal/adapter/extract/html/ -run 'TestPage|TestApplyPage|TestCheckPageRule|TestNext' -v`
+Expected: FAIL to compile.
+
+- [ ] **Step 3: Implement `pages.go`, the two prompt files, `prompts.pagesSystem`, `prompts.candidates`, `prompts.pageFields` and `Next`**
+
+Also add a `Next` returning `"", nil` to `fakeExtractor` and to any other `port.Extractor` fake.
+
+- [ ] **Step 4: Run the tests and build**
+
+Run: `go build ./... && go test -race ./internal/adapter/extract/html/ ./internal/core/service/source/`
+Expected: PASS. Set `TEST_POSTGRES_CONN` for the DB tests in `source`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/adapter/extract/html internal/core/port/extract.go internal/core/service/source/extract_test.go
+git commit -m "Learn a pagination rule per domain like the link rule"
+```
+
+### Task 11: Page backfill strategies
+
+**Files:**
+- Create: `internal/adapter/fetcher/paging.go`
+- Modify: `internal/adapter/fetcher/page.go`
+- Test: `internal/adapter/fetcher/paging_test.go`
+
+**Interfaces:**
+- Consumes: `wordpressArchive` from Task 4, `port.Backfiller` and `port.ErrNoArchive` from Task 4, and `Next` from Task 10.
+- Produces:
+  - The `Linker` interface in `page.go` gains `Next(ctx context.Context, l *slog.Logger, d domain.Domain, url string, listing []byte) (string, error)`.
+  - **The pager type:**
+
+    ```go
+    // pager gives the url of listing page n, the page after cur. "" ends the run.
+    type pager func(ctx context.Context, l *slog.Logger, d domain.Domain, cur string, body []byte, n int) (string, error)
+    ```
+
+  - **`func (r page) Backfill(ctx, l, url string) (<-chan pageDocument, error)`**, with `var _ port.Backfiller[pageDocument] = page{}`:
+    1. `wordpressArchive` with `logs.Client(r.client, l, "wordpress")` and `r.pacer`. When `ok`, map each `rssDocument` to `pageDocument{URL, Lang}`.
+    2. Otherwise fetch page 1 through the pacer, then get its domain and its links through `r.linker.Links`.
+    3. No links means no `links` rule. Return `fmt.Errorf("%w: no links on %s", port.ErrNoArchive, url)`.
+    4. Pick the pager. Try `relNext`, `patterns(url)` and `r.ruled` in order, and keep the first that returns a non-empty URL for page 1.
+    5. Stream from a goroutine:
+       - Send the unseen links of each page.
+       - Fetch the next page through the pacer.
+       - Stop on a fetch error, on no unseen links, on an empty next URL, or on a URL already visited.
+  - **`relNext`** reads the `href` of `link[rel=next]`, then `a[rel=next]`, resolved against `cur`.
+  - **`patterns(base string) pager`** is a closure.
+    - For `n = 2`, it tries `base` with `/page/2/` appended to the path, then `?page=2`, `?paged=2` and `?p=2`.
+    - It keeps the first whose page 2 gives a link that page 1 did not. That check costs one paced fetch per tried pattern.
+    - For later pages it reuses the chosen pattern with `n`.
+  - **`r.ruled`** calls `r.linker.Next`.
+
+- [ ] **Step 1: Write the tests in `paging_test.go`**
+
+Use a fake `Linker` whose `Links` returns the `href`s of `a.post`, resolved, and whose `Next` returns `next[url]` from a map.
+
+| Test | Server | Want links |
+|---|---|---|
+| `TestPageBackfillRelNext` | `/news` → p1, p2 and `<link rel="next" href="/news?page=2">`. `?page=2` → p3 and next `?page=3`. `?page=3` → p4, no next. | p1, p2, p3, p4 |
+| `TestPageBackfillPattern` | `/news` → p1, p2. `/news/page/2/` → 404. `/news?page=2` → p3. `?page=3` → p3. | p1, p2, p3 |
+| `TestPageBackfillRepeatsPageOne` | every `?page=N` answers page 1 | p1, p2, and at most 6 requests |
+| `TestPageBackfillRule` | `/news` → p1, with no next and no pattern pages. Fake `Next` maps `/news` → `/older?c=x` → p5. | p1, p5 |
+| `TestPageBackfillNoLinkRule` | the fake's `Links` returns nil | `errors.Is(err, port.ErrNoArchive)` |
+| `TestPageBackfillWordPress` | `wordpressServer(t, "/wp-json/")` at `/blog/` | `https://x.example/a`, `/b`, `/c`, each with `Lang == "sv"` |
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `go test ./internal/adapter/fetcher/ -run TestPageBackfill -v`
+Expected: FAIL to compile.
+
+- [ ] **Step 3: Implement `paging.go` and `page.Backfill`**
+
+- [ ] **Step 4: Run the package tests and build**
+
+Run: `go build ./... && go test -race ./internal/adapter/fetcher/`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/adapter/fetcher/paging.go internal/adapter/fetcher/paging_test.go internal/adapter/fetcher/page.go
+git commit -m "Backfill page sources through WordPress, rel next, URL patterns and a pagination rule"
+```
+
+### Task 12: Rule events start page backfills
+
+**Files:**
+- Create: `internal/core/service/source/ruled.go`
+- Modify: `internal/core/domain/source.go`
+- Modify: `internal/adapter/postgres/source.go`
+- Modify: `cmd/main.go`
+- Modify: `docs/kb/backfill.md`
+- Test: `internal/core/service/source/ruled_test.go`
+
+**Interfaces:**
+- Consumes: `ruled` and `RuledQueue` from Task 9, and `backfills` from Task 5.
+- Produces:
+  - `domain.SourceFilter` gains `DomainID sql.Null[string]` and `Adapter sql.Null[string]`. `ListSources` adds `AND domain_id = $n` and `AND adapter = $n` when they are valid.
+  - **`BackfillRuled`:**
+
+    ```go
+    // BackfillRuled backfills a domain's page sources once a rule they need is saved.
+    func BackfillRuled(ctx context.Context, s *postgres.SourceStore, ruled <-chan string, backfills chan<- domain.Source, l *slog.Logger)
+    ```
+
+    For each domain id, it lists that domain's sources with `Enabled` true, `Status` active and `Adapter` `page`. It sends each one on `backfills` without blocking. A full channel logs `l.Warn("backfill queue full", "source", id)`. It returns when `ctx` ends.
+
+- [ ] **Step 1: Write `TestBackfillRuled`**
+
+One domain with three sources: an enabled active `page`, an enabled active `rss`, and a disabled `page`.
+- Send the domain id on `ruled`.
+- Assert `backfills` receives only the enabled `page` source, within 2 s.
+- With `backfills` full, a second domain id does not block.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `TEST_POSTGRES_CONN=... go test ./internal/core/service/source/ -run TestBackfillRuled -v`
+Expected: FAIL to compile.
+
+- [ ] **Step 3: Implement the filter, `BackfillRuled`, and `g.Go` it in `cmd/main.go` with `ruled` and `backfills`**
+
+- [ ] **Step 4: Run every Go test and build**
+
+Run: `go build ./... && TEST_POSTGRES_CONN=... go test -race ./...`
+Expected: PASS.
+
+- [ ] **Step 5: Add page backfill to `docs/kb/backfill.md`**
+
+Cover the strategies, the pagination rule, rule events and the plain-HTTP rule.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add internal/core/service/source/ruled.go internal/core/service/source/ruled_test.go internal/core/domain/source.go internal/adapter/postgres/source.go cmd/main.go docs/kb/backfill.md
+git commit -m "Backfill a domain's page sources when its link or pagination rule is saved"
 ```
