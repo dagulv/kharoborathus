@@ -227,3 +227,29 @@ func TestNextAppliesRule(t *testing.T) {
 		t.Errorf("got %q, %v", got, err)
 	}
 }
+
+func TestNextTemplateOnlyOnItsListing(t *testing.T) {
+	tr := newExtractor(&fakeLLM{}, &fakeStore{}, nil, nil, discard)
+	d := linkRuled(t, map[string]any{"pages": storedPageRule{
+		PageRule: PageRule{Template: str("https://a.example/news/archive/{n}")},
+		Listing:  "https://a.example/news/",
+	}})
+
+	cases := []struct {
+		cur  string
+		n    int
+		want string
+	}{
+		{"https://a.example/news/", 2, "https://a.example/news/archive/2"},
+		{"https://a.example/news/archive/2", 3, "https://a.example/news/archive/3"},
+		{"https://a.example/press/", 2, ""},
+		{"https://a.example/press/archive/2", 3, ""},
+	}
+
+	for _, c := range cases {
+		got, err := tr.Next(context.Background(), discard, d, c.cur, []byte(pagerListing), c.n)
+		if err != nil || got != c.want {
+			t.Errorf("%s page %d: got %q, %v, want %q", c.cur, c.n, got, err, c.want)
+		}
+	}
+}

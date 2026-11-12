@@ -67,6 +67,25 @@ func (r PageRule) sanitize() PageRule {
 	return r
 }
 
+// A template is an absolute url learned on one listing, and another source on the domain has its own
+// listing. So it only applies from the listing it was learned on, and then from its own page n-1.
+type storedPageRule struct {
+	PageRule
+	Listing string `json:"listing"`
+}
+
+func (r storedPageRule) appliesTo(cur string, n int) bool {
+	if r.Template == nil {
+		return true
+	}
+
+	if n == 2 {
+		return cur == r.Listing
+	}
+
+	return strings.ReplaceAll(*r.Template, pageNumber, strconv.Itoa(n-1)) == cur
+}
+
 type candidate struct {
 	tag       string
 	classes   []string
@@ -371,8 +390,12 @@ func (t *htmlExtractor) generatePageRule(ctx context.Context, l *slog.Logger, li
 func (t *htmlExtractor) Next(ctx context.Context, l *slog.Logger, d domain.Domain, url string, listing []byte, n int) (string, error) {
 	s := sample{URL: url, Data: listing}
 
-	if rule, ok := ruleOf[PageRule](d, fieldPages); ok {
-		return applyPage(rule, s, n)
+	if rule, ok := ruleOf[storedPageRule](d, fieldPages); ok {
+		if !rule.appliesTo(url, n) {
+			return "", nil
+		}
+
+		return applyPage(rule.PageRule, s, n)
 	}
 
 	links, ok := ruleOf[LinkRule](d, fieldLinks)
@@ -418,7 +441,7 @@ func (t *htmlExtractor) learnPages(ctx context.Context, l *slog.Logger, d domain
 			return
 		}
 
-		if err := t.saveRule(ctx, d.ID, fieldPages, rule); err != nil {
+		if err := t.saveRule(ctx, d.ID, fieldPages, storedPageRule{PageRule: rule, Listing: s.URL}); err != nil {
 			t.l.Error("save page rule", "domain", d.BaseURL, "err", err)
 			return
 		}
