@@ -4,14 +4,17 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
+	"unicode/utf8"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
+	"github.com/PuerkitoBio/goquery"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/pipeline"
 )
 
-// Each field keeps what the fetcher found, and failed content keeps the content the fetcher gave.
+// Each field keeps what the fetcher found. The fetcher's content stays when extraction fails or finds less text.
 func (s *Service) Extract(ctx context.Context, l *slog.Logger, p domain.RawPost) (domain.RawPost, error) {
 	d, err := s.DomainStore.GetOrCreateDomain(ctx, p.URL)
 	if err != nil {
@@ -38,7 +41,7 @@ func (s *Service) extract(ctx context.Context, l *slog.Logger, d domain.Domain, 
 
 	if content, err := s.Extractor.Content(ctx, l, d, p.URL, page); err != nil {
 		l.Debug("extract content", "err", err)
-	} else {
+	} else if plainLen(content) > plainLen(p.Content) {
 		p.Content = content
 	}
 
@@ -85,4 +88,13 @@ func SetMarkdown(_ context.Context, l *slog.Logger, p domain.RawPost) (domain.Ra
 	p.Content = md
 
 	return p, nil
+}
+
+func plainLen(html string) int {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return 0
+	}
+
+	return utf8.RuneCountInString(doc.Text())
 }
