@@ -110,6 +110,7 @@ func app(ctx context.Context) (err error) {
 	discoveredIDs := make(chan string, source.DiscoveredQueue)
 
 	syncs := make(chan domain.Source, source.SyncQueue)
+	backfills := make(chan domain.Source, source.BackfillQueue)
 
 	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, classifier, enrichIDs, schedule.Always, syncs)
 
@@ -137,7 +138,7 @@ func app(ctx context.Context) (err error) {
 
 	// The port is public, so every admin route sits behind a session the web app forwards.
 	adminMux := http.NewServeMux()
-	source.Routes(adminMux, &sourceStore, syncs, l.WithGroup("source"), calls)
+	source.Routes(adminMux, &sourceStore, syncs, backfills, l.WithGroup("source"), calls)
 	mux.Handle("/admin/", auth.RequireSession(&sessionStore, l.WithGroup("auth"), adminMux))
 
 	// No WriteTimeout: /admin/listing probes a site for up to a minute before it answers.
@@ -173,7 +174,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceService, fetchers, l.WithGroup("sourced"))
+		return source.Run(ctx, &sourceService, fetchers, backfills, l.WithGroup("sourced"))
 	})
 
 	g.Go(func() error {
