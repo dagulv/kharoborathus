@@ -16,7 +16,7 @@ const (
 	dedupeWindow = 7
 	// $50 a month at $5 per 1k queries, spread over a 31-day month.
 	dailySearchBudget = 322
-	// One day of ingest at its daily cap. More would age out before it is fetched.
+	// More would age out before discovered ingest gets to them.
 	maxPendingResults = 200
 	catchUpBatch      = 10
 )

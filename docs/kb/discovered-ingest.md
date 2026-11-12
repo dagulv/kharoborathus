@@ -13,19 +13,18 @@ Turns `discovery_posts` rows into raw posts with step 1's stages: extract, markd
 
 ## Design
 
-One link at a time, so the daily cap cannot race.
+One link at a time. Site fetches have no cap. Only the external APIs are limited.
 
 1. Skip rows that are not `pending` or older than 7 days. Older links are stale news and stay `pending`.
-2. Hold back while 200 rows were checked in the last 24 hours.
-3. A url already in `raw_posts` is `duplicate`.
-4. A domain whose sources are all disabled or deleted is `failed`, before any request.
-5. Fetch through the shared per-host pacer. Redirects are followed.
-6. The final url is stored. Its domain and source decide everything after the fetch.
-7. No content is `rejected`. A page dated more than 7 days back is `rejected`. Undated pages pass.
-8. A blocked final domain is `failed`.
-9. Use the domain's oldest enabled source. Otherwise create a `proposed` one and record the referring post in `source_discovered_by_post`.
-10. Insert the raw post. A url conflict is `duplicate`. Otherwise the row is `accepted`.
-11. Run the quality check. A failed check leaves the raw post `pending` for step 1's retry.
+2. A url already in `raw_posts` is `duplicate`.
+3. A domain whose sources are all disabled or deleted is `failed`, before any request.
+4. Fetch through the shared per-host pacer. Redirects are followed.
+5. The final url is stored. Its domain and source decide everything after the fetch.
+6. No content is `rejected`. A page dated more than 7 days back is `rejected`. Undated pages pass.
+7. A blocked final domain is `failed`.
+8. Use the domain's oldest enabled source. Otherwise create a `proposed` one and record the referring post in `source_discovered_by_post`.
+9. Insert the raw post. A url conflict is `duplicate`. Otherwise the row is `accepted`.
+10. Run the quality check. A failed check leaves the raw post `pending` for step 1's retry.
 
 Rules:
 
@@ -40,7 +39,6 @@ Rules:
 
 | Parameter       | Value    | Why                         |
 | --------------- | -------- | --------------------------- |
-| Daily fetch cap | 200 URLs | Scale slowly.               |
 | Pending window  | 7 days   | Older links are stale news. |
 | Stale page      | 7 days   | Same as the pending window. |
 | Queue           | 100      | `DiscoveredQueue`.          |
