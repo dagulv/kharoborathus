@@ -181,6 +181,11 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
+		source.BackfillRuled(ctx, &sourceStore, ruled, backfills, l.WithGroup("ruled"))
+		return nil
+	})
+
+	g.Go(func() error {
 		return enrichService.Run(ctx, enrichIDs, l.WithGroup("enrich"))
 	})
 
