@@ -19,6 +19,8 @@ const (
 
 type Fetcher interface {
 	Plugin(ctx context.Context) pipeline.Pipeline[domain.Source, domain.RawPost]
+	// Backfill is false when the adapter has no backfill strategy.
+	Backfill(ctx context.Context) (pipeline.Pipeline[domain.Source, domain.RawPost], bool)
 }
 
 type fetcher[T any] struct {
@@ -27,18 +29,29 @@ type fetcher[T any] struct {
 	calls *slog.Logger
 }
 
-// Keyed by domain.Source.Adapter.
-func Run(ctx context.Context, s *Service, fetchers map[string]Fetcher, l *slog.Logger) error {
+// Keyed by domain.Source.Adapter. Backfills run in their own plugins, so a long archive never holds up live sources.
+func Run(ctx context.Context, s *Service, fetchers map[string]Fetcher, backfills <-chan domain.Source, l *slog.Logger) error {
 	ins := make(map[string]chan domain.Source, len(fetchers))
-	posts := make([]<-chan domain.RawPost, 0, len(fetchers))
+	backIns := make(map[string]chan domain.Source, len(fetchers))
+	posts := make([]<-chan domain.RawPost, 0, 2*len(fetchers))
 
 	for name, f := range fetchers {
 		in := make(chan domain.Source)
 		ins[name] = in
 		posts = append(posts, f.Plugin(ctx).Stream(ctx, l.With("adapter", name), in))
+
+		backfill, ok := f.Backfill(ctx)
+		if !ok {
+			continue
+		}
+
+		backIn := make(chan domain.Source)
+		backIns[name] = backIn
+		posts = append(posts, backfill.Stream(ctx, l.With("adapter", name, "backfill", true), backIn))
 	}
 
-	go route(ctx, s.sourceStream(ctx, l.WithGroup("sourceStream")), ins, l)
+	go route(ctx, s.sourceStream(ctx, l.WithGroup("sourceStream")), ins, l, "unknown adapter")
+	go route(ctx, backfills, backIns, l, "no backfill strategy")
 	go s.retryPending(ctx, l.WithGroup("retryPending"))
 
 	return pipeline.New[domain.RawPost]().
@@ -51,18 +64,31 @@ func Run(ctx context.Context, s *Service, fetchers map[string]Fetcher, l *slog.L
 		Run(ctx, l, pipeline.Merge(ctx, posts...))
 }
 
-// Closing every input ends each plugin's stream, which ends the merge and so Run.
-func route(ctx context.Context, sources <-chan domain.Source, ins map[string]chan domain.Source, l *slog.Logger) {
+// Closing every input ends each plugin's stream, which ends the merge and so Run. The backfill channel is never closed, so ctx ends it.
+func route(ctx context.Context, sources <-chan domain.Source, ins map[string]chan domain.Source, l *slog.Logger, missing string) {
 	defer func() {
 		for _, c := range ins {
 			close(c)
 		}
 	}()
 
-	for source := range sources {
+	for {
+		var source domain.Source
+
+		select {
+		case s, ok := <-sources:
+			if !ok {
+				return
+			}
+
+			source = s
+		case <-ctx.Done():
+			return
+		}
+
 		c, ok := ins[source.Adapter]
 		if !ok {
-			l.Error("unknown adapter", "adapter", source.Adapter, "source", source.ID)
+			l.Error(missing, "adapter", source.Adapter, "source", source.ID)
 			continue
 		}
 

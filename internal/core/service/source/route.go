@@ -18,6 +18,7 @@ import (
 
 const (
 	SyncQueue       = 16
+	BackfillQueue   = 16
 	discoverTimeout = time.Minute
 	homepageTimeout = 20 * time.Second
 )
@@ -28,8 +29,9 @@ type listing struct {
 }
 
 // The admin group. main guards /admin/ with the session middleware.
-func Routes(mux *http.ServeMux, s *postgres.SourceStore, syncs chan<- domain.Source, l, calls *slog.Logger) {
-	mux.HandleFunc("POST /admin/sources/{id}/sync", syncSource(s, syncs, l))
+func Routes(mux *http.ServeMux, s *postgres.SourceStore, syncs, backfills chan<- domain.Source, l, calls *slog.Logger) {
+	mux.HandleFunc("POST /admin/sources/{id}/sync", queueSource(s, syncs, "sync", l))
+	mux.HandleFunc("POST /admin/sources/{id}/backfill", queueSource(s, backfills, "backfill", l))
 	mux.HandleFunc("GET /admin/listing", listingRoute(safehttp.NewClient(homepageTimeout), l, calls))
 }
 
@@ -74,7 +76,7 @@ func listingRoute(client *http.Client, l, calls *slog.Logger) http.HandlerFunc {
 	}
 }
 
-func syncSource(s *postgres.SourceStore, syncs chan<- domain.Source, l *slog.Logger) http.HandlerFunc {
+func queueSource(s *postgres.SourceStore, queue chan<- domain.Source, name string, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		source, err := s.GetSource(r.Context(), r.PathValue("id"))
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -83,7 +85,7 @@ func syncSource(s *postgres.SourceStore, syncs chan<- domain.Source, l *slog.Log
 		}
 
 		if err != nil {
-			l.Error("sync source", "source", r.PathValue("id"), "err", err)
+			l.Error(name+" source", "source", r.PathValue("id"), "err", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -94,10 +96,10 @@ func syncSource(s *postgres.SourceStore, syncs chan<- domain.Source, l *slog.Log
 		}
 
 		select {
-		case syncs <- source:
+		case queue <- source:
 			w.WriteHeader(http.StatusAccepted)
 		default:
-			http.Error(w, "sync queue full", http.StatusServiceUnavailable)
+			http.Error(w, name+" queue full", http.StatusServiceUnavailable)
 		}
 	}
 }
