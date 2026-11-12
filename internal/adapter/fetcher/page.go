@@ -25,6 +25,7 @@ type PostStore interface {
 
 type Linker interface {
 	Links(ctx context.Context, l *slog.Logger, d domain.Domain, url string, listing []byte) ([]string, error)
+	Next(ctx context.Context, l *slog.Logger, d domain.Domain, url string, listing []byte, n int) (string, error)
 }
 
 type DomainStore interface {
