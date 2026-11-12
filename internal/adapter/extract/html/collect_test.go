@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -166,6 +167,8 @@ func TestLinksTriesOneListingFirst(t *testing.T) {
 		t.Errorf("links %v", links)
 	}
 
+	wait(tr)
+
 	if llm.calls != len(temperatures) || len(tr.listings[d.ID]) != 1 {
 		t.Errorf("%d llm calls, %d listings kept", llm.calls, len(tr.listings[d.ID]))
 	}
@@ -173,6 +176,7 @@ func TestLinksTriesOneListingFirst(t *testing.T) {
 	// A failed single listing falls back to collecting, so it is not tried again.
 	tr.listedAt[d.ID] = time.Time{}
 	tr.withoutLinkRule(context.Background(), discard, d, s)
+	wait(tr)
 
 	if llm.calls != len(temperatures) || len(tr.listings[d.ID]) != 2 {
 		t.Errorf("%d llm calls, %d listings kept", llm.calls, len(tr.listings[d.ID]))
@@ -185,9 +189,43 @@ func TestLinksRetriesOneListingWhenUnavailable(t *testing.T) {
 	d := domain.Domain{ID: "d"}
 
 	tr.withoutLinkRule(context.Background(), discard, d, listings(1)[0])
+	wait(tr)
 	tr.withoutLinkRule(context.Background(), discard, d, listings(1)[0])
+	wait(tr)
 
 	if llm.calls != 2 {
 		t.Errorf("%d llm calls", llm.calls)
+	}
+}
+
+func TestLinksOneListingSavesRule(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/artikel/"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(site{body: "article-body"}.article(id)))
+	}))
+	defer srv.Close()
+
+	llm := &fakeLLM{answers: []any{LinkRule{Links: str("article.teaser h2 a"), Reasoning: "repeated teasers"}}}
+	store := &fakeStore{}
+	tr := newExtractor(llm, store, discard)
+	tr.client = srv.Client()
+
+	if links := tr.withoutLinkRule(context.Background(), discard, domain.Domain{ID: "d"}, sample{URL: srv.URL + "/", Data: []byte(listing(0))}); links != nil {
+		t.Errorf("links came back inline: %v", links)
+	}
+
+	wait(tr)
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if _, ok := store.rules[string(fieldLinks)]; !ok {
+		t.Errorf("rules %v", store.rules)
 	}
 }
