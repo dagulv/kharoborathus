@@ -25,6 +25,9 @@ const (
 	pageNumber    = "{n}"
 )
 
+// How often a wanted pages rule checks again for off-peak and a free generation slot.
+var pageRetryGap = time.Minute
+
 // Where a next page link or a load more element keeps its url, in order.
 var pageURLAttrs = []string{"href", "data-href", "data-url", "data-next"}
 
@@ -408,44 +411,73 @@ func (t *htmlExtractor) Next(ctx context.Context, l *slog.Logger, d domain.Domai
 	return "", nil
 }
 
+// learnPages keeps one goroutine per domain waiting for off-peak and a free slot, since nothing else
+// asks again until the next backfill.
 func (t *htmlExtractor) learnPages(ctx context.Context, l *slog.Logger, d domain.Domain, s sample, links LinkRule) {
 	t.mu.Lock()
-	skip := t.failing(fieldPages, d.ID)
+	skip := t.failing(fieldPages, d.ID) || t.learning[d.ID]
+	if !skip {
+		t.learning[d.ID] = true
+	}
 	t.mu.Unlock()
 
-	if skip || !t.llm.Schedule().Active(time.Now()) {
-		return
-	}
-
-	select {
-	case t.generating <- struct{}{}:
-	default:
+	if skip {
 		return
 	}
 
 	go func() {
-		defer func() { <-t.generating }()
-
-		rule, err := t.generatePageRule(ctx, l, s, links, t.fetcher(l))
-
-		switch {
-		case errors.Is(err, port.ErrUnavailable) || ctx.Err() != nil:
-			return
-		case err != nil:
+		defer func() {
 			t.mu.Lock()
-			t.fail(fieldPages, d.ID)
+			delete(t.learning, d.ID)
 			t.mu.Unlock()
+		}()
 
-			t.l.Warn("generate page rule", "domain", d.BaseURL, "err", err)
+		for {
+			if t.llm.Schedule().Active(time.Now()) && t.tryLearnPages(ctx, l, d, s, links) {
+				return
+			}
 
-			return
+			select {
+			case <-time.After(pageRetryGap):
+			case <-ctx.Done():
+				return
+			}
 		}
-
-		if err := t.saveRule(ctx, d.ID, fieldPages, storedPageRule{PageRule: rule, Listing: s.URL}); err != nil {
-			t.l.Error("save page rule", "domain", d.BaseURL, "err", err)
-			return
-		}
-
-		t.l.Info("page rule generated", "domain", d.BaseURL, "reasoning", rule.Reasoning)
 	}()
+}
+
+// tryLearnPages is false when the slot was busy or DeepSeek unavailable, so the caller tries again.
+func (t *htmlExtractor) tryLearnPages(ctx context.Context, l *slog.Logger, d domain.Domain, s sample, links LinkRule) bool {
+	select {
+	case t.generating <- struct{}{}:
+	default:
+		return false
+	}
+	defer func() { <-t.generating }()
+
+	rule, err := t.generatePageRule(ctx, l, s, links, t.fetcher(l))
+
+	switch {
+	case ctx.Err() != nil:
+		return true
+	case errors.Is(err, port.ErrUnavailable):
+		return false
+	case err != nil:
+		t.mu.Lock()
+		t.fail(fieldPages, d.ID)
+		t.mu.Unlock()
+
+		t.l.Warn("generate page rule", "domain", d.BaseURL, "err", err)
+
+		return true
+	}
+
+	if err := t.saveRule(ctx, d.ID, fieldPages, storedPageRule{PageRule: rule, Listing: s.URL}); err != nil {
+		t.l.Error("save page rule", "domain", d.BaseURL, "err", err)
+		return true
+	}
+
+	t.l.Info("page rule generated", "domain", d.BaseURL, "reasoning", rule.Reasoning)
+
+	return true
 }
