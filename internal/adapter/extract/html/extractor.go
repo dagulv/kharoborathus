@@ -45,6 +45,7 @@ type htmlExtractor struct {
 	listings  map[string][]sample
 	listedAt  map[string]time.Time
 	triedOne  map[string]bool
+	learning  map[string]bool
 }
 
 func New(llm port.LLM, domains DomainStore, pacer *pace.Pacer, ruled chan<- string, l *slog.Logger) port.Extractor {
@@ -68,6 +69,7 @@ func newExtractor(llm port.LLM, domains DomainStore, pacer *pace.Pacer, ruled ch
 		listings:   make(map[string][]sample),
 		listedAt:   make(map[string]time.Time),
 		triedOne:   make(map[string]bool),
+		learning:   make(map[string]bool),
 	}
 }
 
