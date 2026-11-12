@@ -15,7 +15,10 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-var _ port.Fetcher[rssDocument] = rss{}
+var (
+	_ port.Fetcher[rssDocument]    = rss{}
+	_ port.Backfiller[rssDocument] = rss{}
+)
 
 type rssDocument struct {
 	URL      string
@@ -33,15 +36,35 @@ type rss struct {
 	pacer  *pace.Pacer
 	posts  PostStore
 	l      *slog.Logger
+	// Tried in order, the first that supports the site wins.
+	archives []archive
 }
 
 func NewRSS(posts PostStore, pacer *pace.Pacer, l *slog.Logger) port.Fetcher[rssDocument] {
-	return rss{
+	r := rss{
 		client: safehttp.NewClient(time.Second * 20),
 		pacer:  pacer,
 		posts:  posts,
 		l:      l,
 	}
+	r.archives = []archive{r.wordpress}
+
+	return r
+}
+
+func (r rss) Backfill(ctx context.Context, l *slog.Logger, url string) (<-chan rssDocument, error) {
+	for _, a := range r.archives {
+		items, ok, err := a(ctx, l, url)
+		if err != nil {
+			return nil, err
+		}
+
+		if ok {
+			return items, nil
+		}
+	}
+
+	return nil, port.ErrNoArchive
 }
 
 func (r rss) FetchFeed(ctx context.Context, l *slog.Logger, url string) (<-chan rssDocument, error) {

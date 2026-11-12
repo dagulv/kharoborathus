@@ -99,9 +99,8 @@ func app(ctx context.Context) (err error) {
 	pacer := pace.New(source.DomainPace)
 
 	fetchers := map[string]source.Fetcher{
-		"rss":       source.NewFetcher(fetcher.NewRSS(&rawPostStore, pacer, l), calls),
-		"page":      source.NewFetcher(fetcher.NewPage(&rawPostStore, &domainStore, extractor, pacer, l), calls),
-		"wordpress": source.NewFetcher(fetcher.NewWordPress(&rawPostStore, pacer, l), calls),
+		"rss":  source.NewFetcher(fetcher.NewRSS(&rawPostStore, pacer, l), calls),
+		"page": source.NewFetcher(fetcher.NewPage(&rawPostStore, &domainStore, extractor, pacer, l), calls),
 	}
 
 	resultFilter := discovery.NewResultFilter(classifier)

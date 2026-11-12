@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 )
 
@@ -23,8 +24,9 @@ func TestAdaptersRefusePrivate(t *testing.T) {
 		t.Errorf("rss: %v", err)
 	}
 
-	if _, err := NewWordPress(nil, nil, l).FetchFeed(context.Background(), slog.New(slog.DiscardHandler), srv.URL); !errors.Is(err, safehttp.ErrPrivateAddress) {
-		t.Errorf("wordpress: %v", err)
+	// A refused detection counts as no archive. The handler fails the test if it is reached.
+	if _, err := NewRSS(nil, nil, l).(port.Backfiller[rssDocument]).Backfill(context.Background(), slog.New(slog.DiscardHandler), srv.URL); !errors.Is(err, port.ErrNoArchive) {
+		t.Errorf("rss backfill: %v", err)
 	}
 
 	if _, err := NewPage(nil, nil, nil, nil, l).FetchFeed(context.Background(), slog.New(slog.DiscardHandler), srv.URL); !errors.Is(err, safehttp.ErrPrivateAddress) {
