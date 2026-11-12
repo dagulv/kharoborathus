@@ -22,6 +22,10 @@ func (f *fakeExtractor) Links(context.Context, *slog.Logger, domain.Domain, stri
 	return nil, nil
 }
 
+func (f *fakeExtractor) Next(context.Context, *slog.Logger, domain.Domain, string, []byte, int) (string, error) {
+	return "", nil
+}
+
 func (f *fakeExtractor) Content(context.Context, *slog.Logger, domain.Domain, string, []byte) (string, error) {
 	f.calls = append(f.calls, "content")
 	return "extracted", f.contentErr
