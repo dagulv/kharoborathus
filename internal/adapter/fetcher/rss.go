@@ -15,10 +15,7 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-var (
-	_ port.Fetcher[rssDocument]    = rss{}
-	_ port.Backfiller[rssDocument] = rss{}
-)
+var _ port.Backfiller = rss{}
 
 type rssDocument struct {
 	URL      string
@@ -34,40 +31,76 @@ type rssDocument struct {
 type rss struct {
 	client *http.Client
 	pacer  *pace.Pacer
-	posts  PostStore
+	store  PostStore
 	l      *slog.Logger
-	// Tried in order, the first that supports the site wins.
-	archives []archive
 }
 
-func NewRSS(posts PostStore, pacer *pace.Pacer, l *slog.Logger) port.Fetcher[rssDocument] {
-	r := rss{
+func NewRSS(store PostStore, pacer *pace.Pacer, l *slog.Logger) port.Backfiller {
+	return rss{
 		client: safehttp.NewClient(time.Second * 20),
 		pacer:  pacer,
-		posts:  posts,
+		store:  store,
 		l:      l,
 	}
-	r.archives = []archive{r.wordpress}
-
-	return r
 }
 
-func (r rss) Backfill(ctx context.Context, l *slog.Logger, url string) (<-chan rssDocument, error) {
-	for _, a := range r.archives {
-		items, ok, err := a(ctx, l, url)
-		if err != nil {
-			return nil, err
-		}
-
-		if ok {
-			return items, nil
-		}
+func (r rss) Fetch(ctx context.Context, l *slog.Logger, url string) (<-chan domain.RawPost, error) {
+	items, err := r.feed(ctx, l, url)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, port.ErrNoArchive
+	return r.posts(ctx, l, items), nil
 }
 
-func (r rss) FetchFeed(ctx context.Context, l *slog.Logger, url string) (<-chan rssDocument, error) {
+func (r rss) Backfill(ctx context.Context, l *slog.Logger, url string) (<-chan domain.RawPost, error) {
+	items, ok, err := r.wordpress(ctx, l, url)
+	if err != nil {
+		return nil, err
+	}
+
+	if !ok {
+		return nil, port.ErrNoArchive
+	}
+
+	return r.posts(ctx, l, items), nil
+}
+
+// posts skips stored items and fetches every article, since a feed's content may be cut short.
+func (r rss) posts(ctx context.Context, l *slog.Logger, items <-chan rssDocument) <-chan domain.RawPost {
+	out := make(chan domain.RawPost)
+
+	go func() {
+		defer close(out)
+
+		for item := range items {
+			exists, err := r.store.RawPostExists(ctx, item.URL)
+			if err != nil {
+				r.l.Error("raw post exists", "url", item.URL, "err", err)
+				continue
+			}
+
+			if exists {
+				continue
+			}
+
+			item, err = r.article(ctx, l, item)
+			if err != nil {
+				return
+			}
+
+			select {
+			case out <- item.rawPost():
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return out
+}
+
+func (r rss) feed(ctx context.Context, l *slog.Logger, url string) (<-chan rssDocument, error) {
 	// A parser per call, since its client logs to this call's logger.
 	fp := gofeed.NewParser()
 	fp.Client = logs.Client(r.client, l, "rss")
@@ -123,17 +156,8 @@ func (r rss) FetchFeed(ctx context.Context, l *slog.Logger, url string) (<-chan 
 	return out, nil
 }
 
-func (r rss) Filter(ctx context.Context, data rssDocument) (bool, error) {
-	exists, err := r.posts.RawPostExists(ctx, data.URL)
-	if err != nil {
-		return false, fmt.Errorf("err raw post exists: %w", err)
-	}
-
-	return !exists, nil
-}
-
-// Every item gets its article fetched, since a feed's content may be cut short. A failed fetch keeps the feed's content.
-func (r rss) FetchPost(ctx context.Context, l *slog.Logger, data rssDocument) (rssDocument, error) {
+// A failed fetch keeps the feed's content. Only a shutdown is an error.
+func (r rss) article(ctx context.Context, l *slog.Logger, data rssDocument) (rssDocument, error) {
 	if err := r.pacer.Wait(ctx, data.URL); err != nil {
 		return data, err
 	}
@@ -149,7 +173,7 @@ func (r rss) FetchPost(ctx context.Context, l *slog.Logger, data rssDocument) (r
 	return data, nil
 }
 
-func (r rss) ProcessFeed(ctx context.Context, data rssDocument) (domain.RawPost, error) {
+func (data rssDocument) rawPost() domain.RawPost {
 	out := domain.RawPost{
 		URL:        data.URL,
 		Lang:       data.Lang,
@@ -163,5 +187,5 @@ func (r rss) ProcessFeed(ctx context.Context, data rssDocument) (domain.RawPost,
 		out.PostedAt = &data.PostedAt
 	}
 
-	return out, nil
+	return out
 }

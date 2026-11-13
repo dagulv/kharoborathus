@@ -45,12 +45,16 @@ func rssServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
+type noneStored struct{}
+
+func (noneStored) RawPostExists(context.Context, string) (bool, error) { return false, nil }
+
 func TestRSSFetchesEveryArticle(t *testing.T) {
 	srv := rssServer(t)
 	l := slog.New(slog.DiscardHandler)
-	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond), l: l}
+	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond), store: noneStored{}, l: l}
 
-	docs, err := r.FetchFeed(context.Background(), l, srv.URL+"/feed")
+	posts, err := r.Fetch(context.Background(), l, srv.URL+"/feed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,19 +62,9 @@ func TestRSSFetchesEveryArticle(t *testing.T) {
 	pages := make(map[string]string)
 	contents := make(map[string]string)
 
-	for doc := range docs {
-		doc, err := r.FetchPost(context.Background(), l, doc)
-		if err != nil {
-			t.Fatalf("fetch content %s: %v", doc.Title, err)
-		}
-
-		f, err := r.ProcessFeed(context.Background(), doc)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		pages[f.Title] = f.RawContent
-		contents[f.Title] = f.Content
+	for p := range posts {
+		pages[p.Title] = p.RawContent
+		contents[p.Title] = p.Content
 	}
 
 	if want := `<html><body><article>whole article</article></body></html>`; pages["Excerpt"] != want {

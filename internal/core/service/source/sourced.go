@@ -1,6 +1,7 @@
 package source
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -17,20 +18,9 @@ const (
 	workers    = 5
 )
 
-type Fetcher interface {
-	Plugin(ctx context.Context) pipeline.Pipeline[domain.Source, domain.RawPost]
-	// Backfill is false when the adapter has no backfill strategy.
-	Backfill(ctx context.Context) (pipeline.Pipeline[domain.Source, domain.RawPost], bool)
-}
-
-type fetcher[T any] struct {
-	port.Fetcher[T]
-
-	calls *slog.Logger
-}
-
-// Keyed by domain.Source.Adapter. Backfills run in their own plugins, so a long archive never holds up live sources.
-func Run(ctx context.Context, s *Service, fetchers map[string]Fetcher, backfills <-chan domain.Source, l *slog.Logger) error {
+// Keyed by domain.Source.Adapter. Backfills get their own lane per adapter, so a long archive never
+// holds up live sources. Third-party requests go to calls, one row each in the logs table.
+func Run(ctx context.Context, s *Service, fetchers map[string]port.Fetcher, backfills <-chan domain.Source, l, calls *slog.Logger) error {
 	ins := make(map[string]chan domain.Source, len(fetchers))
 	backIns := make(map[string]chan domain.Source, len(fetchers))
 	posts := make([]<-chan domain.RawPost, 0, 2*len(fetchers))
@@ -38,16 +28,16 @@ func Run(ctx context.Context, s *Service, fetchers map[string]Fetcher, backfills
 	for name, f := range fetchers {
 		in := make(chan domain.Source)
 		ins[name] = in
-		posts = append(posts, f.Plugin(ctx).Stream(ctx, l.With("adapter", name), in))
+		posts = append(posts, lane(ctx, l.With("adapter", name), calls, in, f.Fetch))
 
-		backfill, ok := f.Backfill(ctx)
+		b, ok := f.(port.Backfiller)
 		if !ok {
 			continue
 		}
 
 		backIn := make(chan domain.Source)
 		backIns[name] = backIn
-		posts = append(posts, backfill.Stream(ctx, l.With("adapter", name, "backfill", true), backIn))
+		posts = append(posts, lane(ctx, l.With("adapter", name, "backfill", true), calls, backIn, b.Backfill))
 	}
 
 	go route(ctx, s.sourceStream(ctx, l.WithGroup("sourceStream")), ins, l, "unknown adapter")
@@ -62,6 +52,45 @@ func Run(ctx context.Context, s *Service, fetchers map[string]Fetcher, backfills
 		Next(workers, s.checkQuality).
 		WithSink(func(ctx context.Context, p domain.RawPost) error { return s.saveStatus(ctx, l, p) }).
 		Run(ctx, l, pipeline.Merge(ctx, posts...))
+}
+
+// lane reads sources, workers at a time, and gives each post its source and language.
+func lane(ctx context.Context, l, calls *slog.Logger, sources <-chan domain.Source, read func(context.Context, *slog.Logger, string) (<-chan domain.RawPost, error)) <-chan domain.RawPost {
+	return pipeline.New[domain.Source]().
+		NextCh(workers, func(ctx context.Context, l *slog.Logger, in <-chan domain.Source) <-chan domain.RawPost {
+			out := make(chan domain.RawPost)
+
+			go func() {
+				defer close(out)
+
+				for source := range in {
+					posts, err := read(ctx, calls.With("source_id", source.ID), source.URL)
+					if errors.Is(err, port.ErrNoArchive) {
+						l.Info("no archive", "source", source.ID, "url", source.URL, "err", err)
+						continue
+					}
+
+					if err != nil {
+						l.Error("read source", "source", source.ID, "url", source.URL, "err", err)
+						continue
+					}
+
+					for p := range posts {
+						p.SourceID = source.ID
+						p.Lang = cmp.Or(normalizeLang(p.Lang), source.Lang)
+
+						select {
+						case out <- p:
+						case <-ctx.Done():
+							return
+						}
+					}
+				}
+			}()
+
+			return out
+		}).
+		Stream(ctx, l, sources)
 }
 
 // Closing every input ends each plugin's stream, which ends the merge and so Run. The backfill channel is never closed, so ctx ends it.
