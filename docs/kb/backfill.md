@@ -9,23 +9,23 @@ A feed shows only a source's newest posts. Backfill reads a source's history onc
 
 ## Current state
 
-- [port/fetcher.go](../../internal/core/port/fetcher.go) defines `Backfiller`, which an adapter implements when it can read history.
-- [rss.go](../../internal/adapter/fetcher/rss.go) tries its strategies in order. [wordpress.go](../../internal/adapter/fetcher/wordpress.go) holds the only one so far, the WordPress REST API.
+- [port/fetcher.go](../../internal/core/port/fetcher.go) defines `Backfiller`, a `Fetcher` that can also read a source's history. Both stream raw posts.
+- [rss.go](../../internal/adapter/fetcher/rss.go) backfills through the WordPress REST API in [wordpress.go](../../internal/adapter/fetcher/wordpress.go).
 - [paging.go](../../internal/adapter/fetcher/paging.go) backfills page sources: WordPress, `rel="next"`, URL patterns, then a learned pagination rule.
 - [pages.go](../../internal/adapter/extract/html/pages.go) learns the pagination rule per domain, like the link rule.
 - [ruled.go](../../internal/core/service/source/ruled.go) backfills a domain's page sources when its links or pages rule is saved.
-- [fetch.go](../../internal/core/service/source/fetch.go) builds a backfill plugin per adapter. [sourced.go](../../internal/core/service/source/sourced.go) routes backfills to those plugins.
+- [sourced.go](../../internal/core/service/source/sourced.go) gives every `Backfiller` its own lane and routes backfills to it.
 - [route.go](../../internal/core/service/source/route.go) serves `POST /admin/sources/{id}/backfill`.
 
 ## Design
 
 1. The admin form calls `POST /admin/sources/{id}/backfill` after inserting a source. Approving a proposed source and the Backfill button call it too.
 2. The handler sends an enabled, active source on the backfill channel without blocking. It answers `202`, or `503` when the queue is full.
-3. A backfill route sends the source to its adapter's backfill plugin. An adapter without a strategy logs `no backfill strategy`.
-4. The rss adapter tries its strategies in order and uses the first that supports the site. None means `no archive`, logged at info.
+3. A backfill route sends the source to its adapter's backfill lane. An adapter that is no `Backfiller` logs `no backfill strategy`.
+4. The rss adapter reads the WordPress REST API. A site without one means `no archive`, logged at info.
 5. The WordPress strategy runs only for the site root or its main feed, since `wp/v2/posts` lists every post on the site. It finds the REST API through the `Link` header or `<link>` tag, with the shared pacer. A failed detection, such as a closed API answering 401 or 404, counts as no API.
 6. It pages through `wp/v2/posts`, 20 posts per request, newest first, and sends each post as soon as it is read. Each post takes the language of the page or feed the API was found on.
-7. Each post runs through the adapter's own `Filter`, `FetchPost` and `ProcessFeed`. Stored posts are skipped, and every article page is fetched through the pacer.
+7. The adapter skips stored posts, fetches every article page through the pacer and streams each post.
 
 **Page sources**
 
