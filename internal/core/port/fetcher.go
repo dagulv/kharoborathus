@@ -25,3 +25,8 @@ type Backfiller interface {
 type Prober interface {
 	Probe(ctx context.Context, url string) (domain.Listing, error)
 }
+
+// PageFetcher fetches one html page through the host's pacer. finalURL is the url after redirects.
+type PageFetcher interface {
+	Page(ctx context.Context, l *slog.Logger, url string) (page []byte, finalURL string, err error)
+}

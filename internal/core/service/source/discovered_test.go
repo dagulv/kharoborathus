@@ -2,6 +2,8 @@ package source
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,8 +13,31 @@ import (
 	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
-	"github.com/dagulv/kharoborathus/internal/lib/pace"
 )
+
+// Plain requests, since the safe client refuses the test server's loopback address.
+type plainPages struct{}
+
+func (plainPages) Page(ctx context.Context, _ *slog.Logger, url string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("status %s", res.Status)
+	}
+
+	page, err := io.ReadAll(res.Body)
+
+	return page, res.Request.URL.String(), err
+}
 
 type discoveredExtractor struct {
 	fakeExtractor
@@ -52,7 +77,7 @@ func discoveredSetup(t *testing.T) discoveredFixture {
 	}
 
 	store := postgres.NewDiscoveredStore(db)
-	f.d = Discovered{Service: s, Store: &store, Client: &http.Client{}, Pacer: pace.New(0), Calls: slog.New(slog.DiscardHandler)}
+	f.d = Discovered{Service: s, Store: &store, Pages: plainPages{}, Calls: slog.New(slog.DiscardHandler)}
 
 	return f
 }
