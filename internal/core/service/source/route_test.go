@@ -2,10 +2,10 @@ package source
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -14,58 +14,38 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/dbtest"
 )
 
+type fakeProber struct {
+	listing domain.Listing
+	err     error
+}
+
+func (f fakeProber) Probe(context.Context, string) (domain.Listing, error) {
+	return f.listing, f.err
+}
+
 func TestListingRoute(t *testing.T) {
-	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/feed.xml" {
-			w.Header().Set("Content-Type", "application/rss+xml")
-			w.Write([]byte(testFeedOf("Blogg")))
-			return
-		}
-
-		if r.URL.Path == "/wp-json/wp/v2/posts" {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-WP-Total", "420")
-			w.Write([]byte(`[{"id":1}]`))
-			return
-		}
-
-		if r.URL.Path == "/wp" {
-			w.Header().Set("Link", `</wp-json/>; rel="https://api.w.org/"`)
-		}
-
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head></html>`))
-	}))
-	defer site.Close()
-
-	handler := listingRoute(site.Client(), slog.New(slog.DiscardHandler), slog.New(slog.DiscardHandler))
-
-	cases := []struct{ path, want string }{
-		{"/blog", `{"candidates":[{"adapter":"rss","url":"` + site.URL + `/feed.xml","title":"Blogg","items":2,"latest":"2026-09-16T00:00:00Z"},{"adapter":"page","url":"` + site.URL + `/blog"}]}`},
-		{"/wp", `{"candidates":[{"adapter":"rss","url":"` + site.URL + `/feed.xml","title":"Blogg","items":2,"latest":"2026-09-16T00:00:00Z"},{"adapter":"page","url":"` + site.URL + `/wp"}],"wordpress":{"posts":"` + site.URL + `/wp-json/wp/v2/posts","total":420}}`},
-		{"/feed.xml", `{"candidates":[{"adapter":"rss","url":"` + site.URL + `/feed.xml","title":"Blogg","items":2,"latest":"2026-09-16T00:00:00Z"}]}`},
-	}
-
-	for _, c := range cases {
+	get := func(p fakeProber, target string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		handler(rec, httptest.NewRequest(http.MethodGet, "/listing?url="+url.QueryEscape(site.URL+c.path), nil))
+		listingRoute(p, slog.New(slog.DiscardHandler))(rec, httptest.NewRequest(http.MethodGet, target, nil))
 
-		if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != c.want {
-			t.Errorf("%s: %d %s, want %s", c.path, rec.Code, rec.Body, c.want)
-		}
+		return rec
 	}
 
-	rec := httptest.NewRecorder()
-	handler(rec, httptest.NewRequest(http.MethodGet, "/listing?url="+url.QueryEscape("http://127.0.0.1:1/"), nil))
+	listing := domain.Listing{
+		Candidates: []domain.Candidate{{Adapter: "page", URL: "https://a.example/"}},
+		Archive:    &domain.Archive{URL: "https://a.example/wp-json/wp/v2/posts", Total: 420},
+	}
 
-	if rec.Code != http.StatusBadGateway {
+	want := `{"candidates":[{"adapter":"page","url":"https://a.example/"}],"archive":{"url":"https://a.example/wp-json/wp/v2/posts","total":420}}`
+	if rec := get(fakeProber{listing: listing}, "/listing?url=https%3A%2F%2Fa.example%2F"); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
+		t.Errorf("ok: %d %s", rec.Code, rec.Body)
+	}
+
+	if rec := get(fakeProber{err: errors.New("down")}, "/listing?url=https%3A%2F%2Fa.example%2F"); rec.Code != http.StatusBadGateway {
 		t.Errorf("unreachable: %d", rec.Code)
 	}
 
-	rec = httptest.NewRecorder()
-	handler(rec, httptest.NewRequest(http.MethodGet, "/listing", nil))
-
-	if rec.Code != http.StatusBadRequest {
+	if rec := get(fakeProber{}, "/listing"); rec.Code != http.StatusBadRequest {
 		t.Errorf("no url: %d", rec.Code)
 	}
 }
@@ -128,7 +108,7 @@ func TestQueueSource(t *testing.T) {
 func TestRoutesUnderAdmin(t *testing.T) {
 	store := postgres.NewSourceStore(dbtest.New(t))
 	mux := http.NewServeMux()
-	Routes(mux, &store, make(chan domain.Source), make(chan domain.Source), slog.New(slog.DiscardHandler), slog.New(slog.DiscardHandler))
+	Routes(mux, &store, make(chan domain.Source), make(chan domain.Source), fakeProber{}, slog.New(slog.DiscardHandler))
 
 	cases := []struct {
 		method, path string

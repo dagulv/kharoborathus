@@ -1,8 +1,10 @@
-package source
+package fetcher
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -136,5 +138,59 @@ func TestDiscoverNeitherPageNorFeed(t *testing.T) {
 
 	if _, err := discover(context.Background(), srv.Client(), srv.URL+"/"); err == nil {
 		t.Error("no error")
+	}
+}
+
+func TestProbe(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/feed.xml" {
+			w.Header().Set("Content-Type", "application/rss+xml")
+			w.Write([]byte(testFeedOf("Blogg")))
+			return
+		}
+
+		if r.URL.Path == "/wp-json/wp/v2/posts" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-WP-Total", "420")
+			w.Write([]byte(`[{"id":1}]`))
+			return
+		}
+
+		w.Header().Set("Link", `</wp-json/>; rel="https://api.w.org/"`)
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head></html>`))
+	}))
+	defer site.Close()
+
+	discard := slog.New(slog.DiscardHandler)
+	p := Prober{client: site.Client(), l: discard, calls: discard}
+
+	feed := `{"adapter":"rss","url":"` + site.URL + `/feed.xml","title":"Blogg","items":2,"latest":"2026-09-16T00:00:00Z"}`
+
+	cases := []struct{ path, want string }{
+		{"/", `{"candidates":[` + feed + `,{"adapter":"page","url":"` + site.URL + `/"}],"archive":{"url":"` + site.URL + `/wp-json/wp/v2/posts","total":420}}`},
+		// A section is never backfilled from the site's API, so it shows no archive.
+		{"/blog", `{"candidates":[` + feed + `,{"adapter":"page","url":"` + site.URL + `/blog"}]}`},
+		{"/feed.xml", `{"candidates":[` + feed + `]}`},
+	}
+
+	for _, c := range cases {
+		listing, err := p.Probe(context.Background(), site.URL+c.path)
+		if err != nil {
+			t.Fatalf("%s: %v", c.path, err)
+		}
+
+		got, err := json.Marshal(listing)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if string(got) != c.want {
+			t.Errorf("%s: %s, want %s", c.path, got, c.want)
+		}
+	}
+
+	if _, err := p.Probe(context.Background(), "http://127.0.0.1:1/"); err == nil {
+		t.Error("unreachable site probed")
 	}
 }

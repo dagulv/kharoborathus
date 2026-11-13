@@ -167,4 +167,3 @@ func TestRouteStopsOnContext(t *testing.T) {
 		t.Error("input left open")
 	}
 }
-
