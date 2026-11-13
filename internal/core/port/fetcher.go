@@ -21,3 +21,7 @@ type Backfiller interface {
 	Fetcher
 	Backfill(ctx context.Context, l *slog.Logger, url string) (<-chan domain.RawPost, error)
 }
+
+type Prober interface {
+	Probe(ctx context.Context, url string) (domain.Listing, error)
+}
