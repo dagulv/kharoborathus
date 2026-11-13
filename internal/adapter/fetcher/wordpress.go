@@ -186,9 +186,6 @@ type wordpressPost struct {
 	} `json:"_embedded"`
 }
 
-// archive streams a feed's history. ok is false when the site does not support it.
-type archive func(ctx context.Context, l *slog.Logger, url string) (items <-chan rssDocument, ok bool, err error)
-
 func (r rss) wordpress(ctx context.Context, l *slog.Logger, url string) (<-chan rssDocument, bool, error) {
 	return wordpressArchive(ctx, logs.Client(r.client, l, "wordpress"), r.pacer, l, url)
 }

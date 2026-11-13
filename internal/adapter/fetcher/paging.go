@@ -16,14 +16,12 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 )
 
-var _ port.Backfiller[pageDocument] = page{}
-
 // pager gives the url of listing page n, the page after cur. "" ends the run.
 type pager func(ctx context.Context, l *slog.Logger, d domain.Domain, cur string, body []byte, n int) (string, error)
 
-// Backfill reads a listing's older pages with plain requests, no browser. Each page's article links
+// history reads a listing's older pages with plain requests, no browser. Each page's article links
 // come from the domain's links rule, so a domain without one has no archive yet.
-func (r page) Backfill(ctx context.Context, l *slog.Logger, rawURL string) (<-chan pageDocument, error) {
+func (r page) history(ctx context.Context, l *slog.Logger, rawURL string) (<-chan pageDocument, error) {
 	wp, ok, err := wordpressArchive(ctx, logs.Client(r.client, l, "wordpress"), r.pacer, l, rawURL)
 	if err != nil {
 		return nil, err

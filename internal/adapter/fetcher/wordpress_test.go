@@ -121,13 +121,12 @@ func TestRSSBackfillWordPress(t *testing.T) {
 
 	gap := 50 * time.Millisecond
 	r := rss{client: srv.Client(), pacer: pace.New(gap), l: l}
-	r.archives = []archive{r.wordpress}
 
 	start := time.Now()
 
-	docs, err := r.Backfill(context.Background(), l, srv.URL+"/feed")
-	if err != nil {
-		t.Fatal(err)
+	docs, ok, err := r.wordpress(context.Background(), l, srv.URL+"/feed")
+	if err != nil || !ok {
+		t.Fatalf("ok %v, err %v", ok, err)
 	}
 
 	var got []rssDocument
@@ -160,43 +159,11 @@ func TestRSSBackfillWordPress(t *testing.T) {
 	}
 }
 
-func TestRSSBackfillOrder(t *testing.T) {
-	l := slog.New(slog.DiscardHandler)
-
-	found := make(chan rssDocument, 1)
-	found <- rssDocument{URL: "x"}
-	close(found)
-
-	r := rss{l: l, archives: []archive{
-		func(context.Context, *slog.Logger, string) (<-chan rssDocument, bool, error) { return nil, false, nil },
-		func(context.Context, *slog.Logger, string) (<-chan rssDocument, bool, error) { return found, true, nil },
-		func(context.Context, *slog.Logger, string) (<-chan rssDocument, bool, error) {
-			t.Error("tried a strategy after one was found")
-			return nil, false, nil
-		},
-	}}
-
-	docs, err := r.Backfill(context.Background(), l, "https://a.example/feed")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var got []string
-	for doc := range docs {
-		got = append(got, doc.URL)
-	}
-
-	if !slices.Equal(got, []string{"x"}) {
-		t.Errorf("got %v", got)
-	}
-}
-
 func TestRSSBackfillNone(t *testing.T) {
 	srv := wordpressServer(t, "/wp-json/")
 	l := slog.New(slog.DiscardHandler)
 
 	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond), l: l}
-	r.archives = []archive{r.wordpress}
 
 	if _, err := r.Backfill(context.Background(), l, srv.URL+"/plain"); !errors.Is(err, port.ErrNoArchive) {
 		t.Errorf("err %v, want ErrNoArchive", err)
@@ -208,7 +175,6 @@ func TestRSSBackfillCategoryFeed(t *testing.T) {
 	l := slog.New(slog.DiscardHandler)
 
 	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond), l: l}
-	r.archives = []archive{r.wordpress}
 
 	// The API lists every post on the site, not only the category's.
 	if _, err := r.Backfill(context.Background(), l, srv.URL+"/category/x/feed"); !errors.Is(err, port.ErrNoArchive) {
