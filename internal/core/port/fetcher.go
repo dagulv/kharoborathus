@@ -8,16 +8,16 @@ import (
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 )
 
-type Fetcher[T any] interface {
-	FetchFeed(ctx context.Context, l *slog.Logger, url string) (<-chan T, error)
-	Filter(ctx context.Context, data T) (bool, error)
-	FetchPost(ctx context.Context, l *slog.Logger, data T) (T, error)
-	ProcessFeed(ctx context.Context, data T) (domain.RawPost, error)
+// A source adapter. It skips posts already stored and sends each post once its article is fetched.
+// l takes the third-party request logs.
+type Fetcher interface {
+	Fetch(ctx context.Context, l *slog.Logger, url string) (<-chan domain.RawPost, error)
 }
 
 var ErrNoArchive = errors.New("no archive")
 
-// An adapter that can read a source's history. Items run through the adapter's Filter, FetchPost and ProcessFeed.
-type Backfiller[T any] interface {
-	Backfill(ctx context.Context, l *slog.Logger, url string) (<-chan T, error)
+// A Fetcher that can also read a source's history. ErrNoArchive when it finds none.
+type Backfiller interface {
+	Fetcher
+	Backfill(ctx context.Context, l *slog.Logger, url string) (<-chan domain.RawPost, error)
 }
