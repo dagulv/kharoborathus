@@ -5,7 +5,7 @@
 	const { url, listing, rate, lang } = createSource.fields;
 
 	let candidates = $state<ListingCandidate[] | null>(null);
-	let wordpress = $state<SourceCheck['wordpress']>();
+	let archive = $state<SourceCheck['archive']>();
 	let checkedURL = $state('');
 	let checking = $state(false);
 	let checkError = $state('');
@@ -25,7 +25,7 @@
 		candidates = null;
 
 		try {
-			({ candidates, wordpress } = await checkSource(value));
+			({ candidates, archive } = await checkSource(value));
 			checkedURL = value;
 			listing.set(key(candidates[0]));
 		} catch (err) {
@@ -100,10 +100,9 @@
 				<span class="block text-sm text-red-600">{issue.message}</span>
 			{/each}
 		</fieldset>
-		{#if wordpress}
+		{#if archive}
 			<p class="text-sm text-zinc-600">
-				WordPress site. All {wordpress.total} posts are backfilled through its REST API once the source
-				is scraped.
+				All {archive.total} posts in the site's archive are backfilled when the source is added.
 			</p>
 		{/if}
 	{/if}

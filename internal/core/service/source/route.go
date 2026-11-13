@@ -1,43 +1,32 @@
 package source
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"time"
 
-	fetchers "github.com/dagulv/kharoborathus/internal/adapter/fetcher"
 	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
-	"github.com/dagulv/kharoborathus/internal/lib/logs"
-	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/jackc/pgx/v5"
 )
 
 const (
-	SyncQueue       = 16
-	BackfillQueue   = 16
-	RuledQueue      = 16
-	discoverTimeout = time.Minute
-	homepageTimeout = 20 * time.Second
+	SyncQueue     = 16
+	BackfillQueue = 16
+	RuledQueue    = 16
 )
 
-type listing struct {
-	Candidates []Candidate         `json:"candidates"`
-	WordPress  *fetchers.WordPress `json:"wordpress,omitempty"`
-}
-
 // The admin group. main guards /admin/ with the session middleware.
-func Routes(mux *http.ServeMux, s *postgres.SourceStore, syncs, backfills chan<- domain.Source, l, calls *slog.Logger) {
+func Routes(mux *http.ServeMux, s *postgres.SourceStore, syncs, backfills chan<- domain.Source, prober port.Prober, l *slog.Logger) {
 	mux.HandleFunc("POST /admin/sources/{id}/sync", queueSource(s, syncs, "sync", l))
 	mux.HandleFunc("POST /admin/sources/{id}/backfill", queueSource(s, backfills, "backfill", l))
-	mux.HandleFunc("GET /admin/listing", listingRoute(safehttp.NewClient(homepageTimeout), l, calls))
+	mux.HandleFunc("GET /admin/listing", listingRoute(prober, l))
 }
 
 // listingRoute lists what the admin can add a url as, best first.
-func listingRoute(client *http.Client, l, calls *slog.Logger) http.HandlerFunc {
+func listingRoute(prober port.Prober, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u := r.URL.Query().Get("url")
 		if u == "" {
@@ -45,33 +34,15 @@ func listingRoute(client *http.Client, l, calls *slog.Logger) http.HandlerFunc {
 			return
 		}
 
-		// Probing can take several requests, and the admin waits for all of them.
-		ctx, cancel := context.WithTimeout(r.Context(), discoverTimeout)
-		defer cancel()
-
-		c := logs.Client(client, calls.With("url", u), "homepage")
-
-		candidates, err := discover(ctx, c, u)
+		listing, err := prober.Probe(r.Context(), u)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 
-		out := listing{Candidates: candidates}
-
-		// Informs the admin only. The backfill checks the chosen listing itself once the source is scraped.
-		wp, err := fetchers.FindWordPress(ctx, c, nil, u)
-		if err != nil {
-			l.Warn("find wordpress", "url", u, "err", err)
-		}
-
-		if wp.Posts != "" {
-			out.WordPress = &wp
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 
-		if err := json.NewEncoder(w).Encode(out); err != nil {
+		if err := json.NewEncoder(w).Encode(listing); err != nil {
 			l.Error("write listing", "url", u, "err", err)
 		}
 	}

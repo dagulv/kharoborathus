@@ -142,7 +142,7 @@ func app(ctx context.Context) (err error) {
 
 	// The port is public, so every admin route sits behind a session the web app forwards.
 	adminMux := http.NewServeMux()
-	source.Routes(adminMux, &sourceStore, syncs, backfills, l.WithGroup("source"), calls)
+	source.Routes(adminMux, &sourceStore, syncs, backfills, fetcher.NewProber(l.WithGroup("probe"), calls), l.WithGroup("source"))
 	mux.Handle("/admin/", auth.RequireSession(&sessionStore, l.WithGroup("auth"), adminMux))
 
 	// No WriteTimeout: /admin/listing probes a site for up to a minute before it answers.
