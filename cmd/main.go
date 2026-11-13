@@ -195,7 +195,7 @@ func app(ctx context.Context) (err error) {
 
 	// The port is public, so every admin route but login sits behind the session cookie.
 	protected := http.NewServeMux()
-	source.Routes(protected, &sourceStore, syncs, backfills, l.WithGroup("source"), calls)
+	source.Routes(protected, &sourceStore, syncs, backfills, fetcher.NewProber(l.WithGroup("probe"), calls), l.WithGroup("source"))
 	admin.Routes(protected, admin.Stores{Stats: &statsStore, Sources: &sourceStore, Posts: &postStore, Tags: &tagStore, Logs: &logStore}, l.WithGroup("admin"))
 
 	adminMux := http.NewServeMux()
