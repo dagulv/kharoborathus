@@ -21,6 +21,7 @@ import (
 	adapter "github.com/dagulv/kharoborathus/internal/adapter/robot"
 	discovery "github.com/dagulv/kharoborathus/internal/adapter/search"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/core/service/admin"
 	"github.com/dagulv/kharoborathus/internal/core/service/auth"
 	"github.com/dagulv/kharoborathus/internal/core/service/enrich"
@@ -154,9 +155,9 @@ func app(ctx context.Context) (err error) {
 		classifier = nil
 	}
 
-	fetchers := map[string]source.Fetcher{
-		"rss":  source.NewFetcher(fetcher.NewRSS(&rawPostStore, pacer, l), calls),
-		"page": source.NewFetcher(fetcher.NewPage(&rawPostStore, &domainStore, extractor, pacer, l), calls),
+	fetchers := map[string]port.Fetcher{
+		"rss":  fetcher.NewRSS(&rawPostStore, pacer, l),
+		"page": fetcher.NewPage(&rawPostStore, &domainStore, extractor, pacer, l),
 	}
 
 	resultFilter := discovery.NewResultFilter(classifier)
@@ -235,7 +236,7 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
-		return source.Run(ctx, &sourceService, fetchers, backfills, l.WithGroup("sourced"))
+		return source.Run(ctx, &sourceService, fetchers, backfills, l.WithGroup("sourced"), calls)
 	})
 
 	g.Go(func() error {

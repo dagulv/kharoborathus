@@ -97,7 +97,7 @@ func backfillPage(t *testing.T, srv *httptest.Server, linker Linker, path string
 	l := slog.New(slog.DiscardHandler)
 	r := page{client: srv.Client(), pacer: pace.New(time.Millisecond), domains: fakeDomains{}, linker: linker, l: l}
 
-	docs, err := r.Backfill(context.Background(), l, srv.URL+path)
+	docs, err := r.history(context.Background(), l, srv.URL+path)
 	if err != nil {
 		return nil, err
 	}
@@ -203,11 +203,11 @@ func TestPageBackfillWordPress(t *testing.T) {
 	r := page{client: srv.Client(), pacer: pace.New(time.Millisecond), domains: fakeDomains{}, linker: fakeLinker{}, l: l}
 
 	// A section like /blog/ may be one category of the site, so only the site root reads the whole API.
-	if _, err := r.Backfill(context.Background(), l, srv.URL+"/blog/"); !errors.Is(err, port.ErrNoArchive) {
+	if _, err := r.history(context.Background(), l, srv.URL+"/blog/"); !errors.Is(err, port.ErrNoArchive) {
 		t.Errorf("section: err %v, want ErrNoArchive", err)
 	}
 
-	docs, err := r.Backfill(context.Background(), l, srv.URL+"/")
+	docs, err := r.history(context.Background(), l, srv.URL+"/")
 	if err != nil {
 		t.Fatal(err)
 	}
