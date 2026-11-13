@@ -4,11 +4,37 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
+	"time"
+
+	"github.com/dagulv/kharoborathus/internal/core/port"
+	"github.com/dagulv/kharoborathus/internal/lib/logs"
+	"github.com/dagulv/kharoborathus/internal/lib/pace"
+	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 )
 
 const maxPageSize = 5 << 20
+
+var _ port.PageFetcher = Pages{}
+
+type Pages struct {
+	client *http.Client
+	pacer  *pace.Pacer
+}
+
+func NewPages(pacer *pace.Pacer) Pages {
+	return Pages{client: safehttp.NewClient(20 * time.Second), pacer: pacer}
+}
+
+func (p Pages) Page(ctx context.Context, l *slog.Logger, url string) ([]byte, string, error) {
+	if err := p.pacer.Wait(ctx, url); err != nil {
+		return nil, "", err
+	}
+
+	return FetchPage(ctx, logs.Client(p.client, l, "ingest"), url)
+}
 
 const anyAccept = "text/html,application/xhtml+xml,application/rss+xml,application/atom+xml,application/feed+json,application/xml;q=0.9,*/*;q=0.8"
 
