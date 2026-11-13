@@ -27,7 +27,6 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/pace"
-	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/migrations"
 	"golang.org/x/sync/errgroup"
@@ -121,8 +120,7 @@ func app(ctx context.Context) (err error) {
 	discovered := source.Discovered{
 		Service: &sourceService,
 		Store:   &discoveredStore,
-		Client:  safehttp.NewClient(20 * time.Second),
-		Pacer:   pacer,
+		Pages:   fetcher.NewPages(pacer),
 		Calls:   calls,
 	}
 

@@ -5,15 +5,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	fetchers "github.com/dagulv/kharoborathus/internal/adapter/fetcher"
 	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
-	"github.com/dagulv/kharoborathus/internal/lib/logs"
-	"github.com/dagulv/kharoborathus/internal/lib/pace"
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/pipeline"
 )
 
@@ -28,8 +25,7 @@ const (
 type Discovered struct {
 	Service *Service
 	Store   *postgres.DiscoveredStore
-	Client  *http.Client
-	Pacer   *pace.Pacer
+	Pages   port.PageFetcher
 	// Third-party requests, one row each in the logs table.
 	Calls *slog.Logger
 }
@@ -116,11 +112,7 @@ func (d Discovered) rawPost(ctx context.Context, l *slog.Logger, link postgres.D
 		return domain.RawPost{}, domain.StatusFailed, err
 	}
 
-	if err := d.Pacer.Wait(ctx, link.URL); err != nil {
-		return domain.RawPost{}, "", err
-	}
-
-	page, finalURL, err := fetchers.FetchPage(ctx, logs.Client(d.Client, d.Calls.With("discovery_post_id", link.ID), "ingest"), link.URL)
+	page, finalURL, err := d.Pages.Page(ctx, d.Calls.With("discovery_post_id", link.ID), link.URL)
 	if ctx.Err() != nil {
 		return domain.RawPost{}, "", ctx.Err()
 	}
