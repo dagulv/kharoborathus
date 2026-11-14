@@ -1,4 +1,5 @@
 import { redirect } from '@sveltejs/kit';
+import { goto } from '$app/navigation';
 import { PUBLIC_API_URL } from '$app/env/public';
 
 export class ApiError extends Error {
@@ -53,6 +54,8 @@ export async function guard<T>(p: Promise<T>): Promise<T> {
 	}
 }
 
-export function errorMessage(err: unknown, fallback: string) {
+// For actions: a lapsed session sends the admin to the login page, anything else is shown.
+export function actionError(err: unknown, fallback: string) {
+	if (err instanceof ApiError && err.status === 401) goto('/login');
 	return err instanceof ApiError ? err.message : fallback;
 }
