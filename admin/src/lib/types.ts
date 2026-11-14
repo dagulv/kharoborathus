@@ -37,7 +37,7 @@ export type ListingCandidate = {
 
 export type SourceCheck = {
 	candidates: ListingCandidate[];
-	wordpress?: { posts: string; total: number };
+	archive?: { url: string; total: number };
 };
 
 export type PostSummary = {

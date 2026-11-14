@@ -17,7 +17,7 @@
 	let listing = $state('');
 
 	let candidates = $state<ListingCandidate[] | null>(null);
-	let wordpress = $state<SourceCheck['wordpress']>();
+	let archive = $state<SourceCheck['archive']>();
 	let checkedURL = $state('');
 	let checking = $state(false);
 	let checkError = $state('');
@@ -39,7 +39,7 @@
 		candidates = null;
 
 		try {
-			({ candidates, wordpress } = await api<SourceCheck>('/admin/listing', {
+			({ candidates, archive } = await api<SourceCheck>('/admin/listing', {
 				query: { url: value }
 			}));
 			checkedURL = value;
@@ -133,10 +133,9 @@
 						{/each}
 					</RadioGroup.Root>
 				</fieldset>
-				{#if wordpress}
+				{#if archive}
 					<p class="text-sm text-muted-foreground">
-						WordPress site. All {wordpress.total} posts are backfilled through its REST API once the source
-						is scraped.
+						All {archive.total} posts in the site's archive are backfilled when the source is added.
 					</p>
 				{/if}
 			{/if}

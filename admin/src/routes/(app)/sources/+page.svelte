@@ -15,18 +15,25 @@
 
 	const sources = $derived(data.sources);
 
-	const syncState = new SvelteMap<string, 'pending' | 'requested' | 'failed'>();
+	type QueueState = 'pending' | 'requested' | 'failed';
 
-	async function sync(id: string) {
-		syncState.set(id, 'pending');
+	const syncState = new SvelteMap<string, QueueState>();
+	const backfillState = new SvelteMap<string, QueueState>();
+
+	async function queue(
+		id: string,
+		action: 'sync' | 'backfill',
+		state: SvelteMap<string, QueueState>
+	) {
+		state.set(id, 'pending');
 		try {
-			await api(`/admin/sources/${id}/sync`, { method: 'POST' });
-			syncState.set(id, 'requested');
+			await api(`/admin/sources/${id}/${action}`, { method: 'POST' });
+			state.set(id, 'requested');
 		} catch (err) {
-			syncState.set(id, 'failed');
-			toast.error(actionError(err, 'Sync failed'));
+			state.set(id, 'failed');
+			toast.error(actionError(err, `${action === 'sync' ? 'Sync' : 'Backfill'} failed`));
 		}
-		setTimeout(() => syncState.delete(id), 3000);
+		setTimeout(() => state.delete(id), 3000);
 	}
 
 	// A disabled flagged source keeps its flag but has already been reviewed.
@@ -49,6 +56,7 @@
 	}
 
 	const syncLabel = { pending: 'Syncing…', requested: 'Requested', failed: 'Failed' };
+	const backfillLabel = { pending: 'Backfilling…', requested: 'Requested', failed: 'Failed' };
 </script>
 
 <svelte:head><title>Sources · Admin</title></svelte:head>
@@ -166,15 +174,27 @@
 					<Table.Cell class="text-right">
 						{#if !source.deletedAt && source.enabled && source.status === 'active'}
 							{@const status = syncState.get(source.id)}
-							<Button
-								variant={status === 'failed' ? 'destructive' : 'outline'}
-								size="xs"
-								onclick={() => sync(source.id)}
-								disabled={status === 'pending'}
-								title="Run the pipeline now and restart the {source.rate}m wait"
-							>
-								{status ? syncLabel[status] : 'Sync'}
-							</Button>
+							{@const backfillStatus = backfillState.get(source.id)}
+							<div class="flex justify-end gap-1">
+								<Button
+									variant={status === 'failed' ? 'destructive' : 'outline'}
+									size="xs"
+									onclick={() => queue(source.id, 'sync', syncState)}
+									disabled={status === 'pending'}
+									title="Run the pipeline now and restart the {source.rate}m wait"
+								>
+									{status ? syncLabel[status] : 'Sync'}
+								</Button>
+								<Button
+									variant={backfillStatus === 'failed' ? 'destructive' : 'outline'}
+									size="xs"
+									onclick={() => queue(source.id, 'backfill', backfillState)}
+									disabled={backfillStatus === 'pending'}
+									title="Read the source's history, skipping stored posts"
+								>
+									{backfillStatus ? backfillLabel[backfillStatus] : 'Backfill'}
+								</Button>
+							</div>
 						{/if}
 					</Table.Cell>
 				</Table.Row>
