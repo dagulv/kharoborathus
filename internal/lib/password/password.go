@@ -22,9 +22,7 @@ const (
 
 func Hash(pw string) (string, error) {
 	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return "", fmt.Errorf("err read salt: %w", err)
-	}
+	rand.Read(salt)
 
 	key, err := scrypt.Key([]byte(pw), salt, n, r, p, keyLen)
 	if err != nil {

@@ -26,6 +26,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/core/service/posts"
 	"github.com/dagulv/kharoborathus/internal/core/service/source"
 	"github.com/dagulv/kharoborathus/internal/lib/config"
+	"github.com/dagulv/kharoborathus/internal/lib/cors"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/pace"
@@ -86,9 +87,7 @@ func addUser(ctx context.Context) error {
 
 	// Login has no rate limit, so the password is generated rather than chosen.
 	b := make([]byte, 24)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Errorf("err generate password: %w", err)
-	}
+	rand.Read(b)
 
 	pw := base64.RawURLEncoding.EncodeToString(b)
 
@@ -129,6 +128,7 @@ func app(ctx context.Context) (err error) {
 	postStore := postgres.NewPostStore(db)
 	tagStore := postgres.NewTagStore(db)
 	sessionStore := postgres.NewSessionStore(db)
+	userStore := postgres.NewUserStore(db)
 	discoveryStore := discovery.NewStore(db)
 	discoveredStore := postgres.NewDiscoveredStore(db)
 
@@ -186,10 +186,14 @@ func app(ctx context.Context) (err error) {
 	mux := http.NewServeMux()
 	posts.Routes(mux, &postStore, l.WithGroup("posts"))
 
-	// The port is public, so every admin route sits behind a session the web app forwards.
+	// The port is public, so every admin route but login sits behind the session cookie.
+	protected := http.NewServeMux()
+	source.Routes(protected, &sourceStore, syncs, l.WithGroup("source"), calls)
+
 	adminMux := http.NewServeMux()
-	source.Routes(adminMux, &sourceStore, syncs, l.WithGroup("source"), calls)
-	mux.Handle("/admin/", auth.RequireSession(&sessionStore, l.WithGroup("auth"), adminMux))
+	auth.Routes(adminMux, protected, &userStore, &sessionStore, l.WithGroup("auth"))
+	adminMux.Handle("/admin/", auth.RequireSession(&sessionStore, l.WithGroup("auth"), protected))
+	mux.Handle("/admin/", cors.Allow(env.AdminOrigins, auth.RequireJSON(adminMux)))
 
 	// No WriteTimeout: /admin/listing probes a site for up to a minute before it answers.
 	server := &http.Server{
