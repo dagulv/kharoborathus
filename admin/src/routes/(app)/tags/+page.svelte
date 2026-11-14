@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
-	import { api, errorMessage } from '$lib/api.js';
+	import { api, actionError } from '$lib/api.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
@@ -28,7 +28,7 @@
 			to = '';
 			await invalidate('app:tags');
 		} catch (err) {
-			mergeError = errorMessage(err, 'Merge failed');
+			mergeError = actionError(err, 'Merge failed');
 		}
 	}
 
@@ -36,7 +36,7 @@
 		try {
 			await api(`/admin/tags/${encodeURIComponent(key)}`, { method: 'PATCH', body: { enabled } });
 		} catch (err) {
-			toast.error(errorMessage(err, 'Update failed'));
+			toast.error(actionError(err, 'Update failed'));
 		}
 		await invalidate('app:tags');
 	}
