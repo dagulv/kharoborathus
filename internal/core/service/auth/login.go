@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -33,14 +34,36 @@ func Routes(public, protected *http.ServeMux, users Users, sessions LoginSession
 		panic(err)
 	}
 
-	public.HandleFunc("POST /admin/login", login(users, sessions, dummyHash, l))
+	verify := limitVerify(verifySlots, password.Verify)
+
+	public.HandleFunc("POST /admin/login", login(users, sessions, verify, dummyHash, l))
 	protected.HandleFunc("POST /admin/logout", logout(sessions, l))
 	protected.HandleFunc("GET /admin/session", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
 
-func login(users Users, sessions LoginSessions, dummyHash string, l *slog.Logger) http.HandlerFunc {
+// Each scrypt verify allocates 16 MiB and login is open to anyone, so only a few run at once.
+const verifySlots = 4
+
+type verifyFunc func(ctx context.Context, pw, stored string) (bool, error)
+
+func limitVerify(n int, verify func(pw, stored string) (bool, error)) verifyFunc {
+	slots := make(chan struct{}, n)
+
+	return func(ctx context.Context, pw, stored string) (bool, error) {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return false, fmt.Errorf("err wait for verify: %w", ctx.Err())
+		}
+		defer func() { <-slots }()
+
+		return verify(pw, stored)
+	}
+}
+
+func login(users Users, sessions LoginSessions, verify verifyFunc, dummyHash string, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Email    string `json:"email"`
@@ -64,7 +87,7 @@ func login(users Users, sessions LoginSessions, dummyHash string, l *slog.Logger
 			stored = dummyHash
 		}
 
-		valid, err := password.Verify(body.Password, stored)
+		valid, err := verify(r.Context(), body.Password, stored)
 		if err != nil {
 			l.Error("verify password", "user", user.ID, "err", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
