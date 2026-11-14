@@ -8,11 +8,12 @@ import (
 	"testing"
 
 	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
+	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/dbtest"
 )
 
-func newMux(t *testing.T) (*http.ServeMux, *database.Database) {
+func newMux(t *testing.T) (*http.ServeMux, *database.Database, chan domain.Source) {
 	t.Helper()
 
 	db := dbtest.New(t)
@@ -22,10 +23,12 @@ func newMux(t *testing.T) (*http.ServeMux, *database.Database) {
 	tags := postgres.NewTagStore(db)
 	logs := postgres.NewLogStore(db)
 
-	mux := http.NewServeMux()
-	Routes(mux, Stores{Stats: &stats, Sources: &sources, Posts: &posts, Tags: &tags, Logs: &logs}, slog.New(slog.DiscardHandler))
+	backfills := make(chan domain.Source, 4)
 
-	return mux, db
+	mux := http.NewServeMux()
+	Routes(mux, backfills, Stores{Stats: &stats, Sources: &sources, Posts: &posts, Tags: &tags, Logs: &logs}, slog.New(slog.DiscardHandler))
+
+	return mux, db, backfills
 }
 
 func do(mux http.Handler, method, path, body string) *httptest.ResponseRecorder {

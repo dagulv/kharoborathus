@@ -9,7 +9,7 @@ import (
 )
 
 func TestPostRoutes(t *testing.T) {
-	mux, _ := newMux(t)
+	mux, _, _ := newMux(t)
 
 	cases := []struct {
 		path string

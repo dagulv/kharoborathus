@@ -78,7 +78,22 @@ func validateNewSource(in domain.NewSource) string {
 	return ""
 }
 
-func createSource(s *postgres.SourceStore, l *slog.Logger) http.HandlerFunc {
+// The source is saved either way. The Backfill button covers a backfill that could not be queued.
+func queueBackfill(r *http.Request, s *postgres.SourceStore, backfills chan<- domain.Source, id string, l *slog.Logger) {
+	source, err := s.GetSource(r.Context(), id)
+	if err != nil {
+		l.Error("queue backfill", "source", id, "err", err)
+		return
+	}
+
+	select {
+	case backfills <- source:
+	default:
+		l.Warn("backfill queue full", "source", id)
+	}
+}
+
+func createSource(s *postgres.SourceStore, backfills chan<- domain.Source, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in domain.NewSource
 		if err := readJSON(w, r, &in); err != nil {
@@ -93,7 +108,7 @@ func createSource(s *postgres.SourceStore, l *slog.Logger) http.HandlerFunc {
 			return
 		}
 
-		err := s.CreateSource(r.Context(), in)
+		id, err := s.CreateSource(r.Context(), in)
 		if errors.Is(err, domain.ErrSourceExists) {
 			http.Error(w, "A source with this feed or page already exists", http.StatusConflict)
 			return
@@ -104,11 +119,13 @@ func createSource(s *postgres.SourceStore, l *slog.Logger) http.HandlerFunc {
 			return
 		}
 
+		queueBackfill(r, s, backfills, id, l)
+
 		w.WriteHeader(http.StatusCreated)
 	}
 }
 
-func reviewSource(s *postgres.SourceStore, l *slog.Logger) http.HandlerFunc {
+func reviewSource(s *postgres.SourceStore, backfills chan<- domain.Source, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Enabled bool `json:"enabled"`
@@ -119,7 +136,7 @@ func reviewSource(s *postgres.SourceStore, l *slog.Logger) http.HandlerFunc {
 			return
 		}
 
-		err := s.ReviewSource(r.Context(), r.PathValue("id"), in.Enabled)
+		was, err := s.ReviewSource(r.Context(), r.PathValue("id"), in.Enabled)
 		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "Source not found", http.StatusNotFound)
 			return
@@ -128,6 +145,11 @@ func reviewSource(s *postgres.SourceStore, l *slog.Logger) http.HandlerFunc {
 		if err != nil {
 			serverError(w, l, "review source", err)
 			return
+		}
+
+		// Approving a proposed source is its first scrape, so it backfills.
+		if in.Enabled && was == domain.StatusProposed {
+			queueBackfill(r, s, backfills, r.PathValue("id"), l)
 		}
 
 		w.WriteHeader(http.StatusNoContent)

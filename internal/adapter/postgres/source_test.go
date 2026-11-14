@@ -53,7 +53,8 @@ func TestCreateSource(t *testing.T) {
 
 	in := domain.NewSource{URL: "https://www.Example.com/news", Adapter: "rss", ListingURL: "https://example.com/feed", Rate: 15, Lang: "sv"}
 
-	if err := s.CreateSource(ctx, in); err != nil {
+	id, err := s.CreateSource(ctx, in)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,8 +62,8 @@ func TestCreateSource(t *testing.T) {
 	var enabled bool
 	var rate int
 	if err := db.QueryRow(ctx, `
-		SELECT d.base_url, s.adapter, s.enabled, s.rate, s.lang FROM sources s JOIN domains d ON d.id = s.domain_id WHERE s.url = $1
-		`, in.ListingURL).Scan(&base, &adapter, &enabled, &rate, &lang); err != nil {
+		SELECT d.base_url, s.adapter, s.enabled, s.rate, s.lang FROM sources s JOIN domains d ON d.id = s.domain_id WHERE s.id = $1
+		`, id).Scan(&base, &adapter, &enabled, &rate, &lang); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,7 +71,7 @@ func TestCreateSource(t *testing.T) {
 		t.Errorf("got %s %s %v %d %s", base, adapter, enabled, rate, lang)
 	}
 
-	if err := s.CreateSource(ctx, in); !errors.Is(err, domain.ErrSourceExists) {
+	if _, err := s.CreateSource(ctx, in); !errors.Is(err, domain.ErrSourceExists) {
 		t.Errorf("duplicate: %v", err)
 	}
 
@@ -78,8 +79,8 @@ func TestCreateSource(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.CreateSource(ctx, in); err != nil {
-		t.Errorf("after delete: %v", err)
+	if again, err := s.CreateSource(ctx, in); err != nil || again == id {
+		t.Errorf("after delete: %s, %v", again, err)
 	}
 }
 
@@ -90,23 +91,32 @@ func TestReviewSource(t *testing.T) {
 
 	_, keep := seedSource(t, db, "https://a.example", "https://a.example/feed")
 	_, disable := seedSource(t, db, "https://a.example", "https://a.example/other")
+	_, approve := seedSource(t, db, "https://a.example", "https://a.example/proposed")
 
 	if _, err := db.Exec(ctx, `UPDATE sources SET enabled = true, status = 'flagged'`); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := s.ReviewSource(ctx, keep, true); err != nil {
+	if _, err := db.Exec(ctx, `UPDATE sources SET enabled = false, status = 'proposed' WHERE id = $1`, approve); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := s.ReviewSource(ctx, disable, false); err != nil {
-		t.Fatal(err)
+	if was, err := s.ReviewSource(ctx, keep, true); err != nil || was != domain.StatusFlagged {
+		t.Fatalf("keep: %s, %v", was, err)
+	}
+
+	if was, err := s.ReviewSource(ctx, disable, false); err != nil || was != domain.StatusFlagged {
+		t.Fatalf("disable: %s, %v", was, err)
+	}
+
+	if was, err := s.ReviewSource(ctx, approve, true); err != nil || was != domain.StatusProposed {
+		t.Fatalf("approve: %s, %v", was, err)
 	}
 
 	for id, want := range map[string]struct {
 		status  string
 		enabled bool
-	}{keep: {"active", true}, disable: {"flagged", false}} {
+	}{keep: {"active", true}, disable: {"flagged", false}, approve: {"active", true}} {
 		var status string
 		var enabled bool
 		if err := db.QueryRow(ctx, `SELECT status, enabled FROM sources WHERE id = $1`, id).Scan(&status, &enabled); err != nil {
@@ -119,7 +129,7 @@ func TestReviewSource(t *testing.T) {
 	}
 
 	for _, id := range []string{"00000000-0000-0000-0000-000000000000", "nope"} {
-		if err := s.ReviewSource(ctx, id, true); !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := s.ReviewSource(ctx, id, true); !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("%s: %v", id, err)
 		}
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 func TestTagRoutes(t *testing.T) {
-	mux, db := newMux(t)
+	mux, db, _ := newMux(t)
 
 	if _, err := db.Exec(context.Background(), `INSERT INTO tags (key) VALUES ('a'), ('b')`); err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func TestTagRoutes(t *testing.T) {
 }
 
 func TestTagRoutesEscapedKey(t *testing.T) {
-	mux, db := newMux(t)
+	mux, db, _ := newMux(t)
 	ctx := context.Background()
 
 	if _, err := db.Exec(ctx, `INSERT INTO tags (key) VALUES ('a/b'), ('a b'), ('a')`); err != nil {
