@@ -36,10 +36,11 @@ export async function api<T>(path: string, opts: Options = {}): Promise<T> {
 		body: write ? JSON.stringify(body ?? {}) : undefined
 	});
 
-	if (!res.ok) throw new ApiError(res.status, (await res.text()).trim() || res.statusText);
-	if (res.status === 204 || res.status === 201) return undefined as T;
+	const text = await res.text();
+	if (!res.ok) throw new ApiError(res.status, text.trim() || res.statusText);
 
-	return res.json();
+	// Writes answer 201, 202 or 204 with no body.
+	return (text ? JSON.parse(text) : undefined) as T;
 }
 
 // For load functions: a lapsed session sends the admin to the login page.
