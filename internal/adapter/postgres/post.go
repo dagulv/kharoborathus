@@ -208,3 +208,99 @@ func scanPost(row pgx.Row) (p domain.Post, err error) {
 
 	return
 }
+
+const adminPageSize = 50
+
+// Unlike ListPosts, the admin sees every tag on a post, proposed and disabled ones included.
+func (s *PostStore) ListAdminPosts(ctx context.Context, f domain.AdminPostFilter) (domain.PostPage, error) {
+	page := domain.PostPage{Posts: []domain.Post{}, Page: f.Page, PageSize: adminPageSize}
+	args := []any{}
+	conds := []string{"true"}
+
+	if f.SourceID != "" {
+		args = append(args, f.SourceID)
+		conds = append(conds, fmt.Sprintf(`p.source_id = $%d`, len(args)))
+	}
+
+	if f.Tag != "" {
+		args = append(args, f.Tag)
+		conds = append(conds, fmt.Sprintf(`p.tags @> ARRAY[$%d]::text[]`, len(args)))
+	}
+
+	if f.Search != "" {
+		args = append(args, f.Search)
+		conds = append(conds, fmt.Sprintf(`(
+			(p.lang = 'sv' AND p.ts @@ websearch_to_tsquery('ts_swedish', $%[1]d))
+			OR (p.lang = 'en' AND p.ts @@ websearch_to_tsquery('english', $%[1]d))
+			OR (p.lang NOT IN ('sv', 'en') AND p.ts @@ websearch_to_tsquery('simple', $%[1]d))
+			OR p.tags && ARRAY(
+				SELECT t.key
+				FROM tag_terms t
+				WHERE to_tsvector(
+					CASE t.lang
+						WHEN 'sv' THEN 'ts_swedish'::regconfig
+						WHEN 'en' THEN 'english'::regconfig
+						ELSE 'simple'::regconfig
+					END,
+					$%[1]d
+				) @@ t.matcher
+			)
+		)`, len(args)))
+	}
+
+	where := strings.Join(conds, " AND ")
+
+	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM posts p WHERE `+where, args...).Scan(&page.Total); err != nil {
+		return page, fmt.Errorf("err count admin posts: %w", err)
+	}
+
+	args = append(args, adminPageSize, (f.Page-1)*adminPageSize)
+
+	rows, err := s.db.Query(ctx, fmt.Sprintf(`
+		SELECT p.id, p.source_id, p.domain_id, d.base_url, p.url, p.lang, p.title, p.short_content, '', p.tags, p.authors, p.posted_at, p.created_at
+		FROM posts p
+		JOIN domains d ON d.id = p.domain_id
+		WHERE %s
+		ORDER BY p.posted_at DESC
+		LIMIT $%d OFFSET $%d
+		`, where, len(args)-1, len(args)), args...)
+	if err != nil {
+		return page, fmt.Errorf("err list admin posts: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		p, err := scanPost(rows)
+		if err != nil {
+			return page, fmt.Errorf("err scan admin post: %w", err)
+		}
+
+		page.Posts = append(page.Posts, p)
+	}
+
+	if err := rows.Err(); err != nil {
+		return page, fmt.Errorf("err read admin posts: %w", err)
+	}
+
+	return page, nil
+}
+
+// An id that is not a uuid is reported as not found.
+func (s *PostStore) GetAdminPost(ctx context.Context, id string) (p domain.AdminPost, err error) {
+	err = s.db.QueryRow(ctx, `
+		SELECT p.id, p.source_id, p.domain_id, d.base_url, p.url, p.lang, p.title, p.short_content, p.content, p.tags, p.authors, p.posted_at, p.created_at, s.url
+		FROM posts p
+		JOIN domains d ON d.id = p.domain_id
+		JOIN sources s ON s.id = p.source_id
+		WHERE p.id = $1
+		`, id).Scan(&p.ID, &p.SourceID, &p.DomainID, &p.DomainURL, &p.URL, &p.Lang, &p.Title, &p.ShortContent, &p.Content, &p.Tags, &p.Authors, &p.PostedAt, &p.CreatedAt, &p.SourceURL)
+	if isInvalidText(err) {
+		err = pgx.ErrNoRows
+	}
+
+	if err != nil {
+		return p, fmt.Errorf("err get admin post %s: %w", id, err)
+	}
+
+	return p, nil
+}

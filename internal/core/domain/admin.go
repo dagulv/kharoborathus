@@ -32,3 +32,23 @@ type NewSource struct {
 	Rate       int    `json:"rate"`
 	Lang       string `json:"lang"`
 }
+
+type AdminPostFilter struct {
+	SourceID string
+	Tag      string
+	Search   string
+	Page     int
+}
+
+type PostPage struct {
+	Posts    []Post `json:"posts"`
+	Total    int    `json:"total"`
+	Page     int    `json:"page"`
+	PageSize int    `json:"pageSize"`
+}
+
+type AdminPost struct {
+	Post
+
+	SourceURL string `json:"sourceUrl"`
+}

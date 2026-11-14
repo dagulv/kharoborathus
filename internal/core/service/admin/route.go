@@ -13,6 +13,7 @@ import (
 type Stores struct {
 	Stats   *postgres.StatsStore
 	Sources *postgres.SourceStore
+	Posts   *postgres.PostStore
 }
 
 func Routes(mux *http.ServeMux, s Stores, l *slog.Logger) {
@@ -20,6 +21,8 @@ func Routes(mux *http.ServeMux, s Stores, l *slog.Logger) {
 	mux.HandleFunc("GET /admin/sources", listSources(s.Sources, l))
 	mux.HandleFunc("POST /admin/sources", createSource(s.Sources, l))
 	mux.HandleFunc("POST /admin/sources/{id}/review", reviewSource(s.Sources, l))
+	mux.HandleFunc("GET /admin/posts", listPosts(s.Posts, l))
+	mux.HandleFunc("GET /admin/posts/{id}", getPost(s.Posts, l))
 }
 
 func writeJSON(w http.ResponseWriter, l *slog.Logger, v any) {
