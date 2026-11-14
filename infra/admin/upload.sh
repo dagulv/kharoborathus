@@ -39,13 +39,24 @@ list() {
 		done
 }
 
+# A lookup table, not grep -q over a pipe: under pipefail, grep closing the pipe early made a kept file look stale.
+declare -A keep
+for f in "${local_files[@]}"; do
+	keep[$f]=1
+done
+
+# Listed into a file first, since set -e does not see a failure inside a process substitution.
+stored_files=$(mktemp)
+trap 'rm -f "$stored_files"' EXIT
+list "" >"$stored_files"
+
 # Files from older builds, such as hashed bundles, would otherwise pile up.
 while IFS= read -r stored; do
-	if ! printf '%s\n' "${local_files[@]}" | grep -qxF "$stored"; then
+	if [[ ! -v keep[$stored] ]]; then
 		storage -X DELETE "$base/$stored" >/dev/null
 		echo "deleted $stored"
 	fi
-done < <(list "")
+done <"$stored_files"
 
 curl -fsS -X POST -H "AccessKey: $BUNNY_API_KEY" "https://api.bunny.net/pullzone/$BUNNY_PULL_ZONE_ID/purgeCache" >/dev/null
 echo "purged pull zone $BUNNY_PULL_ZONE_ID"
