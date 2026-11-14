@@ -15,6 +15,7 @@ type Stores struct {
 	Sources *postgres.SourceStore
 	Posts   *postgres.PostStore
 	Tags    *postgres.TagStore
+	Logs    *postgres.LogStore
 }
 
 func Routes(mux *http.ServeMux, s Stores, l *slog.Logger) {
@@ -27,6 +28,8 @@ func Routes(mux *http.ServeMux, s Stores, l *slog.Logger) {
 	mux.HandleFunc("GET /admin/tags", getTags(s.Tags, l))
 	mux.HandleFunc("PATCH /admin/tags/{key}", setTagEnabled(s.Tags, l))
 	mux.HandleFunc("POST /admin/tags/merge", mergeTag(s.Tags, l))
+	mux.HandleFunc("GET /admin/logs", listLogs(s.Logs, l))
+	mux.HandleFunc("GET /admin/logs/{id}", getLog(s.Logs, l))
 }
 
 func writeJSON(w http.ResponseWriter, l *slog.Logger, v any) {

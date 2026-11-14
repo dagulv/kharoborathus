@@ -17,3 +17,6 @@ type Log struct {
 	Metadata   map[string]any  `json:"metadata"`
 	CreatedAt  time.Time       `json:"createdAt"`
 }
+
+// Mirrors the type comment above and docs/kb/request-logs.md.
+var LogTypes = []string{"deepseek", "jev", "brave", "rss", "page", "trim", "ingest", "robots", "homepage", "wordpress"}

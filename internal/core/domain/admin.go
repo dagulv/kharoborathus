@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -78,4 +79,38 @@ type TagOverview struct {
 	Tags      []TagSummary  `json:"tags"`
 	Proposals []TagProposal `json:"proposals"`
 	Aliases   []TagAlias    `json:"aliases"`
+}
+
+type LogSummary struct {
+	ID         int64          `json:"id"`
+	Type       string         `json:"type"`
+	Level      string         `json:"level"`
+	Method     *string        `json:"method"`
+	URL        *string        `json:"url"`
+	Status     *int           `json:"status"`
+	DurationMs int64          `json:"durationMs"`
+	Error      *string        `json:"error"`
+	Metadata   map[string]any `json:"metadata"`
+	CreatedAt  time.Time      `json:"createdAt"`
+}
+
+type LogDetail struct {
+	LogSummary
+
+	Request  json.RawMessage `json:"request"`
+	Response json.RawMessage `json:"response"`
+}
+
+type LogFilter struct {
+	Type      string
+	Level     string
+	MetaKey   string
+	MetaValue string
+	Page      int
+}
+
+type LogPage struct {
+	Logs    []LogSummary `json:"logs"`
+	HasNext bool         `json:"hasNext"`
+	Page    int          `json:"page"`
 }
