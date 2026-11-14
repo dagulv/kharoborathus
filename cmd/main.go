@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -9,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,6 +29,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/logs"
 	"github.com/dagulv/kharoborathus/internal/lib/pace"
+	"github.com/dagulv/kharoborathus/internal/lib/password"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
 	"github.com/dagulv/kharoborathus/internal/migrations"
@@ -39,6 +43,10 @@ func main() {
 	run := app
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		run = migrate
+	}
+
+	if len(os.Args) > 1 && os.Args[1] == "user" {
+		run = addUser
 	}
 
 	if err := run(ctx); err != nil {
@@ -55,6 +63,48 @@ func migrate(ctx context.Context) error {
 	l := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	return migrations.Migrate(ctx, env.PostgresConn, l.WithGroup("migrate"))
+}
+
+func addUser(ctx context.Context) error {
+	if len(os.Args) != 4 || os.Args[2] != "add" || strings.TrimSpace(os.Args[3]) == "" {
+		fmt.Fprintln(os.Stderr, "usage: kharoborathus user add <email>")
+		os.Exit(1)
+	}
+
+	email := strings.TrimSpace(os.Args[3])
+
+	env, err := config.Load(true)
+	if err != nil {
+		return fmt.Errorf("err load config: %w", err)
+	}
+
+	db, err := database.NewDatabase(ctx, env.PostgresConn)
+	if err != nil {
+		return fmt.Errorf("err open database: %w", err)
+	}
+	defer db.Close()
+
+	// Login has no rate limit, so the password is generated rather than chosen.
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Errorf("err generate password: %w", err)
+	}
+
+	pw := base64.RawURLEncoding.EncodeToString(b)
+
+	hash, err := password.Hash(pw)
+	if err != nil {
+		return fmt.Errorf("err hash password: %w", err)
+	}
+
+	users := postgres.NewUserStore(db)
+	if err := users.CreateUser(ctx, email, hash); err != nil {
+		return err
+	}
+
+	fmt.Printf("Added %s, password: %s\n", email, pw)
+
+	return nil
 }
 
 func app(ctx context.Context) (err error) {
