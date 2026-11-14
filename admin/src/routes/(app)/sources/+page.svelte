@@ -2,7 +2,7 @@
 	import { invalidate } from '$app/navigation';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { toast } from 'svelte-sonner';
-	import { api, errorMessage } from '$lib/api.js';
+	import { api, actionError } from '$lib/api.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
@@ -24,7 +24,7 @@
 			syncState.set(id, 'requested');
 		} catch (err) {
 			syncState.set(id, 'failed');
-			toast.error(errorMessage(err, 'Sync failed'));
+			toast.error(actionError(err, 'Sync failed'));
 		}
 		setTimeout(() => syncState.delete(id), 3000);
 	}
@@ -42,7 +42,7 @@
 			await api(`/admin/sources/${source.id}/review`, { method: 'POST', body: { enabled } });
 			await invalidate('app:sources');
 		} catch (err) {
-			toast.error(errorMessage(err, 'Review failed'));
+			toast.error(actionError(err, 'Review failed'));
 		} finally {
 			reviewing.delete(source.id);
 		}

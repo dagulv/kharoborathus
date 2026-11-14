@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { api, errorMessage } from '$lib/api.js';
+	import { api, actionError } from '$lib/api.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
@@ -45,7 +45,7 @@
 			checkedURL = value;
 			listing = key(candidates[0]);
 		} catch (err) {
-			checkError = errorMessage(err, 'Check failed');
+			checkError = actionError(err, 'Check failed');
 		} finally {
 			checking = false;
 		}
@@ -72,7 +72,7 @@
 			});
 			await goto('/sources');
 		} catch (err) {
-			submitError = errorMessage(err, 'Adding the source failed');
+			submitError = actionError(err, 'Adding the source failed');
 		} finally {
 			submitting = false;
 		}
