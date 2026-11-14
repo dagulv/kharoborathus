@@ -14,14 +14,15 @@ import (
 )
 
 type Environment struct {
-	PostgresUser     string `env:"POSTGRES_USER" envDefault:"postgres"`
-	PostgresPassword string `env:"POSTGRES_PASSWORD" envDefault:"postgres"`
-	PostgresDb       string `env:"POSTGRES_DB" envDefault:"postgres"`
-	PostgresConn     string `env:"POSTGRES_CONNECTION_STRING,expand" envDefault:"postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}?sslmode=disable"`
-	HttpHost         string `env:"HTTP_HOST" envDefault:"0.0.0.0:3001"`
-	DeepseekAPIKey   string `env:"DEEPSEEK_API_KEY" envDefault:""`
-	TypesafeAPIKey   string `env:"TYPESAFE_API_KEY" envDefault:""`
-	BraveAPIKey      string `env:"BRAVE_API_KEY" envDefault:""`
+	PostgresUser     string   `env:"POSTGRES_USER" envDefault:"postgres"`
+	PostgresPassword string   `env:"POSTGRES_PASSWORD" envDefault:"postgres"`
+	PostgresDb       string   `env:"POSTGRES_DB" envDefault:"postgres"`
+	PostgresConn     string   `env:"POSTGRES_CONNECTION_STRING,expand" envDefault:"postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}?sslmode=disable"`
+	HttpHost         string   `env:"HTTP_HOST" envDefault:"0.0.0.0:3001"`
+	DeepseekAPIKey   string   `env:"DEEPSEEK_API_KEY" envDefault:""`
+	TypesafeAPIKey   string   `env:"TYPESAFE_API_KEY" envDefault:""`
+	BraveAPIKey      string   `env:"BRAVE_API_KEY" envDefault:""`
+	AdminOrigins     []string `env:"ADMIN_ORIGINS" envSeparator:"," envDefault:"http://localhost:5173"`
 }
 
 func Load(useFile ...bool) (e *Environment, err error) {
