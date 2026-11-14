@@ -225,25 +225,25 @@ func (s *SourceStore) ListAdminSources(ctx context.Context, includeDeleted bool)
 }
 
 // Only a live source blocks the same listing, so a deleted one can be added again.
-func (s *SourceStore) CreateSource(ctx context.Context, in domain.NewSource) error {
+func (s *SourceStore) CreateSource(ctx context.Context, in domain.NewSource) (id string, err error) {
 	baseURL, err := domain.BaseURL(in.URL)
 	if err != nil {
-		return fmt.Errorf("err base url: %w", err)
+		return "", fmt.Errorf("err base url: %w", err)
 	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("err begin: %w", err)
+		return "", fmt.Errorf("err begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
 	var exists bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sources WHERE url = $1 AND deleted_at IS NULL)`, in.ListingURL).Scan(&exists); err != nil {
-		return fmt.Errorf("err check source: %w", err)
+		return "", fmt.Errorf("err check source: %w", err)
 	}
 
 	if exists {
-		return domain.ErrSourceExists
+		return "", domain.ErrSourceExists
 	}
 
 	var domainID string
@@ -253,39 +253,41 @@ func (s *SourceStore) CreateSource(ctx context.Context, in domain.NewSource) err
 		ON CONFLICT (base_url) DO UPDATE SET base_url = EXCLUDED.base_url
 		RETURNING id
 		`, baseURL).Scan(&domainID); err != nil {
-		return fmt.Errorf("err upsert domain: %w", err)
+		return "", fmt.Errorf("err upsert domain: %w", err)
 	}
 
-	if _, err := tx.Exec(ctx, `
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO sources (domain_id, adapter, url, enabled, rate, lang)
 		VALUES ($1, $2, $3, true, $4, $5)
-		`, domainID, in.Adapter, in.ListingURL, in.Rate, in.Lang); err != nil {
-		return fmt.Errorf("err insert source: %w", err)
+		RETURNING id
+		`, domainID, in.Adapter, in.ListingURL, in.Rate, in.Lang).Scan(&id); err != nil {
+		return "", fmt.Errorf("err insert source: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("err commit source: %w", err)
+		return "", fmt.Errorf("err commit source: %w", err)
 	}
 
-	return nil
+	return id, nil
 }
 
 // Keeping a flagged source makes it active again. Disabling it keeps the flag, so it gets reviewed before it runs again.
-func (s *SourceStore) ReviewSource(ctx context.Context, id string, enabled bool) error {
-	var one int
-	err := s.db.QueryRow(ctx, `
-		UPDATE sources
-		SET enabled = $2, status = CASE WHEN $2 THEN 'active' ELSE status END
-		WHERE id = $1 AND deleted_at IS NULL
-		RETURNING 1
-		`, id, enabled).Scan(&one)
+// Returns the status the source had, since approving a proposed source is its first scrape.
+func (s *SourceStore) ReviewSource(ctx context.Context, id string, enabled bool) (was string, err error) {
+	err = s.db.QueryRow(ctx, `
+		UPDATE sources s
+		SET enabled = $2, status = CASE WHEN $2 THEN 'active' ELSE s.status END
+		FROM (SELECT id, status FROM sources WHERE id = $1) old
+		WHERE s.id = old.id AND s.deleted_at IS NULL
+		RETURNING old.status
+		`, id, enabled).Scan(&was)
 	if isInvalidText(err) {
 		err = pgx.ErrNoRows
 	}
 
 	if err != nil {
-		return fmt.Errorf("err review source %s: %w", id, err)
+		return "", fmt.Errorf("err review source %s: %w", id, err)
 	}
 
-	return nil
+	return was, nil
 }

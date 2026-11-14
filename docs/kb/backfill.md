@@ -19,7 +19,7 @@ A feed shows only a source's newest posts. Backfill reads a source's history onc
 
 ## Design
 
-1. The admin form calls `POST /admin/sources/{id}/backfill` after inserting a source. Approving a proposed source and the Backfill button call it too.
+1. `POST /admin/sources` queues a backfill after inserting a source, and approving a proposed source does too, both in [admin/sources.go](../../internal/core/service/admin/sources.go). The admin's Backfill button calls `POST /admin/sources/{id}/backfill`.
 2. The handler sends an enabled, active source on the backfill channel without blocking. It answers `202`, or `503` when the queue is full.
 3. A backfill route sends the source to its adapter's backfill lane. An adapter that is no `Backfiller` logs `no backfill strategy`.
 4. The rss adapter reads the WordPress REST API. A site without one means `no archive`, logged at info.

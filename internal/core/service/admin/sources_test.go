@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -8,7 +9,7 @@ import (
 )
 
 func TestSourceRoutes(t *testing.T) {
-	mux, _ := newMux(t)
+	mux, _, _ := newMux(t)
 
 	valid := `{"url":"https://example.com/","adapter":"rss","listingUrl":"https://example.com/feed","rate":15,"lang":""}`
 
@@ -66,7 +67,7 @@ func TestSourceRoutes(t *testing.T) {
 }
 
 func TestStatsRoute(t *testing.T) {
-	mux, _ := newMux(t)
+	mux, _, _ := newMux(t)
 
 	rec := do(mux, http.MethodGet, "/admin/stats", "")
 
@@ -79,5 +80,66 @@ func TestStatsRoute(t *testing.T) {
 		if _, ok := got[key]; !ok {
 			t.Errorf("no %s in %v", key, got)
 		}
+	}
+}
+
+func TestSourceRoutesQueueBackfill(t *testing.T) {
+	mux, db, backfills := newMux(t)
+	ctx := context.Background()
+
+	body := `{"url":"https://example.com/","adapter":"rss","listingUrl":"https://example.com/feed","rate":15,"lang":""}`
+	if rec := do(mux, http.MethodPost, "/admin/sources", body); rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+
+	select {
+	case s := <-backfills:
+		if s.URL != "https://example.com/feed" || !s.Enabled {
+			t.Errorf("queued %+v", s)
+		}
+	default:
+		t.Fatal("create queued no backfill")
+	}
+
+	if _, err := db.Exec(ctx, `
+		INSERT INTO sources (domain_id, adapter, url, enabled, status)
+		SELECT domain_id, 'rss', v.url, false, v.status
+		FROM (SELECT domain_id FROM sources LIMIT 1) d,
+			(VALUES ('https://example.com/p', 'proposed'), ('https://example.com/f', 'flagged')) v (url, status)
+		`); err != nil {
+		t.Fatal(err)
+	}
+
+	var proposed, flagged string
+	if err := db.QueryRow(ctx, `SELECT id FROM sources WHERE url = 'https://example.com/p'`).Scan(&proposed); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.QueryRow(ctx, `SELECT id FROM sources WHERE url = 'https://example.com/f'`).Scan(&flagged); err != nil {
+		t.Fatal(err)
+	}
+
+	// Keeping a flagged source is not its first scrape, so it queues nothing.
+	if rec := do(mux, http.MethodPost, "/admin/sources/"+flagged+"/review", `{"enabled":true}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("keep: %d %s", rec.Code, rec.Body)
+	}
+
+	select {
+	case s := <-backfills:
+		t.Errorf("keep queued %s", s.URL)
+	default:
+	}
+
+	if rec := do(mux, http.MethodPost, "/admin/sources/"+proposed+"/review", `{"enabled":true}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body)
+	}
+
+	select {
+	case s := <-backfills:
+		if s.ID != proposed {
+			t.Errorf("approve queued %s", s.ID)
+		}
+	default:
+		t.Error("approve queued no backfill")
 	}
 }

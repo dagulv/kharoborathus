@@ -10,7 +10,7 @@ import (
 )
 
 func TestLogRoutes(t *testing.T) {
-	mux, db := newMux(t)
+	mux, db, _ := newMux(t)
 
 	var id int64
 	if err := db.QueryRow(context.Background(), `INSERT INTO logs (type, level, request) VALUES ('rss', 'INFO', '{}') RETURNING id`).Scan(&id); err != nil {
