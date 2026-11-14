@@ -1,7 +1,7 @@
 name: CI/CD
 
 # Pull requests build the changed images. main migrates, then deploys the changed targets with Haloy.
-# db deploys by hand, since Haloy protects it.
+# db deploys by hand, since Haloy protects it. The admin SPA builds here and uploads to bunny.net.
 on:
   push:
     branches: [main]
@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       deploy: ${{ steps.deploy.outputs.deploy }}
+      admin: ${{ steps.changes.outputs.admin }}
       migrate: ${{ steps.changes.outputs.migrate }}
       targets: ${{ steps.changes.outputs.targets }}
     steps:
@@ -45,7 +46,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           if [[ $GITHUB_EVENT_NAME == workflow_dispatch ]] || ! files=$(git diff --name-only "$BASE" "$GITHUB_SHA" 2>/dev/null); then
-            files=$'internal/migrations/\ncmd/\nfrontend/'
+            files=$'internal/migrations/\ncmd/\nfrontend/\nadmin/'
           fi
 
           changed() { grep -qE "$1" <<<"$files"; }
@@ -57,6 +58,10 @@ jobs:
           migrate=false
           changed '^internal/migrations/' && migrate=true
 
+          admin=false
+          changed '^admin/|^infra/admin/' && admin=true
+
+          echo "admin=$admin" >> "$GITHUB_OUTPUT"
           echo "migrate=$migrate" >> "$GITHUB_OUTPUT"
           echo "targets=[$(IFS=,; echo "${targets[*]}")]" >> "$GITHUB_OUTPUT"
 
@@ -160,3 +165,69 @@ jobs:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
           TARGET: ${{ matrix.target }}
         run: infra/secrets.sh prod:app infra/haloy.sh deploy "$TARGET"
+
+  admin-build:
+    needs: setup
+    if: needs.setup.outputs.deploy == 'false' && needs.setup.outputs.admin == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      # The lockfile pins tarballs to a local registry proxy. Integrity hashes still verify the npm copies.
+      - name: Build
+        working-directory: admin
+        run: |
+          corepack enable
+          sed -i 's#http://127.0.0.1:11230/node/#https://registry.npmjs.org/#g' pnpm-lock.yaml
+          pnpm install --frozen-lockfile
+          pnpm build
+
+  admin-deploy:
+    needs: setup
+    if: needs.setup.outputs.deploy == 'true' && needs.setup.outputs.admin == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-admin
+      cancel-in-progress: false
+    env:
+      SOPS_VERSION: v3.13.3
+      SOPS_SHA256: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
+      YQ_VERSION: v4.54.3
+      YQ_SHA256: 129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Build
+        working-directory: admin
+        env:
+          PUBLIC_API_URL: https://api.kharoborathus.dagulv.me
+        run: |
+          corepack enable
+          sed -i 's#http://127.0.0.1:11230/node/#https://registry.npmjs.org/#g' pnpm-lock.yaml
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Install sops and yq
+        run: |
+          curl -fsSL -o sops "https://github.com/getsops/sops/releases/download/$SOPS_VERSION/sops-$SOPS_VERSION.linux.amd64"
+          curl -fsSL -o yq "https://github.com/mikefarah/yq/releases/download/$YQ_VERSION/yq_linux_amd64"
+          sha256sum -c - <<EOF
+          $SOPS_SHA256  sops
+          $YQ_SHA256  yq
+          EOF
+          sudo install -m 755 sops yq /usr/local/bin/
+
+      # secrets.sh skips Bitwarden when SOPS_AGE_KEY is set and unsets it before the upload runs.
+      - name: Upload to bunny.net
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: infra/secrets.sh prod:bunny bash infra/admin/upload.sh admin/build

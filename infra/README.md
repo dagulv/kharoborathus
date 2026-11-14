@@ -10,7 +10,8 @@ Prod secrets never sit in an env file. They live in two vaults under `secrets/`,
 |---|---|---|---|
 | db | `infra/db/db.env`, password from the root `.env` | `infra/db/db.env` | `infra/db/Dockerfile` |
 | api, the Go app | The root `.env` over `infra/api/api.env` over `infra/db/db.env` | `infra/api/api.env` | `infra/api/Dockerfile` |
-| web, the admin | The root `.env` over `infra/web/web.env` over `infra/db/db.env` | `infra/web/web.env` | `infra/web/Dockerfile` |
+| web, the public site | The root `.env` over `infra/web/web.env` | `infra/web/web.env` | `infra/web/Dockerfile` |
+| admin, a static SPA on bunny.net | `PUBLIC_API_URL`, default `http://localhost:3001` | `PUBLIC_API_URL` at build time, set in CI | none, see [Admin](#admin) |
 
 The dev db also builds from `infra/db/Dockerfile`.
 
@@ -19,16 +20,18 @@ The dev db also builds from `infra/db/Dockerfile`.
 | dev | `kharoborathus/app.yaml` | `POSTGRES_PASSWORD`, `DEEPSEEK_API_KEY`, `TYPESAFE_API_KEY`, `BRAVE_API_KEY` |
 | prod | `kharoborathus/app.yaml` | The dev keys plus `POSTGRES_CONNECTION_STRING` |
 | prod | `kharoborathus/tofu.yaml` | `UPCLOUD_TOKEN`, `TF_VAR_state_passphrase` |
+| prod | `kharoborathus/bunny.yaml` | `BUNNY_STORAGE_ZONE`, `BUNNY_STORAGE_HOST`, `BUNNY_STORAGE_PASSWORD`, `BUNNY_API_KEY`, `BUNNY_PULL_ZONE_ID` |
 
 Each file is a Kubernetes `Secret` with the keys under `stringData`. [.sops.yaml](.sops.yaml) encrypts only `data` and `stringData`, so key names stay readable. Nothing here deploys to a cluster.
 
-`secrets.sh` runs a command with one vault's secrets in its environment. It asks for the Bitwarden master password, decrypts in memory and locks Bitwarden again. `prod:tofu` or `prod:app` limits it to one file, so each command sees only the secrets it needs:
+`secrets.sh` runs a command with one vault's secrets in its environment. It asks for the Bitwarden master password, decrypts in memory and locks Bitwarden again. `prod:tofu`, `prod:app` or `prod:bunny` limits it to one file, so each command sees only the secrets it needs:
 
 ```bash
 infra/secrets.sh dev docker compose up -d db
 infra/secrets.sh dev go run ./cmd migrate
 infra/secrets.sh dev go run ./cmd
 infra/secrets.sh dev pnpm -C frontend dev
+pnpm -C admin dev
 ```
 
 To skip the prompt in dev, `setup.sh` writes the dev vault's secrets into the root `.env` and keeps its other lines. Compose, the Go app and the admin read that file, so `docker compose up -d db`, `go run ./cmd migrate`, `go run ./cmd` and `pnpm -C frontend dev` then work bare. Rerun it after a vault change:
@@ -129,6 +132,25 @@ Running containers keep their old env, and CI does not redeploy for a vault chan
 - Schema changes go in a new numbered file in `internal/migrations`. Never edit a file that has been applied. `go run ./cmd migrate` applies pending files with tern and records the version in `schema_version`. Tern runs each file through Go's `text/template`, so `{{` in SQL breaks it.
 - A push to `main` that touches `internal/migrations` migrates prod first, through `haloy tunnel` to the db. The running api still has the old code until its deploy finishes, so a migration must work with it. A failed migration stops the deploy.
 - A dev volume created before the migrations existed has the schema but no `schema_version`, so `migrate` fails on it. Recreate it once with `docker compose down -v`.
-- Add an admin user with `POSTGRES_CONNECTION_STRING=<conn> pnpm user:add <email>` from `frontend`. It prints a generated password: the login has no rate limit or lockout, so only its length stops guessing.
+- Add an admin user with `POSTGRES_CONNECTION_STRING=<conn> go run ./cmd user add <email>`. It prints a generated password: the login has no rate limit or lockout, so only its length stops guessing.
 - Every switch starts off. Turn them on in the admin under Switches.
 - `tofu apply` never replaces the server: it has `prevent_destroy`, and edits to `cloud-init.yaml` or the SSH key are ignored for the existing server.
+
+## Admin
+
+The admin is a static SvelteKit SPA in `admin/`, served by bunny.net at `admin.kharoborathus.dagulv.me`. It reads and writes only through the Go app's `/admin/*` routes. The Go app sets the session cookie on `api.kharoborathus.dagulv.me` and answers CORS for the origins in `ADMIN_ORIGINS`, which `haloy.yaml` sets for prod and which defaults to `http://localhost:5173` in dev.
+
+Set up once by hand:
+
+1. In bunny.net, create a storage zone. Note its name, its storage hostname, such as `storage.bunnycdn.com`, and its password.
+2. Create a pull zone with the storage zone as its origin. Note its ID.
+3. On the pull zone, add an edge rule that rewrites requests for missing files to `/index.html`, so deep links reach the SPA.
+4. Add `admin.kharoborathus.dagulv.me` as a hostname on the pull zone, point a CNAME at the pull zone's hostname and enable its certificate.
+5. Add the prod vault's `bunny.yaml` with sops, holding the five `BUNNY_*` keys above. `BUNNY_API_KEY` is the account API key, which the cache purge needs.
+
+A push to `main` that touches `admin/` or `infra/admin/` builds the SPA with `PUBLIC_API_URL=https://api.kharoborathus.dagulv.me`. [upload.sh](admin/upload.sh) then mirrors `admin/build` into the storage zone, deletes files the build no longer has and purges the pull zone. Pull requests only build. Upload by hand with:
+
+```bash
+PUBLIC_API_URL=https://api.kharoborathus.dagulv.me pnpm -C admin build
+infra/secrets.sh prod:bunny bash infra/admin/upload.sh admin/build
+```

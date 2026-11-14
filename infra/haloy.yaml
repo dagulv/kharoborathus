@@ -53,6 +53,9 @@ targets:
       - name: BRAVE_API_KEY
         from:
           env: BRAVE_API_KEY
+      # Inline, not in api/api.env, which the Go app also reads in dev, where the admin runs on localhost:5173.
+      - name: ADMIN_ORIGINS
+        value: https://admin.kharoborathus.dagulv.me
 
   web:
     image:
