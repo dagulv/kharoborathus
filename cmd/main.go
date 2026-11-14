@@ -131,6 +131,7 @@ func app(ctx context.Context) (err error) {
 	sessionStore := postgres.NewSessionStore(db)
 	userStore := postgres.NewUserStore(db)
 	statsStore := postgres.NewStatsStore(db)
+	logStore := postgres.NewLogStore(db)
 	discoveryStore := discovery.NewStore(db)
 	discoveredStore := postgres.NewDiscoveredStore(db)
 
@@ -191,7 +192,7 @@ func app(ctx context.Context) (err error) {
 	// The port is public, so every admin route but login sits behind the session cookie.
 	protected := http.NewServeMux()
 	source.Routes(protected, &sourceStore, syncs, l.WithGroup("source"), calls)
-	admin.Routes(protected, admin.Stores{Stats: &statsStore, Sources: &sourceStore, Posts: &postStore, Tags: &tagStore}, l.WithGroup("admin"))
+	admin.Routes(protected, admin.Stores{Stats: &statsStore, Sources: &sourceStore, Posts: &postStore, Tags: &tagStore, Logs: &logStore}, l.WithGroup("admin"))
 
 	adminMux := http.NewServeMux()
 	auth.Routes(adminMux, protected, &userStore, &sessionStore, l.WithGroup("auth"))
