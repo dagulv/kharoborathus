@@ -13,8 +13,7 @@ RUN pnpm install --frozen-lockfile
 COPY tsconfig.json vite.config.ts load-env.ts ./
 COPY src src
 COPY static static
-# Route analysis validates env at build time. The real value is read at runtime.
-RUN POSTGRES_CONNECTION_STRING=postgresql://build@localhost/build pnpm build
+RUN pnpm build
 
 FROM node:24-alpine
 WORKDIR /app
