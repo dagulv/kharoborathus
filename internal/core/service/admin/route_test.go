@@ -19,9 +19,10 @@ func newMux(t *testing.T) (*http.ServeMux, *database.Database) {
 	stats := postgres.NewStatsStore(db)
 	sources := postgres.NewSourceStore(db)
 	posts := postgres.NewPostStore(db)
+	tags := postgres.NewTagStore(db)
 
 	mux := http.NewServeMux()
-	Routes(mux, Stores{Stats: &stats, Sources: &sources, Posts: &posts}, slog.New(slog.DiscardHandler))
+	Routes(mux, Stores{Stats: &stats, Sources: &sources, Posts: &posts, Tags: &tags}, slog.New(slog.DiscardHandler))
 
 	return mux, db
 }
