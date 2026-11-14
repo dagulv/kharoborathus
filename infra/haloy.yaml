@@ -71,6 +71,3 @@ targets:
       - name: API_URL
         from:
           env: API_URL
-      - name: POSTGRES_CONNECTION_STRING
-        from:
-          env: POSTGRES_CONNECTION_STRING
