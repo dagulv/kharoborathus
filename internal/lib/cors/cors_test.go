@@ -19,10 +19,12 @@ func TestAllow(t *testing.T) {
 		wantCalled           bool
 	}{
 		{"allowed get", http.MethodGet, "http://localhost:5173", http.StatusOK, "http://localhost:5173", true},
-		{"other get", http.MethodGet, "https://evil.example", http.StatusOK, "", true},
+		// A sibling subdomain is same-site, so the Strict cookie would still go along.
+		{"other get", http.MethodGet, "https://evil.example", http.StatusForbidden, "", false},
+		{"sibling get", http.MethodGet, "https://kharoborathus.dagulv.me", http.StatusForbidden, "", false},
 		{"no origin", http.MethodGet, "", http.StatusOK, "", true},
 		{"allowed preflight", http.MethodOptions, "http://localhost:5173", http.StatusNoContent, "http://localhost:5173", false},
-		{"other preflight", http.MethodOptions, "https://evil.example", http.StatusNoContent, "", false},
+		{"other preflight", http.MethodOptions, "https://evil.example", http.StatusForbidden, "", false},
 	}
 
 	for _, c := range cases {
