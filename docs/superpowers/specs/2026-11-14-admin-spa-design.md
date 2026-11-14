@@ -107,7 +107,7 @@ A middleware in front of `/admin/` answers for origins in a new `ADMIN_ORIGINS` 
 
 Routes drop the `/admin` prefix, since the SPA has its own host: `/`, `/sources`, `/sources/new`, `/tags`, `/posts`, `/posts/[id]`, `/logs`, `/logs/[id]`, `/login`. Filters live in the query string as today, so a filtered list can be linked.
 
-The types in `frontend/src/lib/types.ts` move to `admin/src/lib/types.ts`, with dates parsed from JSON strings.
+The types in `frontend/src/lib/types.ts` move to `admin/src/lib/types.ts`. Dates stay ISO strings and are parsed where they are formatted.
 
 ### Look
 
@@ -123,7 +123,7 @@ Statuses are badges. Overview counts are cards. Lists are shadcn tables. Action 
 
 ### Web app cleanup
 
-The SvelteKit web app loses `routes/admin`, `routes/login`, `lib/server/auth.ts`, `lib/server/password.ts`, `scripts/add-user.ts`, the `user:add` script, the admin and remote-function branches of `hooks.server.ts`, and any env such as `API_URL` that only the admin used. The healthz answer stays. The public page and `/posts` route stay as they are.
+The SvelteKit web app loses `routes/admin`, `routes/login`, `lib/server/auth.ts`, `lib/server/password.ts`, `scripts/add-user.ts`, the `user:add` script, the admin and remote-function branches of `hooks.server.ts`, and any env that only the admin used. `API_URL` stays, since the public feed fetches through it. The healthz answer stays. The public page and `/posts` route stay as they are.
 
 ### Deploy
 
