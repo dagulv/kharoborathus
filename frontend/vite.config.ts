@@ -20,7 +20,7 @@ export default defineConfig(({ mode }) => {
 				adapter: adapter(),
 				// The root .env, shared with the Go app and filled by infra/setup.sh.
 				env: { dir: '..' },
-				experimental: { remoteFunctions: true, forkPreloads: true }
+				experimental: { forkPreloads: true }
 			})
 		]
 	};
