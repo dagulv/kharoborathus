@@ -52,3 +52,30 @@ type AdminPost struct {
 
 	SourceURL string `json:"sourceUrl"`
 }
+
+var ErrMergeSelf = errors.New("merge tag into itself")
+
+type TagSummary struct {
+	Tag
+
+	PostCount int `json:"postCount"`
+}
+
+type TagProposal struct {
+	Key            string    `json:"key"`
+	Terms          []string  `json:"terms"`
+	PostCount      int       `json:"postCount"`
+	DomainCount    int       `json:"domainCount"`
+	LastProposedAt time.Time `json:"lastProposedAt"`
+}
+
+type TagAlias struct {
+	Alias string `json:"alias"`
+	Key   string `json:"key"`
+}
+
+type TagOverview struct {
+	Tags      []TagSummary  `json:"tags"`
+	Proposals []TagProposal `json:"proposals"`
+	Aliases   []TagAlias    `json:"aliases"`
+}
