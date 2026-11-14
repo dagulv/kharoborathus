@@ -32,23 +32,27 @@ func TestRequireSession(t *testing.T) {
 	}))
 
 	cases := map[string]struct {
-		header string
-		want   int
-		called bool
+		cookie, bearer string
+		want           int
+		called         bool
 	}{
-		"valid":      {"Bearer good-token", http.StatusOK, true},
-		"no header":  {"", http.StatusUnauthorized, false},
-		"wrong kind": {"Basic good-token", http.StatusUnauthorized, false},
-		"empty":      {"Bearer ", http.StatusUnauthorized, false},
-		"invalid":    {"Bearer bad-token", http.StatusUnauthorized, false},
+		"valid":        {cookie: "good-token", want: http.StatusOK, called: true},
+		"no cookie":    {want: http.StatusUnauthorized},
+		"empty":        {cookie: "", want: http.StatusUnauthorized},
+		"invalid":      {cookie: "bad-token", want: http.StatusUnauthorized},
+		"bearer token": {bearer: "good-token", want: http.StatusUnauthorized},
 	}
 
 	for name, c := range cases {
 		called = false
 
 		req := httptest.NewRequest(http.MethodGet, "/admin/listing", nil)
-		if c.header != "" {
-			req.Header.Set("Authorization", c.header)
+		if c.cookie != "" {
+			req.AddCookie(&http.Cookie{Name: SessionCookie, Value: c.cookie})
+		}
+
+		if c.bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+c.bearer)
 		}
 
 		rec := httptest.NewRecorder()
@@ -64,7 +68,7 @@ func TestRequireSessionStoreError(t *testing.T) {
 	h := RequireSession(&fakeSessions{err: errors.New("db down")}, slog.New(slog.DiscardHandler), http.NotFoundHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/listing", nil)
-	req.Header.Set("Authorization", "Bearer t")
+	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: "t"})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
