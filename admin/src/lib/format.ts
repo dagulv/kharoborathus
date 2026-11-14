@@ -10,8 +10,11 @@ export const fmtDate = (iso: string) => date.format(new Date(iso));
 export const fmtDateTimeSeconds = (iso: string) => dateTimeSeconds.format(new Date(iso));
 
 // A query string for the current filters with some changed. Empty values drop the key.
-export function withParams(params: URLSearchParams, changes: Record<string, string | undefined>) {
-	const next = new URLSearchParams(params);
+export function withParams(
+	params: { toString(): string },
+	changes: Record<string, string | undefined>
+) {
+	const next = new URLSearchParams(params.toString());
 	for (const [key, value] of Object.entries(changes)) {
 		if (value) next.set(key, value);
 		else next.delete(key);
