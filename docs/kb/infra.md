@@ -5,12 +5,12 @@
 
 ## Summary
 
-Runs the whole stack on one UpCloud VPS. OpenTofu creates the server and cloud-init prepares it. Haloy runs Postgres, the Go app and the admin as containers and serves HTTPS.
+Runs the whole stack on one UpCloud VPS. OpenTofu creates the server and cloud-init prepares it. Haloy runs Postgres, the Go app and the public web app as containers and serves HTTPS. The admin is a static SPA on bunny.net.
 
 ## Current state
 
 - [infra/tofu](../../infra/tofu) creates the server. It has not been applied or run through `tofu validate` yet.
-- [infra/haloy.yaml](../../infra/haloy.yaml) runs the stack. It passes `haloy validate-config` but has not been deployed. The admin's auth hook answered 401 without credentials and 200 on `/healthz` in a local run.
+- [infra/haloy.yaml](../../infra/haloy.yaml) runs the stack. It passes `haloy validate-config` but has not been deployed.
 - [infra/README.md](../../infra/README.md) lists the first-time steps.
 - [docker-compose.yaml](../../docker-compose.yaml) runs the dev database, with the Swedish dictionary baked into the image. `go run ./cmd migrate` creates the schema.
 
@@ -33,7 +33,7 @@ Layout:
 2. `infra/haloy.yaml` holds the production stack and its domains. `infra/haloy.sh` runs one Haloy command per target.
 3. `infra/.sops.yaml` and `infra/secrets/{dev,prod}/vault.sealed` hold the encrypted secrets. `infra/secrets.sh` runs a command with one vault's secrets in its environment.
 4. `infra/<service>/` holds each service's deploy `Dockerfile` and its committed safe values in `<service>.env`, for `db`, `api` and `web`. `infra/db/Dockerfile` builds the database with the Swedish dictionary, for dev too. The `api` and `web` images build from the repo root and from `frontend/`.
-5. Dev reads each service's `infra/<service>/<service>.env` too, with the root `.env` over it for secrets and dev overrides. The Go config and the admin's Vite config also read `infra/db/db.env` under their own file for the database names, and compose reads `infra/db/db.env` for the container and the root `.env` for the password. When nothing sets `POSTGRES_CONNECTION_STRING`, both apps build it from the user, password and database at `localhost:5432`.
+5. Dev reads each service's `infra/<service>/<service>.env` too, with the root `.env` over it for secrets and dev overrides. The Go config also reads `infra/db/db.env` under its own file for the database names, and compose reads `infra/db/db.env` for the container and the root `.env` for the password. When nothing sets `POSTGRES_CONNECTION_STRING`, the Go app builds it from the user, password and database at `localhost:5432`.
 
 Server:
 
@@ -54,24 +54,23 @@ Routing in Haloy:
 
 Haloy's proxy routes by hostname only. It has no path rules, no auth and no compression.
 
-- The API domain goes to the Go app's only port, 3001. `/posts` and `/posts/{id}` are the public API. Everything under `/admin/` needs a session: the web app forwards the admin's session token as `Authorization: Bearer <token>`, and the Go app checks its sha256 against `sessions` like `hooks.server.ts` does.
-- The site domain serves the public feed at `/`, paged by `GET /posts?after=<post id>`, and the admin. The admin checks sessions itself in `hooks.server.ts`. `/login` checks an email and password against the `users` table and stores a random session token in an httpOnly cookie. The `sessions` table holds only the token's sha256, so a database leak gives no usable cookie. The hook guards `/admin`, every remote function under `/_app/remote` and every request that is not GET or HEAD. A GET to `/admin` without a valid session redirects to `/login`; anything else gets 401. `/healthz` stays open for Haloy's health check. adapter-node serves the static build, the JS bundles and `robots.txt`, before the hook, so those stay public. They hold code, not data.
-- The web app calls the Go app at `api:3001` on the `haloy` network: `/posts` for the feed, and `/admin/listing` and `/admin/sources/{id}/sync` for the admin.
-- The Go app uses static naming, so its container is always called `api`. That forces the replace strategy, which also keeps two scrapers from overlapping. Feeds are down for a few seconds per Go deploy. The admin deploys rolling.
+- The API domain goes to the Go app's only port, 3001. `/posts` and `/posts/{id}` are the public API. Everything under `/admin/` but `POST /admin/login` needs the `session` cookie. Login checks an email and password against the `users` table and sets a random token as an HttpOnly, Secure, SameSite Strict cookie on the API host with path `/admin`. The `sessions` table holds only the token's sha256, so a database leak gives no usable cookie. CORS answers only the origins in `ADMIN_ORIGINS`, and writes must be JSON, so a cross-site form cannot reach them.
+- The admin SPA at `admin.kharoborathus.dagulv.me` is static files in a Bunny Storage zone behind a pull zone. It is on the same site as the API, so the Strict cookie still goes with its requests.
+- The site domain serves the public feed at `/`, paged by `GET /posts?after=<post id>` on the Go app at `api:3001` over the `haloy` network. `/healthz` stays open for Haloy's health check.
+- The Go app uses static naming, so its container is always called `api`. That forces the replace strategy, which also keeps two scrapers from overlapping. Feeds are down for a few seconds per Go deploy. The web app deploys rolling.
 - Responses are not compressed.
 
 Deploy:
 
 1. `tofu apply` in `infra/tofu` creates the server. You point the site, API and Haloy API domains at its IPv4 output.
 2. `haloy server add` registers the server with the token cloud-init left in the deploy user's home.
-3. `secrets.sh prod:app haloy.sh deploy <target>...` builds the images where it runs and uploads them to haloyd, so no registry is needed. The [CI/CD workflow](../../.github/workflows/deploy.yml) runs it for `api` and `web` on pushes to `main` that change them, and pull requests only build those images. The `db` target is protected and deploys only by name, by hand.
+3. `secrets.sh prod:app haloy.sh deploy <target>...` builds the images where it runs and uploads them to haloyd, so no registry is needed. The [CI/CD workflow](../../.github/workflows/deploy.yml) runs it for `api` and `web` on pushes to `main` that change them, and pull requests only build those images. It also builds the admin SPA and uploads it to bunny.net on pushes that change `admin/`. The `db` target is protected and deploys only by name, by hand.
 4. Haloy has no per-target env file, and it only reads files named `.env`. So `haloy.sh` runs Haloy once per target from `infra/<target>/`, with that target's `<target>.env` exported into its env, and each target resolves only its own values. A key already in the env, like a secret from `secrets.sh`, wins. Haloy passes a container only the values `haloy.yaml` names, so `haloy.sh deploy` refuses a target whose `<target>.env` holds a key that `haloy.yaml` does not pass. Every Haloy command that loads the config resolves all its env values, including `logs` and `status`. Haloy also loads `infra/.env` and `.env.local` from the working directory, `infra/` and `~/.config/haloy`, and `.env.local` overrides the vault. `.gitignore` keeps `.env` and every `.env.*` out of git, and none of those files should exist under `infra/`.
 5. The database starts empty. `kharoborathus migrate` applies the numbered files in `internal/migrations` with tern. In prod the CI/CD workflow runs it on every push to `main` that touches `internal/migrations`, before `api` and `web` deploy. A failed migration skips the deploy. It reaches the db through `haloy tunnel` over the haloyd API, so it needs no SSH and no published port.
 
 Build notes:
 
-- `frontend/pnpm-lock.yaml` pins tarballs to a local registry proxy at `127.0.0.1:11230`. The admin image rewrites those URLs to `registry.npmjs.org`, and the integrity hashes still verify them.
-- SvelteKit validates env during the build, so the build passes a placeholder connection string. The real one is read at runtime.
+- `frontend/pnpm-lock.yaml` and `admin/pnpm-lock.yaml` pin tarballs to a local registry proxy at `127.0.0.1:11230`. The web image and the admin CI job rewrite those URLs to `registry.npmjs.org`, and the integrity hashes still verify them.
 
 Secrets:
 
