@@ -9,6 +9,7 @@ import (
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
+	"github.com/dagulv/kharoborathus/internal/lib/dbtest"
 	"github.com/dagulv/kharoborathus/internal/lib/query"
 	"github.com/jackc/pgx/v5"
 )
@@ -262,5 +263,83 @@ func TestFeedOrderUsesIndex(t *testing.T) {
 
 	if !slices.ContainsFunc(rows, func(l string) bool { return strings.Contains(l, "posts_feed_idx") }) {
 		t.Errorf("plan does not use posts_feed_idx:\n%s", strings.Join(rows, "\n"))
+	}
+}
+
+func TestListAdminPosts(t *testing.T) {
+	db := dbtest.New(t)
+	ctx := context.Background()
+
+	domainA, sourceA := seedSource(t, db, "https://a.example", "https://a.example/feed")
+	domainB, sourceB := seedSource(t, db, "https://b.example", "https://b.example/feed")
+
+	newest := seedPost(t, db, sourceA, domainA, "https://a.example/1", "en", "Volvo buys back shares", []string{"buyback", "proposed-x"}, "1 hour", "0")
+	seedPost(t, db, sourceA, domainA, "https://a.example/2", "sv", "Kvartalsrapport", []string{"report"}, "2 hours", "0")
+	oldest := seedPost(t, db, sourceB, domainB, "https://b.example/1", "en", "Weather today", nil, "3 hours", "0")
+
+	s := NewPostStore(db)
+
+	all, err := s.ListAdminPosts(ctx, domain.AdminPostFilter{Page: 1})
+	if err != nil || all.Total != 3 || len(all.Posts) != 3 || all.Page != 1 || all.PageSize != 50 {
+		t.Fatalf("all: %+v, %v", all, err)
+	}
+
+	if all.Posts[0].ID != newest || all.Posts[2].ID != oldest || all.Posts[0].Content != "" || all.Posts[0].DomainURL != "https://a.example" {
+		t.Errorf("order or fields: %+v", all.Posts)
+	}
+
+	cases := map[string]struct {
+		filter domain.AdminPostFilter
+		want   int
+	}{
+		"source":        {domain.AdminPostFilter{SourceID: sourceB, Page: 1}, 1},
+		"active tag":    {domain.AdminPostFilter{Tag: "buyback", Page: 1}, 1},
+		"proposed tag":  {domain.AdminPostFilter{Tag: "proposed-x", Page: 1}, 1},
+		"search":        {domain.AdminPostFilter{Search: "shares", Page: 1}, 1},
+		"source+search": {domain.AdminPostFilter{SourceID: sourceB, Search: "shares", Page: 1}, 0},
+	}
+
+	for name, c := range cases {
+		got, err := s.ListAdminPosts(ctx, c.filter)
+		if err != nil || got.Total != c.want || len(got.Posts) != c.want {
+			t.Errorf("%s: %d/%d, %v", name, len(got.Posts), got.Total, err)
+		}
+	}
+
+	page2, err := s.ListAdminPosts(ctx, domain.AdminPostFilter{Page: 2})
+	if err != nil || page2.Posts == nil || len(page2.Posts) != 0 || page2.Total != 3 {
+		t.Errorf("page 2: %+v, %v", page2, err)
+	}
+}
+
+func TestListAdminPostsOddSearch(t *testing.T) {
+	db := dbtest.New(t)
+	s := NewPostStore(db)
+
+	for _, q := range []string{`"`, "-", "!!!", `"unclosed phrase`, "a & | ! b"} {
+		if _, err := s.ListAdminPosts(context.Background(), domain.AdminPostFilter{Search: q, Page: 1}); err != nil {
+			t.Errorf("%q: %v", q, err)
+		}
+	}
+}
+
+func TestGetAdminPost(t *testing.T) {
+	db := dbtest.New(t)
+	ctx := context.Background()
+
+	domainID, sourceID := seedSource(t, db, "https://a.example", "https://a.example/feed")
+	id := seedPost(t, db, sourceID, domainID, "https://a.example/1", "en", "One", []string{"proposed-x"}, "0", "0")
+
+	s := NewPostStore(db)
+
+	p, err := s.GetAdminPost(ctx, id)
+	if err != nil || p.SourceURL != "https://a.example/feed" || p.Content != "body" || len(p.Tags) != 1 {
+		t.Errorf("got %+v, %v", p, err)
+	}
+
+	for _, bad := range []string{"00000000-0000-0000-0000-000000000000", "x"} {
+		if _, err := s.GetAdminPost(ctx, bad); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("%s: %v", bad, err)
+		}
 	}
 }
