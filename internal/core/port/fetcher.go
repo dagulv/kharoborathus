@@ -8,7 +8,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 )
 
-// A source adapter. It skips posts already stored and sends each post once its article is fetched.
+// A source adapter. It sends one post per item found. The pipeline claims and fetches each one.
 // l takes the third-party request logs.
 type Fetcher interface {
 	Fetch(ctx context.Context, l *slog.Logger, url string) (<-chan domain.RawPost, error)

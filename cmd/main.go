@@ -155,8 +155,8 @@ func app(ctx context.Context) (err error) {
 	}
 
 	fetchers := map[string]port.Fetcher{
-		"rss":  fetcher.NewRSS(&rawPostStore, pacer, l),
-		"page": fetcher.NewPage(&rawPostStore, &domainStore, extractor, pacer, l),
+		"rss":  fetcher.NewRSS(pacer),
+		"page": fetcher.NewPage(&domainStore, extractor, pacer),
 	}
 
 	resultFilter := discovery.NewResultFilter(classifier)

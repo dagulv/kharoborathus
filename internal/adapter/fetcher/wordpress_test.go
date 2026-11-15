@@ -120,7 +120,7 @@ func TestRSSBackfillWordPress(t *testing.T) {
 	l := slog.New(slog.DiscardHandler)
 
 	gap := 50 * time.Millisecond
-	r := rss{client: srv.Client(), pacer: pace.New(gap), l: l}
+	r := rss{client: srv.Client(), pacer: pace.New(gap)}
 
 	start := time.Now()
 
@@ -163,7 +163,7 @@ func TestRSSBackfillNone(t *testing.T) {
 	srv := wordpressServer(t, "/wp-json/")
 	l := slog.New(slog.DiscardHandler)
 
-	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond), l: l}
+	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond)}
 
 	if _, err := r.Backfill(context.Background(), l, srv.URL+"/plain"); !errors.Is(err, port.ErrNoArchive) {
 		t.Errorf("err %v, want ErrNoArchive", err)
@@ -174,7 +174,7 @@ func TestRSSBackfillCategoryFeed(t *testing.T) {
 	srv := wordpressServer(t, "/wp-json/")
 	l := slog.New(slog.DiscardHandler)
 
-	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond), l: l}
+	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond)}
 
 	// The API lists every post on the site, not only the category's.
 	if _, err := r.Backfill(context.Background(), l, srv.URL+"/category/x/feed"); !errors.Is(err, port.ErrNoArchive) {

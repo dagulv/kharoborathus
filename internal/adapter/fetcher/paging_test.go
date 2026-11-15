@@ -95,7 +95,7 @@ func backfillPage(t *testing.T, srv *httptest.Server, linker Linker, path string
 	t.Helper()
 
 	l := slog.New(slog.DiscardHandler)
-	r := page{client: srv.Client(), pacer: pace.New(time.Millisecond), domains: fakeDomains{}, linker: linker, l: l}
+	r := page{client: srv.Client(), pacer: pace.New(time.Millisecond), domains: fakeDomains{}, linker: linker}
 
 	docs, err := r.history(context.Background(), l, srv.URL+path)
 	if err != nil {
@@ -200,7 +200,7 @@ func TestPageBackfillNoLinkRule(t *testing.T) {
 func TestPageBackfillWordPress(t *testing.T) {
 	srv := wordpressServer(t, "/wp-json/")
 	l := slog.New(slog.DiscardHandler)
-	r := page{client: srv.Client(), pacer: pace.New(time.Millisecond), domains: fakeDomains{}, linker: fakeLinker{}, l: l}
+	r := page{client: srv.Client(), pacer: pace.New(time.Millisecond), domains: fakeDomains{}, linker: fakeLinker{}}
 
 	// A section like /blog/ may be one category of the site, so only the site root reads the whole API.
 	if _, err := r.history(context.Background(), l, srv.URL+"/blog/"); !errors.Is(err, port.ErrNoArchive) {
@@ -223,5 +223,39 @@ func TestPageBackfillWordPress(t *testing.T) {
 
 	if want := []string{"https://x.example/a", "https://x.example/b", "https://x.example/c"}; !slices.Equal(got, want) {
 		t.Errorf("got %v", got)
+	}
+}
+
+func TestPageSendsLinks(t *testing.T) {
+	var requests atomic.Int32
+	srv := listingServer(t, map[string]string{
+		"/news": listingHTML("", "a", "b"),
+		"/a":    "<p>a</p>",
+		"/b":    "<p>b</p>",
+	}, &requests)
+
+	l := slog.New(slog.DiscardHandler)
+	r := page{client: srv.Client(), pacer: pace.New(time.Millisecond), domains: fakeDomains{}, linker: fakeLinker{}}
+
+	posts, err := r.Fetch(context.Background(), l, srv.URL+"/news")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	for p := range posts {
+		if p.RawContent != "" || p.Lang != "sv" {
+			t.Errorf("%s: raw content %q, lang %q", p.URL, p.RawContent, p.Lang)
+		}
+
+		got = append(got, strings.TrimPrefix(p.URL, srv.URL+"/"))
+	}
+
+	if !slices.Equal(got, []string{"a", "b"}) {
+		t.Errorf("got %v", got)
+	}
+
+	if n := requests.Load(); n != 1 {
+		t.Errorf("%d requests, want only the listing", n)
 	}
 }
