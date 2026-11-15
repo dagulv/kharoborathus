@@ -85,3 +85,20 @@ func getPost(s *postgres.PostStore, l *slog.Logger) http.HandlerFunc {
 		writeJSON(w, l, post)
 	}
 }
+
+func getTrace(s *postgres.TraceStore, l *slog.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		trace, err := s.Trace(r.Context(), r.PathValue("id"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Post not found", http.StatusNotFound)
+			return
+		}
+
+		if err != nil {
+			serverError(w, l, "get trace", err)
+			return
+		}
+
+		writeJSON(w, l, trace)
+	}
+}

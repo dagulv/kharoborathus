@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -43,5 +44,62 @@ func TestPostRoutes(t *testing.T) {
 
 	if posts, ok := got["posts"].([]any); !ok || len(posts) != 0 || got["total"] != 0.0 || got["page"] != 1.0 || got["pageSize"] != 50.0 {
 		t.Errorf("empty list: %s", rec.Body)
+	}
+}
+
+func TestTraceHasNoBodies(t *testing.T) {
+	mux, db, _ := newMux(t)
+	ctx := context.Background()
+
+	var rawPostID string
+	if err := db.QueryRow(ctx, `
+		WITH d AS (INSERT INTO domains (base_url) VALUES ('https://a.example') RETURNING id)
+		INSERT INTO raw_posts (url, domain_id, status) SELECT 'https://a.example/1', id, 'failed' FROM d RETURNING id
+		`).Scan(&rawPostID); err != nil {
+		t.Fatal(err)
+	}
+
+	big := strings.Repeat("x", 1<<20)
+
+	if _, err := db.Exec(ctx, `
+		INSERT INTO logs (type, level, request, response, metadata) VALUES
+			('page', 'WARN', '{"url": "https://a.example/1"}', to_jsonb($2::text), jsonb_build_object('raw_post_id', $1::text, 'step', 'fetch')),
+			('step', 'WARN', '{"url": "https://a.example/1"}', '{"bytes": 0}', jsonb_build_object('raw_post_id', $1::text, 'step', 'fetch', 'outcome', 'stopped', 'reason', 'fetch failed: status 404'))
+		`, rawPostID, big); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := do(mux, http.MethodGet, "/admin/posts/"+rawPostID+"/trace", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+
+	if rec.Body.Len() > 1<<16 {
+		t.Errorf("trace is %d bytes, it carries a body", rec.Body.Len())
+	}
+
+	var got struct {
+		Steps []struct {
+			Reason string           `json:"reason"`
+			Output map[string]any   `json:"output"`
+			Calls  []map[string]any `json:"calls"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Steps) != 1 || len(got.Steps[0].Calls) != 1 || got.Steps[0].Reason != "fetch failed: status 404" || got.Steps[0].Output["bytes"] != 0.0 {
+		t.Fatalf("trace %s", rec.Body)
+	}
+
+	for _, key := range []string{"request", "response"} {
+		if _, ok := got.Steps[0].Calls[0][key]; ok {
+			t.Errorf("call has %s", key)
+		}
+	}
+
+	if rec := do(mux, http.MethodGet, "/admin/posts/x/trace", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("bad id: %d", rec.Code)
 	}
 }

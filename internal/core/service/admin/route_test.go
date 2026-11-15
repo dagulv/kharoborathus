@@ -22,11 +22,12 @@ func newMux(t *testing.T) (*http.ServeMux, *database.Database, chan domain.Sourc
 	posts := postgres.NewPostStore(db)
 	tags := postgres.NewTagStore(db)
 	logs := postgres.NewLogStore(db)
+	traces := postgres.NewTraceStore(db)
 
 	backfills := make(chan domain.Source, 4)
 
 	mux := http.NewServeMux()
-	Routes(mux, backfills, Stores{Stats: &stats, Sources: &sources, Posts: &posts, Tags: &tags, Logs: &logs}, slog.New(slog.DiscardHandler))
+	Routes(mux, backfills, Stores{Stats: &stats, Sources: &sources, Posts: &posts, Tags: &tags, Logs: &logs, Traces: &traces}, slog.New(slog.DiscardHandler))
 
 	return mux, db, backfills
 }
