@@ -78,14 +78,14 @@ CREATE INDEX IF NOT EXISTS sources_enabled_idx ON sources (enabled);
 
 CREATE TABLE IF NOT EXISTS raw_posts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  source_id UUID NOT NULL REFERENCES sources (id),
+  source_id UUID REFERENCES sources (id), -- NULL for a discovered link until its source is matched
   url TEXT UNIQUE NOT NULL,
-  lang TEXT NOT NULL,
+  lang TEXT NOT NULL DEFAULT '',
   domain_id UUID NOT NULL REFERENCES domains (id),
   raw_content TEXT,
   content JSONB, -- {content, title, authors, posted_at} from the fetch and extraction
   simhash BIGINT,
-  status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed | missing
   retry_count INT NOT NULL DEFAULT 0, -- failed enrich attempts
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -176,6 +176,9 @@ CREATE TABLE IF NOT EXISTS discovery_posts (
   checked_at TIMESTAMPTZ
 );
 
+-- Declared here since discovery_posts is created after raw_posts.
+ALTER TABLE raw_posts ADD COLUMN IF NOT EXISTS discovery_post_id UUID REFERENCES discovery_posts (id) ON DELETE SET NULL;
+
 CREATE TABLE discovery_related_posts (
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
   to_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
@@ -201,10 +204,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- One row per outbound request, written by the slog handler in internal/lib/logs.
+-- One row per outbound request or pipeline step, written by the slog handler in internal/lib/logs.
 CREATE TABLE IF NOT EXISTS logs (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  type TEXT NOT NULL, -- deepseek | jev | brave | rss | page | trim | ingest | robots | homepage | wordpress
+  type TEXT NOT NULL, -- deepseek | jev | brave | rss | page | trim | ingest | robots | homepage | wordpress | step
   level TEXT NOT NULL,
   request JSONB NOT NULL,
   response JSONB,

@@ -1,4 +1,4 @@
-// Package logs writes slog records to the logs table, one row per outbound request.
+// Package logs writes slog records to the logs table, one row per outbound request or pipeline step.
 package logs
 
 import (
