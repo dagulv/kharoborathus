@@ -174,7 +174,7 @@ func (s *Service) fetch(ctx context.Context, _ *slog.Logger, p domain.RawPost) (
 }
 
 func (s *Service) saveContent(ctx context.Context, _ *slog.Logger, p domain.RawPost) (domain.RawPost, error) {
-	return p, s.RawPostStore.SaveContent(ctx, p)
+	return s.RawPostStore.SaveContent(ctx, p)
 }
 
 // A dropped id is found again by enrich's catch-up job, so a full queue is not a failure.
