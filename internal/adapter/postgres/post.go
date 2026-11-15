@@ -211,15 +211,42 @@ func scanPost(row pgx.Row) (p domain.Post, err error) {
 
 const adminPageSize = 50
 
-// Unlike ListPosts, the admin sees every tag on a post, proposed and disabled ones included.
-func (s *PostStore) ListAdminPosts(ctx context.Context, f domain.AdminPostFilter) (domain.PostPage, error) {
-	page := domain.PostPage{Posts: []domain.Post{}, Page: f.Page, PageSize: adminPageSize}
+// A raw post joined to the post it became. The post's fields win, and a raw post shows what it extracted.
+const (
+	adminPostFrom = `
+		FROM raw_posts r
+		JOIN domains d ON d.id = r.domain_id
+		LEFT JOIN posts p ON p.url = r.url
+		LEFT JOIN sources s ON s.id = r.source_id`
+
+	adminPostStatus = `CASE WHEN p.id IS NOT NULL THEN 'published' ELSE r.status END`
+
+	adminPostColumns = `r.id, p.id, r.source_id, d.base_url, r.url, coalesce(p.lang, r.lang),
+		coalesce(p.title, r.content->>'title', ''),
+		coalesce(p.short_content, ''),
+		coalesce(p.tags, '{}'),
+		coalesce(p.authors, CASE WHEN jsonb_typeof(r.content->'authors') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(r.content->'authors')) END, '{}'),
+		coalesce(p.posted_at, (r.content->>'posted_at')::timestamptz),
+		` + adminPostStatus + `,
+		r.created_at`
+)
+
+func scanAdminPost(row pgx.Row, extra ...any) (p domain.AdminPost, err error) {
+	dest := []any{&p.ID, &p.PostID, &p.SourceID, &p.DomainURL, &p.URL, &p.Lang, &p.Title, &p.ShortContent, &p.Tags, &p.Authors, &p.PostedAt, &p.Status, &p.CreatedAt}
+	err = row.Scan(append(dest, extra...)...)
+
+	return
+}
+
+// Unlike ListPosts, the admin sees every raw post, and every tag on a post, proposed and disabled ones included.
+func (s *PostStore) ListAdminPosts(ctx context.Context, f domain.AdminPostFilter) (domain.AdminPostPage, error) {
+	page := domain.AdminPostPage{Posts: []domain.AdminPost{}, Page: f.Page, PageSize: adminPageSize}
 	args := []any{}
 	conds := []string{"true"}
 
 	if f.SourceID != "" {
 		args = append(args, f.SourceID)
-		conds = append(conds, fmt.Sprintf(`p.source_id = $%d`, len(args)))
+		conds = append(conds, fmt.Sprintf(`r.source_id = $%d`, len(args)))
 	}
 
 	if f.Tag != "" {
@@ -227,9 +254,15 @@ func (s *PostStore) ListAdminPosts(ctx context.Context, f domain.AdminPostFilter
 		conds = append(conds, fmt.Sprintf(`p.tags @> ARRAY[$%d]::text[]`, len(args)))
 	}
 
+	if f.Status != "" {
+		args = append(args, f.Status)
+		conds = append(conds, fmt.Sprintf(adminPostStatus+` = $%d`, len(args)))
+	}
+
 	if f.Search != "" {
 		args = append(args, f.Search)
 		conds = append(conds, fmt.Sprintf(`(
+			(
 			(p.lang = 'sv' AND p.ts @@ websearch_to_tsquery('ts_swedish', $%[1]d))
 			OR (p.lang = 'en' AND p.ts @@ websearch_to_tsquery('english', $%[1]d))
 			OR (p.lang NOT IN ('sv', 'en') AND p.ts @@ websearch_to_tsquery('simple', $%[1]d))
@@ -245,32 +278,33 @@ func (s *PostStore) ListAdminPosts(ctx context.Context, f domain.AdminPostFilter
 					$%[1]d
 				) @@ t.matcher
 			)
+		)
+			OR r.url ILIKE '%%' || $%[1]d || '%%'
+			OR r.content->>'title' ILIKE '%%' || $%[1]d || '%%'
 		)`, len(args)))
 	}
 
 	where := strings.Join(conds, " AND ")
 
-	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM posts p WHERE `+where, args...).Scan(&page.Total); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT count(*) `+adminPostFrom+` WHERE `+where, args...).Scan(&page.Total); err != nil {
 		return page, fmt.Errorf("err count admin posts: %w", err)
 	}
 
 	args = append(args, adminPageSize, (f.Page-1)*adminPageSize)
 
 	rows, err := s.db.Query(ctx, fmt.Sprintf(`
-		SELECT p.id, p.source_id, p.domain_id, d.base_url, p.url, p.lang, p.title, p.short_content, '', p.tags, p.authors, p.posted_at, p.created_at
-		FROM posts p
-		JOIN domains d ON d.id = p.domain_id
+		SELECT %s %s
 		WHERE %s
-		ORDER BY p.posted_at DESC
+		ORDER BY r.created_at DESC, r.id DESC
 		LIMIT $%d OFFSET $%d
-		`, where, len(args)-1, len(args)), args...)
+		`, adminPostColumns, adminPostFrom, where, len(args)-1, len(args)), args...)
 	if err != nil {
 		return page, fmt.Errorf("err list admin posts: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		p, err := scanPost(rows)
+		p, err := scanAdminPost(rows)
 		if err != nil {
 			return page, fmt.Errorf("err scan admin post: %w", err)
 		}
@@ -286,21 +320,23 @@ func (s *PostStore) ListAdminPosts(ctx context.Context, f domain.AdminPostFilter
 }
 
 // An id that is not a uuid is reported as not found.
-func (s *PostStore) GetAdminPost(ctx context.Context, id string) (p domain.AdminPost, err error) {
-	err = s.db.QueryRow(ctx, `
-		SELECT p.id, p.source_id, p.domain_id, d.base_url, p.url, p.lang, p.title, p.short_content, p.content, p.tags, p.authors, p.posted_at, p.created_at, s.url
-		FROM posts p
-		JOIN domains d ON d.id = p.domain_id
-		JOIN sources s ON s.id = p.source_id
-		WHERE p.id = $1
-		`, id).Scan(&p.ID, &p.SourceID, &p.DomainID, &p.DomainURL, &p.URL, &p.Lang, &p.Title, &p.ShortContent, &p.Content, &p.Tags, &p.Authors, &p.PostedAt, &p.CreatedAt, &p.SourceURL)
+func (s *PostStore) GetAdminPost(ctx context.Context, rawPostID string) (domain.AdminPost, error) {
+	var content, sourceURL string
+
+	p, err := scanAdminPost(s.db.QueryRow(ctx, `
+		SELECT `+adminPostColumns+`, coalesce(p.content, r.content->>'content', ''), coalesce(s.url, '')
+		`+adminPostFrom+`
+		WHERE r.id = $1
+		`, rawPostID), &content, &sourceURL)
 	if isInvalidText(err) {
 		err = pgx.ErrNoRows
 	}
 
 	if err != nil {
-		return p, fmt.Errorf("err get admin post %s: %w", id, err)
+		return p, fmt.Errorf("err get admin post %s: %w", rawPostID, err)
 	}
+
+	p.Content, p.SourceURL = content, sourceURL
 
 	return p, nil
 }

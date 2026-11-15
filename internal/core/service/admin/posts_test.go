@@ -22,6 +22,8 @@ func TestPostRoutes(t *testing.T) {
 		{"/admin/posts?page=x", http.StatusBadRequest},
 		{"/admin/posts?tag=" + strings.Repeat("a", 201), http.StatusBadRequest},
 		{"/admin/posts?search=" + strings.Repeat("a", 501), http.StatusBadRequest},
+		{"/admin/posts?status=rejected", http.StatusOK},
+		{"/admin/posts?status=nope", http.StatusBadRequest},
 		{"/admin/posts/00000000-0000-0000-0000-000000000000", http.StatusNotFound},
 		{"/admin/posts/x", http.StatusNotFound},
 	}

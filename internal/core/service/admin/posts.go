@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,12 @@ func listPosts(s *postgres.PostStore, l *slog.Logger) http.HandlerFunc {
 			SourceID: q.Get("source"),
 			Tag:      q.Get("tag"),
 			Search:   strings.TrimSpace(q.Get("search")),
+			Status:   q.Get("status"),
+		}
+
+		if f.Status != "" && !slices.Contains(domain.AdminPostStatuses, f.Status) {
+			http.Error(w, "unknown status", http.StatusBadRequest)
+			return
 		}
 
 		if f.SourceID != "" && uuid.Validate(f.SourceID) != nil {

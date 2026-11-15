@@ -273,9 +273,9 @@ func TestListAdminPosts(t *testing.T) {
 	domainA, sourceA := seedSource(t, db, "https://a.example", "https://a.example/feed")
 	domainB, sourceB := seedSource(t, db, "https://b.example", "https://b.example/feed")
 
-	newest := seedPost(t, db, sourceA, domainA, "https://a.example/1", "en", "Volvo buys back shares", []string{"buyback", "proposed-x"}, "1 hour", "0")
-	seedPost(t, db, sourceA, domainA, "https://a.example/2", "sv", "Kvartalsrapport", []string{"report"}, "2 hours", "0")
-	oldest := seedPost(t, db, sourceB, domainB, "https://b.example/1", "en", "Weather today", nil, "3 hours", "0")
+	newest := seedPost(t, db, sourceA, domainA, "https://a.example/1", "en", "Volvo buys back shares", []string{"buyback", "proposed-x"}, "1 hour", "1 minute")
+	seedPost(t, db, sourceA, domainA, "https://a.example/2", "sv", "Kvartalsrapport", []string{"report"}, "2 hours", "2 minutes")
+	oldest := seedPost(t, db, sourceB, domainB, "https://b.example/1", "en", "Weather today", nil, "3 hours", "3 minutes")
 
 	s := NewPostStore(db)
 
@@ -284,8 +284,14 @@ func TestListAdminPosts(t *testing.T) {
 		t.Fatalf("all: %+v, %v", all, err)
 	}
 
-	if all.Posts[0].ID != newest || all.Posts[2].ID != oldest || all.Posts[0].Content != "" || all.Posts[0].DomainURL != "https://a.example" {
+	first, last := all.Posts[0], all.Posts[2]
+
+	if first.PostID == nil || *first.PostID != newest || last.PostID == nil || *last.PostID != oldest || first.Content != "" || first.DomainURL != "https://a.example" {
 		t.Errorf("order or fields: %+v", all.Posts)
+	}
+
+	if first.Status != "published" || first.Title != "Volvo buys back shares" || len(first.Tags) != 2 || first.ShortContent != "summary" {
+		t.Errorf("published fields: %+v", first)
 	}
 
 	cases := map[string]struct {
@@ -297,6 +303,8 @@ func TestListAdminPosts(t *testing.T) {
 		"proposed tag":  {domain.AdminPostFilter{Tag: "proposed-x", Page: 1}, 1},
 		"search":        {domain.AdminPostFilter{Search: "shares", Page: 1}, 1},
 		"source+search": {domain.AdminPostFilter{SourceID: sourceB, Search: "shares", Page: 1}, 0},
+		"published":     {domain.AdminPostFilter{Status: "published", Page: 1}, 3},
+		"rejected":      {domain.AdminPostFilter{Status: "rejected", Page: 1}, 0},
 	}
 
 	for name, c := range cases {
@@ -307,8 +315,60 @@ func TestListAdminPosts(t *testing.T) {
 	}
 
 	page2, err := s.ListAdminPosts(ctx, domain.AdminPostFilter{Page: 2})
-	if err != nil || page2.Posts == nil || len(page2.Posts) != 0 || page2.Total != 3 {
+	if err != nil || page2.Posts == nil || page2.Total != 3 || len(page2.Posts) != 0 {
 		t.Errorf("page 2: %+v, %v", page2, err)
+	}
+}
+
+func TestListAdminPostsRaw(t *testing.T) {
+	db := dbtest.New(t)
+	ctx := context.Background()
+
+	domainID, sourceID := seedSource(t, db, "https://a.example", "https://a.example/feed")
+
+	seedPost(t, db, sourceID, domainID, "https://a.example/published", "en", "Published post", []string{"buyback"}, "1 hour", "4 minutes")
+	rejected := seedRawPost(t, db, sourceID, domainID, "https://a.example/rejected", "rejected", `{"title": "Design with Claude", "content": "body", "authors": ["A"]}`, "3 minutes")
+	missing := seedRawPost(t, db, sourceID, domainID, "https://a.example/missing", "missing", "", "2 minutes")
+	failed := seedRawPost(t, db, "", domainID, "https://a.example/failed", "failed", "", "1 minute")
+
+	s := NewPostStore(db)
+
+	all, err := s.ListAdminPosts(ctx, domain.AdminPostFilter{Page: 1})
+	if err != nil || all.Total != 4 || len(all.Posts) != 4 {
+		t.Fatalf("all: %+v, %v", all, err)
+	}
+
+	ids := []string{all.Posts[0].ID, all.Posts[1].ID, all.Posts[2].ID}
+	if !slices.Equal(ids, []string{failed, missing, rejected}) || all.Posts[3].Status != "published" {
+		t.Errorf("order %v, last %+v", ids, all.Posts[3])
+	}
+
+	if f := all.Posts[0]; f.Status != "failed" || f.SourceID != nil || f.Title != "" || f.URL != "https://a.example/failed" || f.PostID != nil {
+		t.Errorf("failed row %+v", f)
+	}
+
+	if r := all.Posts[2]; r.Title != "Design with Claude" || !slices.Equal(r.Authors, []string{"A"}) || len(r.Tags) != 0 {
+		t.Errorf("rejected row %+v", r)
+	}
+
+	cases := map[string]struct {
+		filter domain.AdminPostFilter
+		want   int
+	}{
+		"rejected":     {domain.AdminPostFilter{Status: "rejected", Page: 1}, 1},
+		"missing":      {domain.AdminPostFilter{Status: "missing", Page: 1}, 1},
+		"raw title":    {domain.AdminPostFilter{Search: "Claude", Page: 1}, 1},
+		"url":          {domain.AdminPostFilter{Search: "a.example/fail", Page: 1}, 1},
+		"tag":          {domain.AdminPostFilter{Tag: "buyback", Page: 1}, 1},
+		"source":       {domain.AdminPostFilter{SourceID: sourceID, Page: 1}, 3},
+		"tag+rejected": {domain.AdminPostFilter{Tag: "buyback", Status: "rejected", Page: 1}, 0},
+	}
+
+	for name, c := range cases {
+		got, err := s.ListAdminPosts(ctx, c.filter)
+		if err != nil || got.Total != c.want || len(got.Posts) != c.want {
+			t.Errorf("%s: %d/%d, %v", name, len(got.Posts), got.Total, err)
+		}
 	}
 }
 
@@ -328,13 +388,28 @@ func TestGetAdminPost(t *testing.T) {
 	ctx := context.Background()
 
 	domainID, sourceID := seedSource(t, db, "https://a.example", "https://a.example/feed")
-	id := seedPost(t, db, sourceID, domainID, "https://a.example/1", "en", "One", []string{"proposed-x"}, "0", "0")
+	postID := seedPost(t, db, sourceID, domainID, "https://a.example/1", "en", "One", []string{"proposed-x"}, "0", "0")
+	rejected := seedRawPost(t, db, sourceID, domainID, "https://a.example/rejected", "rejected", `{"title": "Two", "content": "raw body"}`, "0")
+	orphan := seedRawPost(t, db, "", domainID, "https://a.example/orphan", "failed", "", "0")
 
 	s := NewPostStore(db)
 
-	p, err := s.GetAdminPost(ctx, id)
-	if err != nil || p.SourceURL != "https://a.example/feed" || p.Content != "body" || len(p.Tags) != 1 {
-		t.Errorf("got %+v, %v", p, err)
+	list, err := s.ListAdminPosts(ctx, domain.AdminPostFilter{Status: "published", Page: 1})
+	if err != nil || len(list.Posts) != 1 {
+		t.Fatalf("list %+v, %v", list, err)
+	}
+
+	p, err := s.GetAdminPost(ctx, list.Posts[0].ID)
+	if err != nil || p.SourceURL != "https://a.example/feed" || p.Content != "body" || len(p.Tags) != 1 || *p.PostID != postID || p.Status != "published" {
+		t.Errorf("published %+v, %v", p, err)
+	}
+
+	if p, err := s.GetAdminPost(ctx, rejected); err != nil || p.Content != "raw body" || p.Title != "Two" || p.Status != "rejected" {
+		t.Errorf("rejected %+v, %v", p, err)
+	}
+
+	if p, err := s.GetAdminPost(ctx, orphan); err != nil || p.SourceURL != "" || p.SourceID != nil {
+		t.Errorf("orphan %+v, %v", p, err)
 	}
 
 	for _, bad := range []string{"00000000-0000-0000-0000-000000000000", "x"} {
