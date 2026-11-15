@@ -46,7 +46,7 @@ func create(t *testing.T, s RawPostStore, p domain.RawPost, url string, hash int
 
 	out.Lang, out.Content, out.Simhash = p.Lang, p.Content, &hash
 
-	if err := s.SaveContent(ctx, out); err != nil {
+	if _, err := s.SaveContent(ctx, out); err != nil {
 		t.Fatal(err)
 	}
 
@@ -351,7 +351,7 @@ func TestSaveContent(t *testing.T) {
 	p.PostedAt = &posted
 	p.Simhash = &hash
 
-	if err := s.SaveContent(ctx, p); err != nil {
+	if _, err := s.SaveContent(ctx, p); err != nil {
 		t.Fatal(err)
 	}
 
@@ -361,7 +361,7 @@ func TestSaveContent(t *testing.T) {
 	}
 
 	p.SourceID = ""
-	if err := s.SaveContent(ctx, p); err != nil {
+	if _, err := s.SaveContent(ctx, p); err != nil {
 		t.Fatal(err)
 	}
 
@@ -423,5 +423,62 @@ func TestClaimRawPostSameLinkAgain(t *testing.T) {
 	again, ok, err := s.ClaimRawPost(ctx, c)
 	if err != nil || !ok || again.ID != first.ID {
 		t.Errorf("again %v, %v, %+v", ok, err, again)
+	}
+}
+
+func TestClaimRawPostAfterReclaim(t *testing.T) {
+	db, s, base := rawPostDB(t)
+	ctx := context.Background()
+	c := Claim{URL: "https://a.example/again", SourceID: base.SourceID}
+
+	p, _, err := s.ClaimRawPost(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = 'failed', created_at = now() - interval '1 hour' WHERE id = $1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := s.ClaimRawPost(ctx, c); err != nil || !ok {
+		t.Fatalf("reclaim %v, %v", ok, err)
+	}
+
+	// A second lane right after the reclaim must not take the row too.
+	if _, ok, err := s.ClaimRawPost(ctx, c); err != nil || ok {
+		t.Errorf("second lane claimed %v, %v", ok, err)
+	}
+}
+
+func TestHasDuplicateByContentTime(t *testing.T) {
+	_, s, base := rawPostDB(t)
+	ctx := context.Background()
+	hash := int64(0b1111)
+
+	// a is claimed first, but b's content arrives and is checked first.
+	a, _, err := s.ClaimRawPost(ctx, Claim{URL: "https://a.example/a", SourceID: base.SourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, _, err := s.ClaimRawPost(ctx, Claim{URL: "https://a.example/b", SourceID: base.SourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range []*domain.RawPost{&b, &a} {
+		p.Content, p.Simhash = "c", &hash
+
+		if *p, err = s.SaveContent(ctx, *p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if dup, err := s.HasDuplicate(ctx, b); err != nil || dup {
+		t.Errorf("b: %v, %v", dup, err)
+	}
+
+	if dup, err := s.HasDuplicate(ctx, a); err != nil || !dup {
+		t.Errorf("a must be the duplicate: %v, %v", dup, err)
 	}
 }

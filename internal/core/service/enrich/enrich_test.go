@@ -133,7 +133,7 @@ func (f fixture) rawPost(t *testing.T, trusted bool, url, status string, retries
 
 	p.SourceID, p.DomainID, p.Lang, p.Content, p.Title, p.Authors, p.PostedAt = sourceID, domainID, "sv", article, "Volvo köper", []string{"TT"}, &posted
 
-	if err := f.rawPosts.SaveContent(ctx, p); err != nil {
+	if _, err := f.rawPosts.SaveContent(ctx, p); err != nil {
 		t.Fatal(err)
 	}
 

@@ -76,7 +76,7 @@ func (s *RawPostStore) ClaimRawPost(ctx context.Context, c Claim) (p domain.RawP
 		)
 		INSERT INTO raw_posts (source_id, discovery_post_id, url, lang, domain_id)
 		SELECT NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, $4, $5, d.id FROM d
-		ON CONFLICT (url) DO UPDATE SET status = 'pending'
+		ON CONFLICT (url) DO UPDATE SET status = 'pending', created_at = now()
 		WHERE raw_posts.content IS NULL AND (
 			raw_posts.status IN ('failed', 'missing')
 			OR (raw_posts.status = 'pending' AND raw_posts.created_at < now() - interval '5 minutes')
@@ -96,22 +96,24 @@ func (s *RawPostStore) ClaimRawPost(ctx context.Context, c Claim) (p domain.RawP
 	return p, true, nil
 }
 
-// An empty SourceID keeps the stored one.
-func (s *RawPostStore) SaveContent(ctx context.Context, p domain.RawPost) error {
+// An empty SourceID keeps the stored one. created_at moves to now, since the duplicate check and
+// the catch-up jobs count a post's age from when its content arrived.
+func (s *RawPostStore) SaveContent(ctx context.Context, p domain.RawPost) (domain.RawPost, error) {
 	content, err := json.Marshal(rawContent{Content: p.Content, Title: p.Title, Authors: p.Authors, PostedAt: p.PostedAt})
 	if err != nil {
-		return fmt.Errorf("err marshal raw post content %s: %w", p.URL, err)
+		return p, fmt.Errorf("err marshal raw post content %s: %w", p.URL, err)
 	}
 
-	if _, err := s.db.Exec(ctx, `
+	if err := s.db.QueryRow(ctx, `
 		UPDATE raw_posts
-		SET source_id = coalesce(NULLIF($2, '')::uuid, source_id), domain_id = $3, lang = $4, raw_content = $5, content = $6, simhash = $7
+		SET source_id = coalesce(NULLIF($2, '')::uuid, source_id), domain_id = $3, lang = $4, raw_content = $5, content = $6, simhash = $7, created_at = now()
 		WHERE id = $1
-		`, p.ID, p.SourceID, p.DomainID, p.Lang, p.RawContent, content, p.Simhash); err != nil {
-		return fmt.Errorf("err save raw post content %s: %w", p.URL, err)
+		RETURNING created_at
+		`, p.ID, p.SourceID, p.DomainID, p.Lang, p.RawContent, content, p.Simhash).Scan(&p.CreatedAt); err != nil {
+		return p, fmt.Errorf("err save raw post content %s: %w", p.URL, err)
 	}
 
-	return nil
+	return p, nil
 }
 
 // Only earlier rows count, so of two near-identical posts exactly one is the duplicate.
