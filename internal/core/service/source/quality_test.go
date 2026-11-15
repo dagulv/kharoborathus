@@ -161,18 +161,18 @@ func TestCheckQualityNoClassifier(t *testing.T) {
 	}
 }
 
-func TestInsertExisting(t *testing.T) {
+func TestClaimExisting(t *testing.T) {
 	s, base := qualityService(t, nil)
 	ctx := context.Background()
 	l := slog.New(slog.DiscardHandler)
 
 	base.URL = "https://a.example/1"
 
-	if _, err := s.insert(ctx, l, base); err != nil {
+	if _, err := s.claim(ctx, l, base); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := s.insert(ctx, l, base); !errors.Is(err, pipeline.ErrSkip) {
+	if _, err := s.claim(ctx, l, base); !errors.Is(err, pipeline.ErrSkip) {
 		t.Errorf("err %v", err)
 	}
 }
@@ -187,7 +187,7 @@ func TestSaveStatusSendsAccepted(t *testing.T) {
 	for _, c := range []struct{ url, status string }{{"https://a.example/1", domain.StatusAccepted}, {"https://a.example/2", domain.StatusRejected}} {
 		base.URL = c.url
 
-		p, err := s.insert(ctx, l, base)
+		p, err := s.claim(ctx, l, base)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -214,7 +214,7 @@ func TestSaveStatusQueueFull(t *testing.T) {
 
 	base.URL = "https://a.example/1"
 
-	p, err := s.insert(ctx, l, base)
+	p, err := s.claim(ctx, l, base)
 	if err != nil {
 		t.Fatal(err)
 	}
