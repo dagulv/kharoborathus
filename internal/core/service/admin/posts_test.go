@@ -103,3 +103,50 @@ func TestTraceHasNoBodies(t *testing.T) {
 		t.Errorf("bad id: %d", rec.Code)
 	}
 }
+
+func TestResyncPost(t *testing.T) {
+	mux, db, _, resyncs := newMuxResyncs(t)
+	ctx := context.Background()
+
+	ids := map[string]string{}
+
+	for _, status := range []string{"rejected", "accepted", "pending"} {
+		var id string
+		if err := db.QueryRow(ctx, `
+			WITH d AS (
+				INSERT INTO domains (base_url) VALUES ('https://a.example')
+				ON CONFLICT (base_url) DO UPDATE SET base_url = EXCLUDED.base_url
+				RETURNING id
+			)
+			INSERT INTO raw_posts (url, domain_id, status) SELECT 'https://a.example/' || $1, id, $1 FROM d RETURNING id
+			`, status).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+
+		ids[status] = id
+	}
+
+	path := func(id string) string { return "/admin/posts/" + id + "/resync" }
+
+	cases := []struct {
+		name, id, body string
+		want           int
+	}{
+		{"unknown", "00000000-0000-0000-0000-000000000000", `{}`, http.StatusNotFound},
+		{"bad body", ids["rejected"], `{"override":"yes"}`, http.StatusBadRequest},
+		{"override not rejected", ids["accepted"], `{"override":true}`, http.StatusBadRequest},
+		{"in flight", ids["pending"], `{}`, http.StatusConflict},
+		{"override", ids["rejected"], `{"override":true}`, http.StatusAccepted},
+		{"queue full", ids["accepted"], `{}`, http.StatusServiceUnavailable},
+	}
+
+	for _, c := range cases {
+		if rec := do(mux, http.MethodPost, path(c.id), c.body); rec.Code != c.want {
+			t.Errorf("%s: %d %s", c.name, rec.Code, rec.Body)
+		}
+	}
+
+	if r := <-resyncs; r.RawPostID != ids["rejected"] || !r.Override {
+		t.Errorf("queued %+v", r)
+	}
+}

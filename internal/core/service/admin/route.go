@@ -21,7 +21,7 @@ type Stores struct {
 }
 
 // backfills is the queue source.Routes serves POST /admin/sources/{id}/backfill from.
-func Routes(mux *http.ServeMux, backfills chan<- domain.Source, s Stores, l *slog.Logger) {
+func Routes(mux *http.ServeMux, backfills chan<- domain.Source, resyncs chan<- domain.Resync, s Stores, l *slog.Logger) {
 	mux.HandleFunc("GET /admin/stats", getStats(s.Stats, l))
 	mux.HandleFunc("GET /admin/sources", listSources(s.Sources, l))
 	mux.HandleFunc("POST /admin/sources", createSource(s.Sources, backfills, l))
@@ -29,6 +29,7 @@ func Routes(mux *http.ServeMux, backfills chan<- domain.Source, s Stores, l *slo
 	mux.HandleFunc("GET /admin/posts", listPosts(s.Posts, l))
 	mux.HandleFunc("GET /admin/posts/{id}", getPost(s.Posts, l))
 	mux.HandleFunc("GET /admin/posts/{id}/trace", getTrace(s.Traces, l))
+	mux.HandleFunc("POST /admin/posts/{id}/resync", resyncPost(s.Posts, resyncs, l))
 	mux.HandleFunc("GET /admin/tags", getTags(s.Tags, l))
 	mux.HandleFunc("PATCH /admin/tags/{key}", setTagEnabled(s.Tags, l))
 	mux.HandleFunc("POST /admin/tags/merge", mergeTag(s.Tags, l))

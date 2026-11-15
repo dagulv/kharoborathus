@@ -102,3 +102,47 @@ func getTrace(s *postgres.TraceStore, l *slog.Logger) http.HandlerFunc {
 		writeJSON(w, l, trace)
 	}
 }
+
+// The resync runs in the background, so a queued post answers 202 and the trace shows its progress.
+func resyncPost(s *postgres.PostStore, resyncs chan<- domain.Resync, l *slog.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Override bool `json:"override"`
+		}
+
+		if err := readJSON(w, r, &in); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		post, err := s.GetAdminPost(r.Context(), r.PathValue("id"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Post not found", http.StatusNotFound)
+			return
+		}
+
+		if err != nil {
+			serverError(w, l, "get resynced post", err)
+			return
+		}
+
+		if in.Override && post.Status != domain.StatusRejected {
+			http.Error(w, "only a rejected post can skip its checks", http.StatusBadRequest)
+			return
+		}
+
+		if post.Status == domain.StatusPending {
+			http.Error(w, "post is still in the pipeline", http.StatusConflict)
+			return
+		}
+
+		select {
+		case resyncs <- domain.Resync{RawPostID: post.ID, Override: in.Override}:
+		default:
+			http.Error(w, "resync queue full", http.StatusServiceUnavailable)
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
+	}
+}

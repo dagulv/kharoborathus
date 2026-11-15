@@ -14,6 +14,11 @@ import (
 )
 
 func newMux(t *testing.T) (*http.ServeMux, *database.Database, chan domain.Source) {
+	mux, db, backfills, _ := newMuxResyncs(t)
+	return mux, db, backfills
+}
+
+func newMuxResyncs(t *testing.T) (*http.ServeMux, *database.Database, chan domain.Source, chan domain.Resync) {
 	t.Helper()
 
 	db := dbtest.New(t)
@@ -25,11 +30,12 @@ func newMux(t *testing.T) (*http.ServeMux, *database.Database, chan domain.Sourc
 	traces := postgres.NewTraceStore(db)
 
 	backfills := make(chan domain.Source, 4)
+	resyncs := make(chan domain.Resync, 1)
 
 	mux := http.NewServeMux()
-	Routes(mux, backfills, Stores{Stats: &stats, Sources: &sources, Posts: &posts, Tags: &tags, Logs: &logs, Traces: &traces}, slog.New(slog.DiscardHandler))
+	Routes(mux, backfills, resyncs, Stores{Stats: &stats, Sources: &sources, Posts: &posts, Tags: &tags, Logs: &logs, Traces: &traces}, slog.New(slog.DiscardHandler))
 
-	return mux, db, backfills
+	return mux, db, backfills, resyncs
 }
 
 func do(mux http.Handler, method, path, body string) *httptest.ResponseRecorder {
