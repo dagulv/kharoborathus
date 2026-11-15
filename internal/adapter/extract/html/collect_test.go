@@ -44,6 +44,17 @@ func (f *idleLLM) Unmarshal(context.Context, *slog.Logger, port.Request, any) er
 type fakeStore struct {
 	mu    sync.Mutex
 	rules map[string]json.RawMessage
+	pages []domain.RawPost
+	lists int
+}
+
+func (f *fakeStore) ListPages(_ context.Context, _ string, limit int) ([]domain.RawPost, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.lists++
+
+	return f.pages[:min(limit, len(f.pages))], nil
 }
 
 func (f *fakeStore) SetExtractRule(_ context.Context, _, key string, rule json.RawMessage) error {
@@ -97,15 +108,50 @@ func TestCollectOnlyRequested(t *testing.T) {
 	}
 }
 
+// Samples live in memory, so a restart would otherwise start a domain over from zero.
+func TestCollectSeedsStoredPages(t *testing.T) {
+	store := &fakeStore{}
+	s := site{body: "article-body", updated: "x"}
+
+	for _, p := range pages(s, 0, ruleSamples-1) {
+		store.pages = append(store.pages, domain.RawPost{URL: p.URL, RawContent: string(p.Data)})
+	}
+
+	tr := newExtractor(&fakeLLM{answers: []any{goodRule()}}, store, nil, nil, discard)
+	d := domain.Domain{ID: "d"}
+
+	tr.collect(context.Background(), discard, d, fieldContent, pages(s, ruleSamples, 1)[0])
+	wait(tr)
+
+	if store.rules[string(fieldContent)] == nil {
+		t.Errorf("saved %v, want the content rule from one new page", store.rules)
+	}
+}
+
+func TestCollectSeedsOnce(t *testing.T) {
+	store := &fakeStore{}
+	tr := newExtractor(&idleLLM{}, store, nil, nil, discard)
+	d := domain.Domain{ID: "d"}
+
+	for _, p := range pages(site{body: "article-body"}, 0, 2) {
+		tr.collect(context.Background(), discard, d, fieldContent, p)
+	}
+
+	if store.lists != 1 || len(tr.samples[d.ID]) != 2 {
+		t.Errorf("%d stored page lists, %d samples", store.lists, len(tr.samples[d.ID]))
+	}
+}
+
 func TestCollectSkipsFailedField(t *testing.T) {
-	tr := newExtractor(&idleLLM{}, nil, nil, nil, discard)
+	store := &fakeStore{}
+	tr := newExtractor(&idleLLM{}, store, nil, nil, discard)
 	d := domain.Domain{ID: "d"}
 	tr.fail(fieldAuthors, d.ID)
 
 	tr.collect(context.Background(), discard, d, fieldAuthors, pages(site{body: "article-body"}, 0, 1)[0])
 
-	if len(tr.samples[d.ID]) != 0 {
-		t.Errorf("%d samples for a failed field", len(tr.samples[d.ID]))
+	if len(tr.samples[d.ID]) != 0 || store.lists != 0 {
+		t.Errorf("%d samples, %d stored page lists for a failed field", len(tr.samples[d.ID]), store.lists)
 	}
 }
 

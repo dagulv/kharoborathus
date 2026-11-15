@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/adapter/fetcher"
@@ -27,6 +28,8 @@ var articleFields = []field{fieldContent, fieldTitle, fieldAuthors, fieldPostedA
 
 // Only requested fields get rules, so a feed that carries its own authors never pays for an authors rule.
 func (t *htmlExtractor) collect(ctx context.Context, l *slog.Logger, d domain.Domain, f field, s sample) {
+	stored := t.storedSamples(ctx, l, d.ID, f)
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -40,20 +43,20 @@ func (t *htmlExtractor) collect(ctx context.Context, l *slog.Logger, d domain.Do
 
 	t.requested[d.ID][f] = true
 
-	samples := t.samples[d.ID]
-
-	for _, have := range samples {
-		if have.URL == s.URL {
-			return
-		}
+	samples, ok := t.samples[d.ID]
+	if !ok {
+		samples = stored
 	}
 
-	if len(samples) < ruleSamples {
-		if samples == nil && len(t.samples) >= maxSampleDomains {
+	if !slices.ContainsFunc(samples, func(have sample) bool { return have.URL == s.URL }) && len(samples) < ruleSamples {
+		samples = append(samples, s)
+	}
+
+	if !ok || len(samples) > len(t.samples[d.ID]) {
+		if !ok && len(t.samples) >= maxSampleDomains {
 			t.evictOldestSamples()
 		}
 
-		samples = append(samples, s)
 		t.samples[d.ID] = samples
 		t.sampleSeq++
 		t.sampledAt[d.ID] = t.sampleSeq
@@ -86,6 +89,33 @@ func (t *htmlExtractor) collect(ctx context.Context, l *slog.Logger, d domain.Do
 
 		t.generate(ctx, l, d, fields, samples)
 	}()
+}
+
+// A domain's pages from earlier runs seed its samples, since a restart drops them before a slow domain
+// reaches ruleSamples.
+func (t *htmlExtractor) storedSamples(ctx context.Context, l *slog.Logger, domainID string, f field) []sample {
+	t.mu.Lock()
+	_, ok := t.samples[domainID]
+	skip := ok || t.failing(f, domainID)
+	t.mu.Unlock()
+
+	if skip || t.domains == nil {
+		return nil
+	}
+
+	pages, err := t.domains.ListPages(ctx, domainID, ruleSamples)
+	if err != nil {
+		l.Error("stored samples", "domain_id", domainID, "err", err)
+		return nil
+	}
+
+	samples := make([]sample, 0, len(pages))
+
+	for _, p := range pages {
+		samples = append(samples, sample{URL: p.URL, Data: []byte(p.RawContent)})
+	}
+
+	return samples
 }
 
 // Callers hold t.mu.

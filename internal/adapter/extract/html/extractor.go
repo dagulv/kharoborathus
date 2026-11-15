@@ -20,6 +20,7 @@ const fetchTimeout = 20 * time.Second
 
 type DomainStore interface {
 	SetExtractRule(ctx context.Context, id, key string, rule json.RawMessage) error
+	ListPages(ctx context.Context, domainID string, limit int) ([]domain.RawPost, error)
 }
 
 var _ port.Extractor = (*htmlExtractor)(nil)
