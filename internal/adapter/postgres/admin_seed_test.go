@@ -36,5 +36,23 @@ func seedPost(t *testing.T, db *database.Database, sourceID, domainID, url, lang
 		t.Fatal(err)
 	}
 
+	seedRawPost(t, db, sourceID, domainID, url, "accepted", `{"title": "raw title"}`, createdAgo)
+
+	return id
+}
+
+// An empty sourceID or content is stored as NULL.
+func seedRawPost(t *testing.T, db *database.Database, sourceID, domainID, url, status, content, createdAgo string) string {
+	t.Helper()
+
+	var id string
+	if err := db.QueryRow(context.Background(), `
+		INSERT INTO raw_posts (source_id, domain_id, url, lang, status, content, created_at)
+		VALUES (NULLIF($1, '')::uuid, $2, $3, 'sv', $4, NULLIF($5, '')::jsonb, now() - $6::interval)
+		RETURNING id
+		`, sourceID, domainID, url, status, content, createdAgo).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+
 	return id
 }

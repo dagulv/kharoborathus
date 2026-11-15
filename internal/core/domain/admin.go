@@ -38,20 +38,37 @@ type AdminPostFilter struct {
 	SourceID string
 	Tag      string
 	Search   string
+	Status   string // published, or a raw post status
 	Page     int
 }
 
-type PostPage struct {
-	Posts    []Post `json:"posts"`
-	Total    int    `json:"total"`
-	Page     int    `json:"page"`
-	PageSize int    `json:"pageSize"`
+// AdminPostStatuses are the values AdminPostFilter.Status takes.
+var AdminPostStatuses = []string{"published", StatusAccepted, StatusPending, StatusRejected, StatusDuplicate, StatusMissing, StatusFailed}
+
+// A raw post with the post it became, if any.
+type AdminPost struct {
+	ID           string     `json:"id"` // raw post id
+	PostID       *string    `json:"postId"`
+	SourceID     *string    `json:"sourceId"`
+	DomainURL    string     `json:"domainUrl"`
+	URL          string     `json:"url"`
+	Lang         string     `json:"lang"`
+	Title        string     `json:"title"`
+	ShortContent string     `json:"shortContent"`
+	Tags         []string   `json:"tags"`
+	Authors      []string   `json:"authors"`
+	PostedAt     *time.Time `json:"postedAt"`
+	Status       string     `json:"status"` // published when a post with the same url exists
+	CreatedAt    time.Time  `json:"createdAt"`
+	Content      string     `json:"content,omitempty"`
+	SourceURL    string     `json:"sourceUrl,omitempty"`
 }
 
-type AdminPost struct {
-	Post
-
-	SourceURL string `json:"sourceUrl"`
+type AdminPostPage struct {
+	Posts    []AdminPost `json:"posts"`
+	Total    int         `json:"total"`
+	Page     int         `json:"page"`
+	PageSize int         `json:"pageSize"`
 }
 
 var ErrMergeSelf = errors.New("merge tag into itself")
