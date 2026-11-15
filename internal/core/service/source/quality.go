@@ -17,10 +17,10 @@ const (
 
 var articleQuestion = map[string]port.NoulQuestion{
 	"article": {
-		Instructions: "Does this page report a specific business event, like a news article, press release or filing?",
+		Instructions: "Does this page have substantive content of its own, like a news article, blog post, report, analysis or essay?",
 		Criteria: &port.NoulCriteria{
-			True:  "It reports one concrete event at a named company or organisation, like a deal, a result, an appointment, an order or a filing.",
-			False: "It is a listing, category, product, profile, guide, opinion or login page, or it mentions events only in passing.",
+			True:  "It makes specific points about a named subject, with concrete details, examples, findings or a conclusion.",
+			False: "It is a listing, index, category, product, login or error page, or its text is too thin or generic to say anything specific.",
 		},
 	},
 }
