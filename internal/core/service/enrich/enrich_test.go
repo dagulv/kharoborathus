@@ -121,7 +121,8 @@ func (f fixture) rawPost(t *testing.T, trusted bool, url, status string, retries
 		t.Fatal(err)
 	}
 
-	posted := time.Date(2026, 11, 8, 8, 0, 0, 0, time.UTC)
+	// Recent, since discovery starts no search for posts older than its window.
+	posted := time.Now().UTC().Truncate(time.Hour)
 
 	p, err := f.rawPosts.CreateRawPost(ctx, domain.RawPost{SourceID: sourceID, DomainID: domainID, URL: url, Lang: "sv", Content: article, Title: "Volvo köper", Authors: []string{"TT"}, PostedAt: &posted})
 	if err != nil {
