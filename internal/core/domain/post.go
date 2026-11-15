@@ -33,6 +33,10 @@ type RawPost struct {
 	Title      string     `json:"title"`
 	Authors    []string   `json:"authors"`
 	PostedAt   *time.Time `json:"postedAt"`
+	// The discovery_posts row this url came from, empty for sourced posts.
+	DiscoveryPostID string `json:"discoveryPostId"`
+	// The url after redirects, set by the fetch step and never stored.
+	FinalURL string `json:"-"`
 }
 
 type Post struct {

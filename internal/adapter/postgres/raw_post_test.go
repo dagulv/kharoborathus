@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -265,5 +266,152 @@ func TestGetSourceInvalidID(t *testing.T) {
 		if _, err := s.GetSource(context.Background(), id); !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("%s: err %v", id, err)
 		}
+	}
+}
+
+func TestClaimRawPost(t *testing.T) {
+	db, s, base := rawPostDB(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name    string
+		status  string
+		content bool
+		age     string
+		want    bool
+	}{
+		{"failed fetch", domain.StatusFailed, false, "1 hour", true},
+		{"missing content", domain.StatusMissing, false, "1 hour", true},
+		{"failed enrich", domain.StatusFailed, true, "1 hour", false},
+		{"accepted", domain.StatusAccepted, true, "1 hour", false},
+		{"rejected", domain.StatusRejected, true, "1 hour", false},
+		{"fresh pending", domain.StatusPending, false, "1 minute", false},
+		{"stale pending", domain.StatusPending, false, "10 minutes", true},
+	}
+
+	for i, c := range cases {
+		url := fmt.Sprintf("https://a.example/%d", i)
+
+		first, ok, err := s.ClaimRawPost(ctx, Claim{URL: url, Lang: "sv", SourceID: base.SourceID})
+		if err != nil || !ok {
+			t.Fatalf("%s: first claim %v, %v", c.name, ok, err)
+		}
+
+		content := any(nil)
+		if c.content {
+			content = `{"content":"c"}`
+		}
+
+		if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = $2, content = $3::jsonb, created_at = now() - $4::interval WHERE id = $1`, first.ID, c.status, content, c.age); err != nil {
+			t.Fatal(err)
+		}
+
+		again, ok, err := s.ClaimRawPost(ctx, Claim{URL: url, Lang: "sv", SourceID: base.SourceID})
+		if err != nil || ok != c.want {
+			t.Errorf("%s: claimed %v, %v", c.name, ok, err)
+			continue
+		}
+
+		if c.want && (again.ID != first.ID || again.Status != domain.StatusPending) {
+			t.Errorf("%s: reclaimed %+v", c.name, again)
+		}
+	}
+}
+
+func TestClaimRawPostNew(t *testing.T) {
+	_, s, base := rawPostDB(t)
+	ctx := context.Background()
+
+	p, ok, err := s.ClaimRawPost(ctx, Claim{URL: "https://b.example/new"})
+	if err != nil || !ok {
+		t.Fatalf("claim %v, %v", ok, err)
+	}
+
+	if p.Status != domain.StatusPending || p.DomainID == "" || p.DomainID == base.DomainID || p.SourceID != "" || p.DiscoveryPostID != "" {
+		t.Errorf("got %+v", p)
+	}
+
+	got, err := s.GetRawPost(ctx, p.ID)
+	if err != nil || got.SourceID != "" || got.Content != "" {
+		t.Errorf("get %+v, %v", got, err)
+	}
+}
+
+func TestClaimRawPostOnce(t *testing.T) {
+	_, s, base := rawPostDB(t)
+	ctx := context.Background()
+	c := Claim{URL: "https://a.example/once", SourceID: base.SourceID}
+
+	if _, ok, err := s.ClaimRawPost(ctx, c); err != nil || !ok {
+		t.Fatalf("first %v, %v", ok, err)
+	}
+
+	if _, ok, err := s.ClaimRawPost(ctx, c); err != nil || ok {
+		t.Errorf("second %v, %v", ok, err)
+	}
+}
+
+func TestSaveContent(t *testing.T) {
+	_, s, base := rawPostDB(t)
+	ctx := context.Background()
+	posted := time.Date(2026, 11, 8, 8, 0, 0, 0, time.UTC)
+	hash := int64(7)
+
+	p, _, err := s.ClaimRawPost(ctx, Claim{URL: "https://a.example/save"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p.SourceID = base.SourceID
+	p.Lang = "en"
+	p.RawContent = "<p>x</p>"
+	p.Content = "x"
+	p.Title = "T"
+	p.Authors = []string{"A"}
+	p.PostedAt = &posted
+	p.Simhash = &hash
+
+	if err := s.SaveContent(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetRawPost(ctx, p.ID)
+	if err != nil || got.SourceID != base.SourceID || got.Lang != "en" || got.RawContent != "<p>x</p>" || got.Content != "x" || got.Title != "T" || len(got.Authors) != 1 || !got.PostedAt.Equal(posted) || *got.Simhash != 7 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+
+	p.SourceID = ""
+	if err := s.SaveContent(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := s.GetRawPost(ctx, p.ID); err != nil || got.SourceID != base.SourceID {
+		t.Errorf("source kept: %+v, %v", got, err)
+	}
+}
+
+func TestListsSkipRowsWithoutContent(t *testing.T) {
+	db, s, base := rawPostDB(t)
+	ctx := context.Background()
+
+	for _, status := range []string{domain.StatusPending, domain.StatusFailed} {
+		p, _, err := s.ClaimRawPost(ctx, Claim{URL: "https://a.example/" + status, SourceID: base.SourceID})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = $2, created_at = now() - interval '1 hour' WHERE id = $1`, p.ID, status); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pending, err := s.ListPending(ctx, 20, 5*time.Minute)
+	if err != nil || len(pending) != 0 {
+		t.Errorf("pending %v, %v", pending, err)
+	}
+
+	unenriched, err := s.ListUnenriched(ctx, 20, 5*time.Minute, 10)
+	if err != nil || len(unenriched) != 0 {
+		t.Errorf("unenriched %v, %v", unenriched, err)
 	}
 }
