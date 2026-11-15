@@ -3,6 +3,7 @@ package source
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/core/port"
+	"github.com/dagulv/kharoborathus/internal/lib/pipeline"
 )
 
 type fakeFetcher struct {
@@ -165,5 +167,60 @@ func TestRouteStopsOnContext(t *testing.T) {
 
 	if _, ok := <-in; ok {
 		t.Error("input left open")
+	}
+}
+
+type errPages struct{}
+
+func (errPages) Page(context.Context, *slog.Logger, string) ([]byte, string, error) {
+	return nil, "", errors.New("status 404 Not Found")
+}
+
+func fetchFailed(t *testing.T, feed string) (*Service, capture, domain.RawPost, error) {
+	t.Helper()
+
+	s, base := qualityService(t, &fakeClassifier{score: 0.9})
+	s.Pages = errPages{}
+	rec := newCapture()
+	s.Calls = slog.New(rec)
+	ctx := context.Background()
+	l := slog.New(slog.DiscardHandler)
+
+	p, err := s.claim(ctx, l, domain.RawPost{URL: "https://a.example/1", SourceID: base.SourceID, Content: feed})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := s.fetch(ctx, l, p)
+
+	return s, rec, out, err
+}
+
+func TestFetchFailedStopsPost(t *testing.T) {
+	s, rec, p, err := fetchFailed(t, "")
+	if !errors.Is(err, pipeline.ErrSkip) {
+		t.Fatalf("err %v", err)
+	}
+
+	got, err := s.RawPostStore.GetRawPost(context.Background(), p.ID)
+	if err != nil || got.Status != domain.StatusFailed {
+		t.Errorf("status %q, %v", got.Status, err)
+	}
+
+	reason, _ := rec.last(p.ID).attrs["reason"].(string)
+	if line := rec.stepLine(p.ID); line != "fetch:stopped" || !strings.HasPrefix(reason, "fetch failed:") {
+		t.Errorf("steps %q, reason %q", line, reason)
+	}
+}
+
+func TestFetchFailedKeepsFeedContent(t *testing.T) {
+	_, rec, p, err := fetchFailed(t, "<p>feed article</p>")
+	if err != nil {
+		t.Fatalf("err %v", err)
+	}
+
+	reason, _ := rec.last(p.ID).attrs["reason"].(string)
+	if line := rec.stepLine(p.ID); line != "fetch:passed" || !strings.HasPrefix(reason, "article fetch failed") || p.Content != "<p>feed article</p>" {
+		t.Errorf("steps %q, reason %q, content %q", line, reason, p.Content)
 	}
 }

@@ -1,9 +1,12 @@
 package source
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -11,42 +14,56 @@ import (
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
-	"github.com/dagulv/kharoborathus/internal/lib/pipeline"
 )
 
 // Each field keeps what the fetcher found. The fetcher's content stays when extraction fails or finds less text.
+// A redirect can leave the host, so the domain comes from the final url.
 func (s *Service) Extract(ctx context.Context, l *slog.Logger, p domain.RawPost) (domain.RawPost, error) {
-	d, err := s.DomainStore.GetOrCreateDomain(ctx, p.URL)
+	pageURL := cmp.Or(p.FinalURL, p.URL)
+
+	d, err := s.DomainStore.GetOrCreateDomain(ctx, pageURL)
 	if err != nil {
-		return p, fmt.Errorf("err get domain %s: %w", p.URL, err)
+		return p, fmt.Errorf("err get domain %s: %w", pageURL, err)
 	}
 
 	p.DomainID = d.ID
 
 	if p.RawContent != "" {
-		p = s.extract(ctx, l, d, p)
+		// Rule generation is a domain-level call, not one of this post's.
+		p = s.extract(ctx, l, s.Calls.With("domain_id", d.ID), d, p)
 	}
+
+	rules := slices.Sorted(maps.Keys(d.Metadata.Extract))
+	input := map[string]any{"bytes": len(p.RawContent), "rules": rules}
 
 	if p.Content == "" {
 		l.Debug("no content", "source", p.SourceID, "url", p.URL)
-		return p, pipeline.ErrSkip
+		return p, s.stop(ctx, p, domain.StatusMissing, domain.StepExtract, "no content found", input, nil)
 	}
+
+	s.step(ctx, p.ID, domain.StepExtract, domain.OutcomePassed, "", input, map[string]any{
+		"title":        p.Title,
+		"authors":      p.Authors,
+		"postedAt":     p.PostedAt,
+		"contentChars": utf8.RuneCountInString(p.Content),
+	})
 
 	return p, nil
 }
 
-func (s *Service) extract(ctx context.Context, l *slog.Logger, d domain.Domain, p domain.RawPost) domain.RawPost {
+func (s *Service) extract(ctx context.Context, l, calls *slog.Logger, d domain.Domain, p domain.RawPost) domain.RawPost {
 	page := []byte(p.RawContent)
-	l = l.With("domain", d.BaseURL, "url", p.URL)
+	pageURL := cmp.Or(p.FinalURL, p.URL)
+	l = l.With("domain", d.BaseURL, "url", pageURL)
 
-	if content, err := s.Extractor.Content(ctx, l, d, p.URL, page); err != nil {
+	if content, err := s.Extractor.Content(ctx, calls, d, pageURL, page); err != nil {
 		l.Debug("extract content", "err", err)
 	} else if plainLen(content) > plainLen(p.Content) {
 		p.Content = content
 	}
 
 	if p.Title == "" {
-		title, err := s.Extractor.Title(ctx, l, d, p.URL, page)
+		title, err := s.Extractor.Title(ctx, calls, d, pageURL, page)
 		if err != nil {
 			l.Error("extract title", "err", err)
 		}
@@ -55,7 +72,7 @@ func (s *Service) extract(ctx context.Context, l *slog.Logger, d domain.Domain, 
 	}
 
 	if len(p.Authors) == 0 {
-		authors, err := s.Extractor.Authors(ctx, l, d, p.URL, page)
+		authors, err := s.Extractor.Authors(ctx, calls, d, pageURL, page)
 		if err != nil {
 			l.Error("extract authors", "err", err)
 		}
@@ -64,7 +81,7 @@ func (s *Service) extract(ctx context.Context, l *slog.Logger, d domain.Domain, 
 	}
 
 	if p.PostedAt == nil {
-		postedAt, err := s.Extractor.PostedAt(ctx, l, d, p.URL, page)
+		postedAt, err := s.Extractor.PostedAt(ctx, calls, d, pageURL, page)
 		if err != nil {
 			l.Error("extract posted at", "err", err)
 		}

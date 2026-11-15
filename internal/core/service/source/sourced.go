@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/pipeline"
@@ -45,10 +46,12 @@ func Run(ctx context.Context, s *Service, fetchers map[string]port.Fetcher, back
 	go s.retryPending(ctx, l.WithGroup("retryPending"))
 
 	return pipeline.New[domain.RawPost]().
+		Next(workers, s.claim).
+		Next(workers, s.fetch).
 		Next(workers, s.Extract).
 		Next(workers, SetMarkdown).
 		Next(workers, SetSimhash).
-		Next(workers, s.insert).
+		Next(workers, s.saveContent).
 		Next(workers, s.checkQuality).
 		WithSink(func(ctx context.Context, p domain.RawPost) error { return s.saveStatus(ctx, l, p) }).
 		Run(ctx, l, pipeline.Merge(ctx, posts...))
@@ -127,6 +130,52 @@ func route(ctx context.Context, sources <-chan domain.Source, ins map[string]cha
 			return
 		}
 	}
+}
+
+// Claimed before the fetch, so every step and call logs against the raw post. A url another
+// sync owns, or one already done, is skipped.
+func (s *Service) claim(ctx context.Context, _ *slog.Logger, p domain.RawPost) (domain.RawPost, error) {
+	claimed, ok, err := s.RawPostStore.ClaimRawPost(ctx, postgres.Claim{URL: p.URL, Lang: p.Lang, SourceID: p.SourceID})
+	if err != nil {
+		return p, err
+	}
+
+	if !ok {
+		return p, pipeline.ErrSkip
+	}
+
+	p.ID, p.DomainID, p.CreatedAt, p.Status = claimed.ID, claimed.DomainID, claimed.CreatedAt, claimed.Status
+
+	return p, nil
+}
+
+// A feed item keeps its feed content when its article fails to fetch.
+func (s *Service) fetch(ctx context.Context, _ *slog.Logger, p domain.RawPost) (domain.RawPost, error) {
+	page, finalURL, err := s.Pages.Page(ctx, s.callsFor(p.ID, domain.StepFetch), p.URL)
+	if ctx.Err() != nil {
+		return p, ctx.Err()
+	}
+
+	input := map[string]any{"url": p.URL}
+	output := map[string]any{"bytes": len(page), "finalUrl": finalURL, "feedChars": len(p.Content)}
+
+	if err != nil && p.Content == "" {
+		return p, s.stop(ctx, p, domain.StatusFailed, domain.StepFetch, "fetch failed: "+err.Error(), input, output)
+	}
+
+	reason := ""
+	if err != nil {
+		reason = "article fetch failed, kept feed content: " + err.Error()
+	}
+
+	p.RawContent, p.FinalURL = string(page), finalURL
+	s.step(ctx, p.ID, domain.StepFetch, domain.OutcomePassed, reason, input, output)
+
+	return p, nil
+}
+
+func (s *Service) saveContent(ctx context.Context, _ *slog.Logger, p domain.RawPost) (domain.RawPost, error) {
+	return p, s.RawPostStore.SaveContent(ctx, p)
 }
 
 // Stored as pending before the quality check, so a Jev outage or a crash loses no fetched post.

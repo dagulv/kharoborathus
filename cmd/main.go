@@ -168,7 +168,7 @@ func app(ctx context.Context) (err error) {
 	syncs := make(chan domain.Source, source.SyncQueue)
 	backfills := make(chan domain.Source, source.BackfillQueue)
 
-	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, classifier, enrichIDs, schedule.Always, syncs)
+	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, classifier, fetcher.NewPages(pacer), enrichIDs, schedule.Always, syncs, calls)
 
 	discovered := source.Discovered{
 		Service: &sourceService,
