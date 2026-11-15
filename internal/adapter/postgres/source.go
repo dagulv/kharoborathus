@@ -129,6 +129,7 @@ func scanSource(row pgx.Row) (source domain.Source, err error) {
 // The domain's oldest usable source. Deleted sources count, so a domain whose sources are all disabled or deleted is blocked.
 func (s *SourceStore) DomainSource(ctx context.Context, domainID string) (source domain.Source, blocked bool, err error) {
 	var usable bool
+	var lang sql.NullString
 
 	row := s.db.QueryRow(ctx, `
 		SELECT `+sourceColumns+`, enabled AND deleted_at IS NULL AS usable
@@ -146,11 +147,13 @@ func (s *SourceStore) DomainSource(ctx context.Context, domainID string) (source
 		&source.Enabled,
 		&source.Status,
 		&source.Rate,
-		&source.Lang,
+		&lang,
 		&source.Metadata,
 		&source.CreatedAt,
 		&usable,
 	)
+
+	source.Lang = lang.String
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Source{}, false, nil
 	}
