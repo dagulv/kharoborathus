@@ -19,6 +19,8 @@ const (
 	StepQualityCheck   = "quality_check"
 	StepEnrich         = "enrich"
 	StepDiscover       = "discover"
+	// Starts an admin resync. The steps after it are the new run.
+	StepResync = "resync"
 )
 
 const (
