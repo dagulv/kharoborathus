@@ -40,10 +40,24 @@ export type SourceCheck = {
 	archive?: { url: string; total: number };
 };
 
+// Mirrors domain.AdminPostStatuses in the Go app
+export const POST_STATUSES = [
+	'published',
+	'accepted',
+	'pending',
+	'rejected',
+	'duplicate',
+	'missing',
+	'failed'
+] as const;
+
+export type PostStatus = (typeof POST_STATUSES)[number];
+
+// A raw post, with the post it became if any. The id is the raw post's.
 export type PostSummary = {
 	id: string;
-	sourceId: string;
-	domainId: string;
+	postId: string | null;
+	sourceId: string | null;
 	domainUrl: string;
 	url: string;
 	lang: string;
@@ -52,6 +66,7 @@ export type PostSummary = {
 	tags: string[];
 	authors: string[];
 	postedAt: string | null;
+	status: PostStatus;
 	createdAt: string;
 };
 
@@ -65,6 +80,25 @@ export type PostPage = {
 	total: number;
 	page: number;
 	pageSize: number;
+};
+
+export type StepOutcome = 'passed' | 'stopped' | 'error' | 'pending';
+
+export type TraceStep = {
+	id: number;
+	name: string;
+	outcome: StepOutcome;
+	reason: string;
+	input: unknown;
+	output: unknown;
+	createdAt: string;
+	calls: LogSummary[];
+	ruleCall?: LogSummary;
+};
+
+export type Trace = {
+	path: 'sourced' | 'discovered';
+	steps: TraceStep[];
 };
 
 export type Tag = {
@@ -131,5 +165,6 @@ export const LOG_TYPES = [
 	'ingest',
 	'robots',
 	'homepage',
-	'wordpress'
+	'wordpress',
+	'step'
 ] as const;
