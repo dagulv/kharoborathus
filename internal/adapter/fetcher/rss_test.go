@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,37 +46,39 @@ func rssServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
-type noneStored struct{}
-
-func (noneStored) RawPostExists(context.Context, string) (bool, error) { return false, nil }
-
-func TestRSSFetchesEveryArticle(t *testing.T) {
+func TestRSSSendsFeedItems(t *testing.T) {
 	srv := rssServer(t)
-	l := slog.New(slog.DiscardHandler)
-	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond), store: noneStored{}, l: l}
 
-	posts, err := r.Fetch(context.Background(), l, srv.URL+"/feed")
+	var requests atomic.Int32
+	counted := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		srv.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(counted.Close)
+
+	l := slog.New(slog.DiscardHandler)
+	r := rss{client: counted.Client(), pacer: pace.New(time.Millisecond)}
+
+	posts, err := r.Fetch(context.Background(), l, counted.URL+"/feed")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pages := make(map[string]string)
 	contents := make(map[string]string)
 
 	for p := range posts {
-		pages[p.Title] = p.RawContent
+		if p.RawContent != "" {
+			t.Errorf("%s: raw content %q, the pipeline fetches articles", p.Title, p.RawContent)
+		}
+
 		contents[p.Title] = p.Content
 	}
 
-	if want := `<html><body><article>whole article</article></body></html>`; pages["Excerpt"] != want {
-		t.Errorf("excerpt item page %q, want %q", pages["Excerpt"], want)
+	if len(contents) != 3 || contents["Full"] != "<p>whole article</p>" || contents["Gone"] != "<p>feed only</p>" || contents["Excerpt"] != "Short… Continue reading" {
+		t.Errorf("contents %v", contents)
 	}
 
-	if want := `<html><body><article>full page</article></body></html>`; pages["Full"] != want || contents["Full"] != "<p>whole article</p>" {
-		t.Errorf("full item page %q content %q", pages["Full"], contents["Full"])
-	}
-
-	if pages["Gone"] != "" || contents["Gone"] != "<p>feed only</p>" {
-		t.Errorf("gone item page %q content %q", pages["Gone"], contents["Gone"])
+	if n := requests.Load(); n != 1 {
+		t.Errorf("%d requests, want only the feed", n)
 	}
 }
