@@ -184,6 +184,7 @@ func app(ctx context.Context) (err error) {
 		Classifier:    classifier,
 		SearchIDs:     searchIDs,
 		DiscoveredIDs: discoveredIDs,
+		Calls:         calls,
 	}
 
 	mux := http.NewServeMux()

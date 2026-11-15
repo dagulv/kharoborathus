@@ -18,10 +18,12 @@ type fakeClassifier struct {
 	err      error
 	requests []map[string]port.NoulQuestion
 	state    map[string]string
+	l        *slog.Logger
 }
 
 // Scores by tag key, found in the question text.
-func (f *fakeClassifier) Noul(_ context.Context, _ *slog.Logger, state any, questions map[string]port.NoulQuestion) (map[string]float64, error) {
+func (f *fakeClassifier) Noul(_ context.Context, l *slog.Logger, state any, questions map[string]port.NoulQuestion) (map[string]float64, error) {
+	f.l = l
 	f.requests = append(f.requests, questions)
 	f.state = state.(map[string]string)
 
