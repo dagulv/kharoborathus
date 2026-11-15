@@ -15,6 +15,7 @@ const (
 	StatusRejected  = "rejected"
 	StatusDuplicate = "duplicate"
 	StatusFailed    = "failed"
+	StatusMissing   = "missing"
 )
 
 type RawPost struct {
@@ -26,7 +27,7 @@ type RawPost struct {
 	RawContent string     `json:"rawContent"` // Different types depending on type of source, e.g. HTML etc.
 	Content    string     `json:"content"`
 	Simhash    *int64     `json:"-"`      // NULL when the content has no words
-	Status     string     `json:"status"` // pending | accepted | rejected | duplicate | failed
+	Status     string     `json:"status"` // pending | accepted | rejected | duplicate | failed | missing
 	RetryCount int        `json:"retryCount"`
 	CreatedAt  time.Time  `json:"createdAt"`
 	Title      string     `json:"title"`

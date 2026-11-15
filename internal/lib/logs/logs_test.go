@@ -13,6 +13,8 @@ import (
 	"testing"
 	"testing/slogtest"
 	"time"
+
+	"github.com/dagulv/kharoborathus/internal/core/domain"
 )
 
 // recorder builds rows like Handler, without a database.
@@ -153,5 +155,30 @@ func TestClientLogsFailure(t *testing.T) {
 
 	if rows := *rec.rows; len(rows) != 1 || rows[0].Error == nil || rows[0].Status != nil || rows[0].Response != nil || rows[0].Level != "ERROR" {
 		t.Fatalf("rows %+v", rows)
+	}
+}
+
+func TestLogStepRow(t *testing.T) {
+	rec := newRecorder()
+	calls := slog.New(rec).With("raw_post_id", "r1", "step", domain.StepQualityCheck)
+
+	domain.LogStep(context.Background(), calls, domain.OutcomeStopped, "score 0.12, needs 0.80", map[string]any{"title": "t"}, map[string]any{"score": 0.12})
+
+	if len(*rec.rows) != 1 {
+		t.Fatalf("rows: %d", len(*rec.rows))
+	}
+
+	got := (*rec.rows)[0]
+
+	if got.Type != "step" || got.Level != "WARN" || got.Error != nil {
+		t.Errorf("row %+v", got)
+	}
+
+	if got.Request != `{"title":"t"}` || *got.Response != `{"score":0.12}` {
+		t.Errorf("request %s, response %s", got.Request, *got.Response)
+	}
+
+	if meta := jsonText(got.Meta); meta != `{"outcome":"stopped","raw_post_id":"r1","reason":"score 0.12, needs 0.80","step":"quality_check"}` {
+		t.Errorf("metadata %s", meta)
 	}
 }
