@@ -177,8 +177,8 @@ func TestIngestRedirect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n := f.count(t, `SELECT count(*) FROM raw_posts r JOIN sources s ON s.id = r.source_id WHERE r.url = $1 AND s.url = $2`, srv.URL+"/short", target.URL); n != 1 {
-		t.Errorf("raw posts at the linked url with the final url's source %d", n)
+	if n := f.count(t, `SELECT count(*) FROM raw_posts r JOIN sources s ON s.id = r.source_id WHERE r.url = $1 AND s.url = $2`, target.URL+"/final", target.URL); n != 1 {
+		t.Errorf("raw posts at final url %d", n)
 	}
 }
 
@@ -209,7 +209,7 @@ func TestIngestRedirectToBlocked(t *testing.T) {
 		t.Errorf("status %q", s)
 	}
 
-	if n := f.count(t, `SELECT count(*) FROM raw_posts WHERE url = $1 AND status = 'failed'`, srv.URL+"/short"); n != 1 {
+	if n := f.count(t, `SELECT count(*) FROM raw_posts WHERE url = $1 AND status = 'failed'`, target.URL+"/final"); n != 1 {
 		t.Errorf("failed raw posts %d", n)
 	}
 }
@@ -399,5 +399,33 @@ func TestIngestAlreadyStored(t *testing.T) {
 
 	if n := len(*f.rec.records); n != 0 {
 		t.Errorf("%d records, want none", n)
+	}
+}
+
+func TestIngestRedirectToStored(t *testing.T) {
+	f := discoveredSetup(t)
+	target := pageServer(t)
+	srv := httptest.NewServer(http.RedirectHandler(target.URL+"/final", http.StatusFound))
+	t.Cleanup(srv.Close)
+
+	ctx := context.Background()
+
+	if _, err := f.db.Exec(ctx, `INSERT INTO raw_posts (url, domain_id, status, content) SELECT $1, id, 'accepted', '{}' FROM domains LIMIT 1`, target.URL+"/final"); err != nil {
+		t.Fatal(err)
+	}
+
+	id := f.queue(t, srv.URL+"/short")
+
+	if err := f.d.ingest(ctx, slog.New(slog.DiscardHandler), id); err != nil {
+		t.Fatal(err)
+	}
+
+	if s := f.status(t, id); s != domain.StatusDuplicate {
+		t.Errorf("status %q", s)
+	}
+
+	rawID := f.rawPostID(t, srv.URL+"/short")
+	if got := f.rec.stepLine(rawID); got != "found_by:passed domain_check:passed fetch:passed duplicate_check:stopped" {
+		t.Errorf("steps %q", got)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -114,6 +115,22 @@ func (s *RawPostStore) SaveContent(ctx context.Context, p domain.RawPost) (domai
 	}
 
 	return p, nil
+}
+
+// MoveURL gives a raw post the url it redirected to. moved is false when another raw post has it.
+func (s *RawPostStore) MoveURL(ctx context.Context, id, url string) (moved bool, err error) {
+	_, err = s.db.Exec(ctx, `UPDATE raw_posts SET url = $2 WHERE id = $1`, id, url)
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("err move raw post %s: %w", id, err)
+	}
+
+	return true, nil
 }
 
 // Only earlier rows count, so of two near-identical posts exactly one is the duplicate.

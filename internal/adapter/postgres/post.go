@@ -58,7 +58,10 @@ func (s *PostStore) Trusted(ctx context.Context, sourceID string) (trusted bool,
 	return trusted, nil
 }
 
-const invalidTextRepresentation = "22P02"
+const (
+	invalidTextRepresentation = "22P02"
+	uniqueViolation           = "23505"
+)
 
 // Postgres rejects a malformed uuid this way, which callers treat as an id that names nothing.
 func isInvalidText(err error) bool {
