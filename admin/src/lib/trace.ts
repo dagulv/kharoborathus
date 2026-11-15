@@ -11,7 +11,8 @@ export const STEP_LABELS: Record<string, string> = {
 	duplicate_check: 'Duplicate check',
 	quality_check: 'Quality check',
 	enrich: 'Enrich',
-	discover: 'Discover'
+	discover: 'Discover',
+	resync: 'Resync'
 };
 
 // Mirrors the step order of each path in the Go pipeline.
@@ -36,15 +37,16 @@ export type GraphRow =
 
 const STOPPED: PostStatus[] = ['rejected', 'duplicate', 'missing', 'failed'];
 
-// The recorded steps, then the steps after the last one: not reached when the post stopped,
-// waiting while it is still in the pipeline.
+// The recorded steps, then the steps after the last one of the latest run: not reached when the
+// post stopped, waiting while it is still in the pipeline. A resync starts a new run.
 export function graphRows(trace: Trace, status: PostStatus): GraphRow[] {
 	const rows: GraphRow[] = trace.steps.map((step) => ({ kind: 'step', step }));
 
 	if (status === 'published') return rows;
 
 	const order = STEP_ORDER[trace.path];
-	const last = Math.max(-1, ...trace.steps.map((s) => order.indexOf(s.name)));
+	const run = trace.steps.slice(trace.steps.findLastIndex((s) => s.name === 'resync') + 1);
+	const last = Math.max(-1, ...run.map((s) => order.indexOf(s.name)));
 	const kind = STOPPED.includes(status) ? 'not-reached' : 'waiting';
 
 	for (const name of order.slice(last + 1)) rows.push({ kind, name });

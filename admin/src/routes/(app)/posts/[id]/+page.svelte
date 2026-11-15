@@ -1,7 +1,11 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
+	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+	import { toast } from 'svelte-sonner';
+	import { api, actionError } from '$lib/api.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Tabs from '$lib/components/ui/tabs/index.js';
 	import StepGraph from '$lib/components/trace/step-graph.svelte';
@@ -18,15 +22,64 @@
 		const changes = { tab: value === 'logs' ? 'logs' : undefined };
 		goto(withParams(page.url.searchParams, changes), { replace: true, reset: false });
 	}
+
+	// Set while a queued resync has not reached the worker, which turns the post pending.
+	let queued = $state(false);
+
+	async function resync(override: boolean) {
+		try {
+			await api(`/admin/posts/${encodeURIComponent(post.id)}/resync`, {
+				method: 'POST',
+				body: { override }
+			});
+		} catch (err) {
+			toast.error(actionError(err, 'Resync failed'));
+			return;
+		}
+
+		toast.success(override ? 'Resync queued, skipping checks' : 'Resync queued');
+		queued = true;
+		setTimeout(() => (queued = false), 10_000);
+		await invalidateAll();
+	}
+
+	// A post in the pipeline refreshes until it settles, so its logs fill in.
+	$effect(() => {
+		if (!queued && post.status !== 'pending') return;
+
+		const timer = setInterval(invalidateAll, 2000);
+		return () => clearInterval(timer);
+	});
 </script>
 
 <svelte:head><title>{post.title || post.url} · Admin</title></svelte:head>
 
 <Card.Root>
 	<Card.Content>
-		<div class="flex items-start gap-2">
+		<div class="flex flex-wrap items-start gap-2">
 			<Badge variant={statusVariant(post.status)} class="mt-1">{post.status}</Badge>
-			<h1 class="text-lg font-semibold break-words">{post.title || post.url}</h1>
+			<h1 class="min-w-0 flex-1 text-lg font-semibold break-words">{post.title || post.url}</h1>
+			<div class="flex gap-2">
+				{#if post.status === 'rejected'}
+					<Button
+						variant="outline"
+						size="sm"
+						title="Fetch again, past the date window and quality check"
+						onclick={() => resync(true)}
+					>
+						Resync, skip checks
+					</Button>
+				{/if}
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={post.status === 'pending'}
+					onclick={() => resync(false)}
+				>
+					<RefreshCwIcon class={[post.status === 'pending' && 'animate-spin']} />
+					Resync
+				</Button>
+			</div>
 		</div>
 		<div class="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
 			<a class="break-all hover:underline" href={post.url} target="_blank" rel="noreferrer">
