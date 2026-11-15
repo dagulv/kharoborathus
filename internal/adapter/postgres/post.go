@@ -229,7 +229,7 @@ const (
 		LEFT JOIN posts p ON p.url = r.url
 		LEFT JOIN sources s ON s.id = r.source_id`
 
-	adminPostStatus = `CASE WHEN p.id IS NOT NULL THEN 'published' ELSE r.status END`
+	adminPostStatus = `CASE WHEN p.id IS NOT NULL AND r.status <> 'pending' THEN 'published' ELSE r.status END`
 
 	adminPostColumns = `r.id, p.id, r.source_id, d.base_url, r.url, coalesce(p.lang, r.lang),
 		coalesce(p.title, r.content->>'title', ''),
