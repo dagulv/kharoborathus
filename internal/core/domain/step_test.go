@@ -2,8 +2,11 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"slices"
 	"testing"
+	"time"
 )
 
 type captured struct {
@@ -85,5 +88,70 @@ func TestLogStep(t *testing.T) {
 				t.Errorf("reason must not fill the error column: %v", r.attrs)
 			}
 		})
+	}
+}
+
+func TestBuildTrace(t *testing.T) {
+	at := time.Date(2026, 11, 15, 11, 0, 0, 0, time.UTC)
+
+	call := func(id int64, typ, step string) LogDetail {
+		return LogDetail{
+			LogSummary: LogSummary{ID: id, Type: typ, Metadata: map[string]any{"raw_post_id": "r", "step": step}, CreatedAt: at.Add(time.Duration(id) * time.Second)},
+			Request:    json.RawMessage(`{"big":"body"}`),
+			Response:   json.RawMessage(`{"big":"body"}`),
+		}
+	}
+
+	step := func(id int64, name, outcome, reason, input, output string) LogDetail {
+		return LogDetail{
+			LogSummary: LogSummary{ID: id, Type: "step", Metadata: map[string]any{"raw_post_id": "r", "step": name, "outcome": outcome, "reason": reason}, CreatedAt: at.Add(time.Duration(id) * time.Second)},
+			Request:    json.RawMessage(input),
+			Response:   json.RawMessage(output),
+		}
+	}
+
+	rows := []LogDetail{
+		step(1, StepExtract, OutcomePassed, "", `{"bytes":10}`, `{"title":"t"}`),
+		call(2, "jev", StepQualityCheck),
+		step(3, StepQualityCheck, OutcomeError, "jev down", `{}`, `null`),
+		call(4, "jev", StepQualityCheck),
+		step(5, StepQualityCheck, OutcomeStopped, "score 0.12, needs 0.80", `{}`, `{"score":0.12}`),
+		call(6, "deepseek", StepEnrich),
+	}
+
+	brave := LogSummary{ID: 99, Type: "brave"}
+	got := BuildTrace(rows, map[string][]LogSummary{StepQualityCheck: {brave}, StepDiscover: {brave}})
+
+	var names []string
+	for _, s := range got {
+		names = append(names, s.Name+":"+s.Outcome)
+	}
+
+	if want := []string{"extract:passed", "quality_check:error", "quality_check:stopped", "enrich:pending"}; !slices.Equal(names, want) {
+		t.Fatalf("steps %v, want %v", names, want)
+	}
+
+	ids := func(calls []LogSummary) []int64 {
+		out := []int64{}
+		for _, c := range calls {
+			out = append(out, c.ID)
+		}
+		return out
+	}
+
+	if got[0].Calls == nil || len(got[0].Calls) != 0 || string(got[0].Input) != `{"bytes":10}` || string(got[0].Output) != `{"title":"t"}` {
+		t.Errorf("extract %+v", got[0])
+	}
+
+	if !slices.Equal(ids(got[1].Calls), []int64{2}) || got[1].Reason != "jev down" {
+		t.Errorf("first attempt %+v", got[1])
+	}
+
+	if !slices.Equal(ids(got[2].Calls), []int64{4, 99}) || got[2].Reason != "score 0.12, needs 0.80" || got[2].ID != 5 {
+		t.Errorf("second attempt %+v", got[2])
+	}
+
+	if !slices.Equal(ids(got[3].Calls), []int64{6}) {
+		t.Errorf("pending enrich %+v", got[3])
 	}
 }
