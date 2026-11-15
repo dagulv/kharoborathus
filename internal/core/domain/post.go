@@ -37,6 +37,14 @@ type RawPost struct {
 	DiscoveryPostID string `json:"discoveryPostId"`
 	// The url after redirects, set by the fetch step and never stored.
 	FinalURL string `json:"-"`
+	// Passes the date window and quality check, for an admin resync of a rejected post. Never stored.
+	Override bool `json:"-"`
+}
+
+// An admin's request to run a raw post through step 1 again.
+type Resync struct {
+	RawPostID string
+	Override  bool
 }
 
 type Post struct {

@@ -48,6 +48,15 @@ func (s *DiscoveredStore) GetPending(ctx context.Context, id string, windowDays 
 	return d, true, nil
 }
 
+// FromPost is the post a discovered link was found in.
+func (s *DiscoveredStore) FromPost(ctx context.Context, id string) (postID string, err error) {
+	if err = s.db.QueryRow(ctx, `SELECT from_post_id FROM discovery_posts WHERE id = $1`, id).Scan(&postID); err != nil {
+		return "", fmt.Errorf("err get discovered post %s source post: %w", id, err)
+	}
+
+	return postID, nil
+}
+
 func (s *DiscoveredStore) ListPending(ctx context.Context, windowDays, limit int) ([]string, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id FROM discovery_posts

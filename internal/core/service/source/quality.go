@@ -55,6 +55,12 @@ func (s *Service) checkQuality(ctx context.Context, l *slog.Logger, p domain.Raw
 
 	s.step(ctx, p.ID, domain.StepDuplicateCheck, domain.OutcomePassed, "", dupIn, dupOut)
 
+	if p.Override {
+		s.step(ctx, p.ID, domain.StepQualityCheck, domain.OutcomePassed, "manual override", nil, nil)
+		p.Status = domain.StatusAccepted
+		return p, nil
+	}
+
 	if s.Classifier == nil {
 		s.step(ctx, p.ID, domain.StepQualityCheck, domain.OutcomePassed, "quality check off", nil, nil)
 		p.Status = domain.StatusAccepted

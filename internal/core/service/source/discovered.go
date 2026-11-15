@@ -109,6 +109,14 @@ func (d Discovered) rawPost(ctx context.Context, l *slog.Logger, link postgres.D
 		"searchQueryId":   link.QueryID,
 	}, nil)
 
+	return d.process(ctx, l, p, link.FromPostID)
+}
+
+// process takes a claimed raw post from the domain check to its saved content. fromPostID is the
+// post the link was found in, credited when the link's source is new.
+func (d Discovered) process(ctx context.Context, l *slog.Logger, p domain.RawPost, fromPostID string) (domain.RawPost, string, error) {
+	s := d.Service
+
 	// Checked before the fetch, so a blocked domain gets no request.
 	domainIn := map[string]any{"domainId": p.DomainID}
 
@@ -159,12 +167,19 @@ func (d Discovered) rawPost(ctx context.Context, l *slog.Logger, link postgres.D
 
 	dateIn := map[string]any{"postedAt": p.PostedAt, "windowDays": discoveredWindow}
 
-	if p.PostedAt != nil && p.PostedAt.Before(time.Now().AddDate(0, 0, -discoveredWindow)) {
+	stale := p.PostedAt != nil && p.PostedAt.Before(time.Now().AddDate(0, 0, -discoveredWindow))
+
+	if stale && !p.Override {
 		reason := fmt.Sprintf("posted %s, older than %d days", p.PostedAt.Format(time.DateOnly), discoveredWindow)
 		return d.end(ctx, p, domain.StatusRejected, domain.StepDateWindow, reason, dateIn, nil)
 	}
 
-	s.step(ctx, p.ID, domain.StepDateWindow, domain.OutcomePassed, "", dateIn, nil)
+	reason := ""
+	if stale {
+		reason = "manual override"
+	}
+
+	s.step(ctx, p.ID, domain.StepDateWindow, domain.OutcomePassed, reason, dateIn, nil)
 
 	p, _ = SetMarkdown(ctx, l, p)
 	p, _ = SetSimhash(ctx, l, p)
@@ -188,7 +203,7 @@ func (d Discovered) rawPost(ctx context.Context, l *slog.Logger, link postgres.D
 			return d.end(ctx, p, domain.StatusFailed, domain.StepSourceMatch, "no base url: "+err.Error(), matchIn, nil)
 		}
 
-		if source.ID, err = s.SourceStore.CreateProposed(ctx, p.DomainID, baseURL, link.FromPostID); err != nil {
+		if source.ID, err = s.SourceStore.CreateProposed(ctx, p.DomainID, baseURL, fromPostID); err != nil {
 			return p, "", err
 		}
 	}
