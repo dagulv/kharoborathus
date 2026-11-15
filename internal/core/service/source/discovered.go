@@ -132,6 +132,20 @@ func (d Discovered) rawPost(ctx context.Context, l *slog.Logger, link postgres.D
 		return p, "", err
 	}
 
+	// The post is published at the url the link led to, which another raw post may already have.
+	if p.FinalURL != "" && p.FinalURL != p.URL {
+		moved, err := s.RawPostStore.MoveURL(ctx, p.ID, p.FinalURL)
+		if err != nil {
+			return p, "", err
+		}
+
+		if !moved {
+			return d.end(ctx, p, domain.StatusDuplicate, domain.StepDuplicateCheck, "redirects to an already stored url", map[string]any{"finalUrl": p.FinalURL}, nil)
+		}
+
+		p.URL = p.FinalURL
+	}
+
 	p.Lang = normalizeLang(htmlLang([]byte(p.RawContent)))
 
 	p, err = s.Extract(ctx, l, p)
