@@ -7,8 +7,8 @@
 **Architecture:**
 - Every path claims its `raw_posts` row before the first fetch, so every later step and call can carry the raw post id.
 - The article fetch moves out of the rss and page adapters into one pipeline stage, `Service.fetch`, which uses `port.PageFetcher`.
-- Each step writes one `raw_post_steps` row. Each external call goes through the `calls` logger with `raw_post_id` and `step` in metadata.
-- A trace endpoint joins steps and log summaries. The SPA loads call bodies lazily from the existing `GET /admin/logs/{id}`.
+- Each step writes one `logs` row of type `step` through the `calls` logger. Its input goes in `request`, its output in `response`, and `raw_post_id`, `step`, `outcome` and `reason` in `metadata`. Each external call goes through the same logger with `raw_post_id` and `step`.
+- A trace endpoint reads one post's `logs` rows in id order and groups the calls under their steps. The SPA loads call bodies lazily from the existing `GET /admin/logs/{id}`.
 
 **Tech Stack:** Go 1.x, pgx v5, Postgres, SvelteKit 3 (next), Svelte 5 runes, Tailwind v4, shadcn-svelte.
 
@@ -16,7 +16,7 @@
 
 ## Global Constraints
 
-- Edit `internal/migrations/001_init.sql` in place. Add no new migration file.
+- Edit `internal/migrations/001_init.sql` in place. Add no new migration file. Add no step table and no step columns.
 - Go style follows `~/.claude/CLAUDE.md`:
   - `any`, not `interface{}`.
   - Leaf errors are wrapped as `fmt.Errorf("err <what>: %w", err)`.
@@ -25,7 +25,7 @@
 - Scan nullable text with `sql.NullString`, as `scanSource` does.
 - Comment only non-obvious intent. Never narrate code.
 - Messages go to the stdout logger `l`. Outbound requests go to the `calls` logger. Never send `l.Info`, `l.Warn` or `l.Error` through `calls`, since every record there becomes a `logs` row.
-- A failed step or log write never changes a post's outcome. Log it on `l` and continue.
+- A failed step or log write never changes a post's outcome. `logs.Handler` already reports insert failures to its fallback logger, so callers ignore them.
 - Calls are linked to a post by id only. The one exception is the extract rule call, which is linked by domain and time, as the spec decides.
 - Shared source-run calls stay out of post traces: feed, listing, WordPress archive, link-rule trim and link-rule deepseek.
 - Never use `npx`. Use `pnpm dlx`.
@@ -34,72 +34,48 @@
 
 ## Review Focus
 
-1. **A step or log write fails.** The post still gets its normal status. Pinned in Task 4 by `TestStepWriteFailureKeepsOutcome`.
+1. **A step or log write fails.** The post still gets its normal status. Pinned in Task 4 by `TestStepWriteFailureKeepsOutcome`, with a `calls` handler whose `Handle` always errors.
 2. **A URL already accepted, rejected or published is seen again by a sync.** It is not fetched again. Pinned in Task 2 by `TestClaimRawPost`.
 3. **The live lane and a backfill lane see the same URL at once.** Only one claims it. Pinned in Task 2 by `TestClaimRawPostOnce`.
-4. **A 5 MB page fetch is on the trace.** The trace response carries no bodies, and the SPA fetches a body only when its row opens. Pinned in Task 8 by `TestTraceHasNoBodies`.
+4. **A 5 MB page fetch is on the trace.** The trace response carries no call bodies, only step input and output, and the SPA fetches a call body only when its row opens. Pinned in Task 8 by `TestTraceHasNoBodies`.
 5. **A post traced before this change, on a source with other posts.** Only its own fetch call shows, never a sibling's. Pinned in Task 8 by `TestTraceLegacy`.
 
 ---
 
-### Task 1: Schema, statuses and the step store
+### Task 1: Schema, statuses and step rows in logs
 
 **Files:**
 - Modify: `internal/migrations/001_init.sql`
   - `raw_posts`: `source_id` drops `NOT NULL`. `lang` gets `DEFAULT ''`. Add `discovery_post_id UUID REFERENCES discovery_posts (id)`. Status comment gets `| missing`.
-  - Add the `raw_post_steps` table.
   - `discovery_posts` is created after `raw_posts`. Either move the `raw_posts` table below it, or add the FK with an `ALTER TABLE ... ADD CONSTRAINT` after both exist.
+  - The `logs` table comment becomes "One row per outbound request or pipeline step". The type comment gets `| step`.
 - Modify: `internal/core/domain/post.go`. Add `StatusMissing = "missing"`.
+- Modify: `internal/core/domain/log.go`. Add `"step"` to `LogTypes`.
 - Create: `internal/core/domain/step.go`
-- Create: `internal/adapter/postgres/step.go`
-- Test: `internal/adapter/postgres/step_test.go`
-
-```sql
-CREATE TABLE IF NOT EXISTS raw_post_steps (
-  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  raw_post_id UUID NOT NULL REFERENCES raw_posts (id) ON DELETE CASCADE,
-  name TEXT NOT NULL, -- found_by | domain_check | fetch | extract | date_window | source_match | duplicate_check | quality_check | enrich | discover
-  outcome TEXT NOT NULL, -- passed | stopped | error
-  reason TEXT NOT NULL DEFAULT '',
-  input JSONB NOT NULL DEFAULT '{}',
-  output JSONB NOT NULL DEFAULT '{}',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw_post_id, id);
-```
+- Test: `internal/core/domain/step_test.go`
 
 **Interfaces:**
 - Produces in `domain/step.go`:
-  - Step name constants: `StepFoundBy`, `StepDomainCheck`, `StepFetch`, `StepExtract`, `StepDateWindow`, `StepSourceMatch`, `StepDuplicateCheck`, `StepQualityCheck`, `StepEnrich`, `StepDiscover`. Their values are the snake_case names in the SQL comment.
+  - Step name constants: `StepFoundBy`, `StepDomainCheck`, `StepFetch`, `StepExtract`, `StepDateWindow`, `StepSourceMatch`, `StepDuplicateCheck`, `StepQualityCheck`, `StepEnrich`, `StepDiscover`. Their values are `found_by`, `domain_check`, `fetch`, `extract`, `date_window`, `source_match`, `duplicate_check`, `quality_check`, `enrich` and `discover`.
   - Outcome constants: `OutcomePassed = "passed"`, `OutcomeStopped = "stopped"`, `OutcomeError = "error"`, `OutcomePending = "pending"`. Pending is used only by the trace.
-  - The `Step` struct:
-    ```go
-    type Step struct {
-    	ID        int64          `json:"id"`
-    	RawPostID string         `json:"rawPostId"`
-    	Name      string         `json:"name"`
-    	Outcome   string         `json:"outcome"`
-    	Reason    string         `json:"reason"`
-    	Input     map[string]any `json:"input"`
-    	Output    map[string]any `json:"output"`
-    	CreatedAt time.Time      `json:"createdAt"`
-    }
-    ```
-- Produces in `postgres/step.go`:
-  - `type StepStore struct{ db *database.Database }`
-  - `func NewStepStore(db *database.Database) StepStore`
-  - `func (s *StepStore) RecordStep(ctx context.Context, st domain.Step) error`. A nil Input or Output is stored as `{}`.
-  - `func (s *StepStore) ListSteps(ctx context.Context, rawPostID string) ([]domain.Step, error)`, ordered by id.
+  - `func LogStep(ctx context.Context, calls *slog.Logger, outcome, reason string, input, output any)`
+    - `calls` already carries `raw_post_id` and `step` from `With`.
+    - It writes one record with message `step`, attrs `outcome`, `reason`, `request` (input) and `response` (output).
+    - Level is INFO for passed, WARN for stopped, ERROR for error.
+    - Never use the `error` attr for the reason. That column is for failed requests.
 
-- [ ] **Step 1: Write `TestRecordStep` in `step_test.go`.** Seed a domain, a source and a raw post with plain SQL inserts, following the pattern in `raw_post_test.go`. Record two steps: fetch passed, then quality_check stopped with reason `score 0.12, needs 0.80` and output `{"score":0.12}`. Assert:
-  - `ListSteps` returns 2 steps in that order.
-  - The second step has Outcome `stopped`, the reason above, and `Output["score"] == 0.12`.
-  - The first step's Input is an empty map, not nil.
-- [ ] **Step 2: Run the test and check that it fails to compile.** Run: `go test ./internal/adapter/postgres/ -run TestRecordStep`
-- [ ] **Step 3:** Make the schema edit, add `StatusMissing`, add `domain/step.go`, and add `postgres/step.go`. Errors are wrapped as `err record step` and `err list steps`.
-- [ ] **Step 4:** Run `go test ./internal/adapter/postgres/ -run TestRecordStep`. Expected: PASS.
-- [ ] **Step 5: Commit.** Message: `Add raw post steps and the missing status`.
+- [ ] **Step 1: Write `TestLogStep` in `step_test.go`.** Point a capturing `slog.Handler` at `calls.With("raw_post_id", "r1", "step", "quality_check")` and log a stopped step with reason `score 0.12, needs 0.80`, input `{"title":"t"}` and output `{"score":0.12}`. Assert:
+  - one record with message `step` and level WARN
+  - `outcome` is `stopped` and `reason` is as above
+  - `request` and `response` hold the input and output
+  - `raw_post_id` and `step` are present
+
+  Add cases for passed giving INFO and error giving ERROR.
+- [ ] **Step 2: Write `TestLogStepRow` in `internal/lib/logs/logs_test.go`.** Run it through the real `logs.Handler` on `dbtest`. The stored row has type `step`, level `WARN`, `request` equal to the input JSON, `response` equal to the output JSON, a NULL `error`, and `outcome`, `reason`, `raw_post_id` and `step` in `metadata`.
+- [ ] **Step 3:** Run `go test ./internal/core/domain/ ./internal/lib/logs/`. Expected: FAIL.
+- [ ] **Step 4:** Make the schema edit, add `StatusMissing` and the `LogTypes` entry, and add `domain/step.go`.
+- [ ] **Step 5:** Run `go build ./... && go test ./internal/core/domain/ ./internal/lib/logs/ ./internal/adapter/postgres/`. Expected: PASS.
+- [ ] **Step 6: Commit.** Message: `Log pipeline steps and add the missing status`.
 
 ---
 
@@ -198,26 +174,23 @@ CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw
 - Modify: `internal/core/service/source/quality.go`
 - Modify: `internal/core/service/source/retry.go`. It only picks up the new `checkQuality`.
 - Create: `internal/core/service/source/step.go`
+- Create: a capturing `slog.Handler` test helper in the package's test files. It records each record's message, level and all attrs, including `With` attrs. Steps are the records with message `step`.
 - Modify: `cmd/main.go`
 - Test: `sourced_test.go`, `extract_test.go`, `quality_test.go` and `retry_test.go` in the same package
 
 **Interfaces:**
 - Consumes:
-  - Task 1: `StepStore.RecordStep` and the domain constants.
+  - Task 1: `domain.LogStep` and the domain constants.
   - Task 2: `ClaimRawPost`, `SaveContent` and `RawPost.FinalURL`.
   - Task 3: candidate posts.
 - `Service` gains these fields:
-  - `Steps StepRecorder`
   - `Pages port.PageFetcher`
   - `Calls *slog.Logger`, the logger that writes to the `logs` table
-- `type StepRecorder interface{ RecordStep(ctx context.Context, st domain.Step) error }` in `step.go`, so tests can inject a failing recorder.
-- `NewService(store, domains, rawPosts, steps StepRecorder, extractor, classifier, pages port.PageFetcher, enriched, schedule, resyncs, calls *slog.Logger) Service`
+- `NewService(store, domains, rawPosts, extractor, classifier, pages port.PageFetcher, enriched, schedule, resyncs, calls *slog.Logger) Service`
 - In `step.go`:
-  - `func (s *Service) step(ctx context.Context, l *slog.Logger, st domain.Step)` records the step and logs a failure on `l`.
+  - `func (s *Service) step(ctx context.Context, rawPostID, name, outcome, reason string, input, output any)` calls `domain.LogStep(ctx, s.callsFor(rawPostID, name), ...)`.
   - `func (s *Service) callsFor(rawPostID, step string) *slog.Logger` returns `s.Calls.With("raw_post_id", rawPostID, "step", step)`.
-  - `func (s *Service) stop(ctx context.Context, l *slog.Logger, p domain.RawPost, status string, st domain.Step) error` calls `SetStatus`, records `st` with Outcome `stopped`, and returns `pipeline.ErrSkip`. Two exceptions:
-    - It returns the `SetStatus` error when that fails.
-    - It records the step even then.
+  - `func (s *Service) stop(ctx context.Context, p domain.RawPost, status, name, reason string, input, output any) error` logs the step as stopped, calls `SetStatus`, and returns `pipeline.ErrSkip`. When `SetStatus` fails, it returns that error instead.
 - Pipeline order in `Run`: `claim`, `fetch`, `Extract`, `SetMarkdown`, `SetSimhash`, `saveContent`, `checkQuality`, then the `saveStatus` sink. `insert` stays until Task 5, since the discovered path still calls it.
 - `func (s *Service) claim(ctx context.Context, l *slog.Logger, p domain.RawPost) (domain.RawPost, error)`
   - It claims `postgres.Claim{URL: p.URL, Lang: p.Lang, SourceID: p.SourceID}`.
@@ -247,10 +220,9 @@ CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw
     - A Jev error: Outcome `error`, reason `err.Error()`, and today's `ErrSkip` return so the post stays pending.
     - A nil classifier: passed, reason `quality check off`.
   - `checkQuality` keeps today's contract of returning the post with its status set. The sink saves the status, as today.
-- `cmd/main.go`:
-  - Build `stepStore := postgres.NewStepStore(db)` and pass `&stepStore`, `fetcher.NewPages(pacer)` and `calls` to `NewService`.
+- `cmd/main.go`: pass `fetcher.NewPages(pacer)` and `calls` to `NewService`.
 
-- [ ] **Step 1:** Write `TestFetchFailedStopsPost` and `TestFetchFailedKeepsFeedContent` in `sourced_test.go`. Use a fake `PageFetcher` that returns an error, and a DB-backed service from `dbtest`.
+- [ ] **Step 1:** Write `TestFetchFailedStopsPost` and `TestFetchFailedKeepsFeedContent` in `sourced_test.go`. Use a fake `PageFetcher` that returns an error, a DB-backed service from `dbtest`, and the capturing handler as `Calls`.
   - The first sends a post with no feed content. Assert raw status `failed` and one fetch step, stopped, with a reason starting `fetch failed:`.
   - The second has feed content. Assert the fetch step passed with a reason starting `article fetch failed`, and the post reaches `checkQuality`.
 - [ ] **Step 2:** Write `TestExtractMissing` in `extract_test.go`. Empty page and empty feed content give raw status `missing` and an extract step stopped with reason `no content found`.
@@ -265,7 +237,7 @@ CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw
 
   Also assert there is a duplicate_check step before the quality_check step. Add a duplicate case: duplicate_check stopped, status `duplicate`, and no quality_check step.
 - [ ] **Step 4:** Write `TestQualityCallsCarryRawPostID`. A fake classifier records the `*slog.Logger` it gets. Call it through a `slog.New` handler that captures attrs, and assert `raw_post_id` equals the post id and `step` equals `quality_check`.
-- [ ] **Step 5:** Write `TestStepWriteFailureKeepsOutcome`. Use a `StepRecorder` fake whose `RecordStep` always errors. A score of 0.9 still gives status `accepted`, and the error is logged on `l`.
+- [ ] **Step 5:** Write `TestStepWriteFailureKeepsOutcome`. `Calls` uses a handler whose `Handle` always returns an error. A score of 0.9 still gives status `accepted`.
 - [ ] **Step 6:** Run `go test ./internal/core/service/source/`. Expected: FAIL.
 - [ ] **Step 7:** Implement it, then update `TestLane`, `retry_test.go` and the other tests to the new constructor and stages.
 - [ ] **Step 8:** Run `go build ./... && go test ./internal/core/service/source/ ./internal/adapter/...`. Expected: PASS. Discovered still uses `insert` and its old flow until Task 5.
@@ -300,7 +272,7 @@ CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw
   9. `saveContent`, then `checkQuality` and `saveStatus`, as today.
 - The discovery status mirrors the raw status, except `missing`, which maps to `rejected`. A raw post that reaches the quality check marks the discovery `accepted`, as today.
 
-- [ ] **Step 1:** Rewrite the cases in `discovered_test.go` around these assertions. Each checks the raw status, the discovery status and the ordered step names with their outcomes:
+- [ ] **Step 1:** Rewrite the cases in `discovered_test.go` around these assertions. Each checks the raw status, the discovery status, and the ordered step names with their outcomes from the capturing handler:
 
   | case | raw status | discovery status | steps |
   | --- | --- | --- | --- |
@@ -327,7 +299,7 @@ CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw
 - Test: `internal/core/service/enrich/enrich_test.go`
 
 **Interfaces:**
-- `enrich.Service` gains `Steps StepRecorder` and `Calls *slog.Logger`. `StepRecorder` is a local interface with the same `RecordStep` method, so enrich does not import the source service.
+- `enrich.Service` gains `Calls *slog.Logger`. Steps go through `domain.LogStep` with `s.Calls.With("raw_post_id", id, "step", name)`.
 - `func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) (domain.Post, discovery.Found, error)`. The post is the inserted one, and its `ID` is `""` when enrich skipped.
 - Inside `enrich`, `calls := s.Calls.With("raw_post_id", p.ID, "step", domain.StepEnrich)` goes to `jevTags` and `s.LLM.Unmarshal`. `l` stays for messages.
 - `Enrich` records steps:
@@ -337,13 +309,13 @@ CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw
     - then a discover step, passed, output `{"queries": found.Queries, "links": len(found.Links)}`
   - A skip records nothing.
 
-- [ ] **Step 1:** Write `TestEnrichSteps`, extending the existing enrich test setup.
+- [ ] **Step 1:** Write `TestEnrichSteps`, extending the existing enrich test setup with a capturing handler as `Calls`.
   - A successful enrich gives steps `enrich` passed with the post id, then `discover` passed.
   - A failing LLM gives one `enrich` error step, and a second `Enrich` call adds a second error step.
   - A post that already exists gives no steps.
 - [ ] **Step 2:** Write `TestEnrichCallsCarryRawPostID`. The LLM and classifier fakes capture the logger and assert `raw_post_id` and `step=enrich`.
 - [ ] **Step 3:** Run `go test ./internal/core/service/enrich/`. Expected: FAIL.
-- [ ] **Step 4:** Implement it, and pass `&stepStore` and `calls` in `cmd/main.go`.
+- [ ] **Step 4:** Implement it, and pass `calls` in `cmd/main.go`.
 - [ ] **Step 5:** Run `go build ./... && go test ./internal/core/service/enrich/`. Expected: PASS.
 - [ ] **Step 6: Commit.** Message: `Log enrich calls and record enrich and discover steps`.
 
@@ -423,7 +395,7 @@ CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw
 ### Task 8: Trace endpoint
 
 **Files:**
-- Modify: `internal/core/domain/step.go`. Add the trace types and `BuildTrace`.
+- Modify: `internal/core/domain/step.go`. Add `Step`, the trace types and `BuildTrace`.
 - Create: `internal/adapter/postgres/trace.go`
 - Modify: `internal/core/service/admin/route.go` and `posts.go`
 - Modify: `cmd/main.go`. Add `Traces` to `admin.Stores`.
@@ -432,6 +404,16 @@ CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw
 **Interfaces:**
 - In `domain/step.go`:
   ```go
+  // A step, read back from its logs row.
+  type Step struct {
+  	ID        int64           `json:"id"` // the logs row id
+  	Name      string          `json:"name"`
+  	Outcome   string          `json:"outcome"`
+  	Reason    string          `json:"reason"`
+  	Input     json.RawMessage `json:"input"`
+  	Output    json.RawMessage `json:"output"`
+  	CreatedAt time.Time       `json:"createdAt"`
+  }
   type TraceStep struct {
   	Step
   	Calls []LogSummary `json:"calls"`
@@ -443,9 +425,9 @@ CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw
   	Steps []TraceStep `json:"steps"`
   }
   ```
-- `func BuildTrace(steps []Step, calls []LogSummary, byStep map[string][]LogSummary) []TraceStep`
-  - `steps` are in id order. `calls` are in id order, each with `Metadata["step"]`.
-  - Each call joins the first step with the same name whose `CreatedAt` is not before the call's. This is attempt matching within one post.
+- `func BuildTrace(rows []LogDetail, byStep map[string][]LogSummary) []TraceStep`
+  - `rows` are one post's `logs` rows in id order. Rows of type `step` become steps: Name, Outcome and Reason from metadata, Input from `request`, Output from `response`. Every other row is a call, and its body is dropped.
+  - Each call joins the next step row after it, by id, with the same `metadata.step`. That matches attempts within one post.
   - A call with no such step joins a trailing step with that name and Outcome `pending`, created once per name.
   - `byStep[name]` goes onto the last step of that name. If the post has no such step, it is dropped.
   - `Calls` is never nil.
@@ -453,21 +435,23 @@ CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw
 - `func (s *TraceStore) Trace(ctx context.Context, rawPostID string) (domain.Trace, error)`
   - A missing row or a non-uuid id returns `pgx.ErrNoRows`.
   - Path is `discovered` when `discovery_post_id` is set.
-  - Steps come from `raw_post_steps`.
-  - Calls are `logs WHERE metadata @> jsonb_build_object('raw_post_id', $1::text)`, selecting only `logSummaryColumns`.
+  - One query: `logs WHERE metadata @> jsonb_build_object('raw_post_id', $1::text) ORDER BY id`. It selects `logSummaryColumns`, plus `request` and `response` only when `type = 'step'`, as `CASE` expressions.
   - `byStep[found_by]` holds the logs whose `metadata @>` matches the discovery post's `discovery_search_query_id`.
   - `byStep[discover]` holds the logs for each query id in `discovery_search_query_posts` joined to the post with the same url. Use one `@>` query per id, since the GIN index serves only `@>`.
   - `RuleCall` on the last extract step is the latest `type = 'deepseek'` log whose `metadata @>` matches `{"domain_id": r.domain_id}`, with `created_at <=` that step's `created_at`.
   - **Legacy:** with no steps and a non-null source, it returns one step: Name `fetch`, Outcome `passed`, reason `recorded before step tracing`. Its calls are the logs matching `metadata @> {"source_id"}` with `request->>'url' = r.url`.
 - Route: `GET /admin/posts/{id}/trace` returns `domain.Trace`, or 404 `Post not found`.
 
-- [ ] **Step 1:** Write `TestBuildTrace` in `domain/step_test.go`. It is table-driven over hand-built times:
-  - Two quality_check attempts at t2 and t4, with calls at t1 and t3. The t1 call joins the first attempt and the t3 call the second.
-  - A call at t5 for `enrich` with no step gives a trailing pending `enrich` step.
+- [ ] **Step 1:** Write `TestBuildTrace` in `domain/step_test.go`. It is table-driven over hand-built rows in id order:
+  - jev call 1, quality_check step 2 (error), jev call 3, quality_check step 4 (stopped). Call 1 joins step 2 and call 3 joins step 4.
+  - An `enrich` call with no step row after it gives a trailing pending `enrich` step.
+  - A step's Input and Output come from the row's `request` and `response`.
   - `byStep["discover"]` with no discover step is dropped.
   - A step with no calls has `Calls` as an empty slice, not nil.
-- [ ] **Step 2:** Write `TestTrace` in `trace_test.go`. Seed a raw post with fetch, extract and quality_check steps.
-  - Insert log rows with `metadata` set to `{"raw_post_id": id, "step": "fetch"}` and `{"raw_post_id": id, "step": "quality_check"}`.
+- [ ] **Step 2:** Write `TestTrace` in `trace_test.go`. Seed a raw post, then insert its `logs` rows in order:
+  - a `page` call with `{"raw_post_id": id, "step": "fetch"}`, then a `step` row for fetch
+  - a `step` row for extract
+  - a `jev` call with `step: quality_check`, then a stopped `step` row for quality_check
   - Insert a log for **another** raw post id.
   - Insert a `deepseek` log with `{"domain_id": d}` from before the extract step.
 
@@ -491,6 +475,7 @@ CREATE INDEX IF NOT EXISTS raw_post_steps_raw_post_id_idx ON raw_post_steps (raw
   - `PostSummary` and `Post` mirror `domain.AdminPost`.
   - `PostPage` stays as is.
   - Add `PostStatus`, `POST_STATUSES`, `Step`, `TraceStep` and `Trace`.
+  - Add `'step'` to `LOG_TYPES`, so the Logs page can filter steps.
 - Create: `admin/src/lib/components/ui/tabs/`. Install it in `admin/` with `pnpm dlx shadcn-svelte@latest add tabs`.
 - Move: `admin/src/routes/(app)/posts/+page.ts` becomes `posts/+layout.ts`. It reads `source`, `tag`, `search`, `status` and `page`.
 - Create: `admin/src/routes/(app)/posts/+layout.svelte`

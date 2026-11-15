@@ -14,7 +14,7 @@ The admin Posts page becomes the place to follow any URL the pipeline touched. I
 - The step that rejected or failed the post is red, opens on load, and states the reason in its collapsed row, for example `Rejected: score 0.12, needs 0.80`.
 - Steps after the stopping point show as not reached and do not open.
 - Every external call the pipeline makes for one post is logged against it: the article fetch, the quality check, enrich, and discover. Calls shared by a whole source run are left out. Those are the feed, listing, WordPress archive and link-rule calls.
-- Internal steps without an external call store their input and output too, so they open like the rest. These are extract, duplicate check, date window, domain check and source match.
+- Every step, with or without an external call, stores its outcome, reason, input and output, so every row opens. The internal steps are extract, duplicate check, date window, domain check and source match.
 - A URL that fails before content exists still gets a row. The list shows its URL with status `failed` when the fetch failed, or `missing` when extraction found no content. Its graph shows the failed fetch call or the empty extract.
 
 ## Non-goals
@@ -68,6 +68,15 @@ The admin Posts page becomes the place to follow any URL the pipeline touched. I
 - Discover's brave and jev filter calls stay keyed by `discovery_search_query_id`. The graph reaches them through `discovery_search_query_posts`, from the post to its queries.
 - A discovered post also shows its origin as the first step: the brave query that found it, or the post whose outbound link it was. The fetch and filter calls already logged for that query show inside that step.
 
+**Steps are `logs` rows.** Each step writes one row through the same `calls` logger as the external calls. There is no step table and no new `raw_posts` column.
+- `type` is `step` and is added to `LogTypes`.
+- `metadata` holds `raw_post_id`, `step`, `outcome` and `reason`. Outcome is `passed`, `stopped` or `error`.
+- `request` holds the step's input and `response` its output.
+- The level is INFO when the step passed, WARN when it stopped, and ERROR on an error.
+- The trace is one query on `logs` by `raw_post_id`, ordered by id. Each call belongs to the next step row with the same `step`.
+- The `logs` table comment changes from one row per outbound request to one row per outbound request or pipeline step.
+- Pruning `logs` would delete traces. There is no retention policy, so that is accepted.
+
 **Retries.** A step that runs more than once shows once per attempt, in time order. Cases are `retryPending` re-running the quality check and enrich retries.
 
 **UI.**
@@ -110,7 +119,6 @@ Discovered adds **Found by** before Fetch. It also adds these internal steps aft
 
 ## Left to the builder
 
-- Where internal step input and output live. Options are a new `raw_post_steps` table or another shape. It must keep one ordered record per step attempt, linked to the raw post.
 - How much of large inputs to keep for internal steps. Raw HTML can be summarized as a size, as in the mockup. External call bodies stay as `logs` stores them today.
 - The admin API shape for the list and the trace, and whether the trace is one call or separate per tab.
 - How `published` is computed efficiently. The list query joins `posts` on URL today.
