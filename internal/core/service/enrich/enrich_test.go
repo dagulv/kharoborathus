@@ -25,6 +25,7 @@ type fakeLLM struct {
 	schedule schedule.Schedule
 	calls    int
 	cancel   context.CancelFunc
+	l        *slog.Logger
 }
 
 func (f *fakeLLM) Schedule() schedule.Schedule { return f.schedule }
@@ -33,8 +34,9 @@ func (f *fakeLLM) Prompt(context.Context, *slog.Logger, port.Request) (string, e
 	return "", nil
 }
 
-func (f *fakeLLM) Unmarshal(_ context.Context, _ *slog.Logger, _ port.Request, out any) error {
+func (f *fakeLLM) Unmarshal(_ context.Context, l *slog.Logger, _ port.Request, out any) error {
 	f.calls++
+	f.l = l
 
 	if f.cancel != nil {
 		f.cancel()
@@ -101,7 +103,7 @@ func setup(t *testing.T) fixture {
 		links:    make(chan string, 10),
 		rawPosts: &rawPosts,
 	}
-	f.s = &Service{DB: db, RawPosts: &rawPosts, Posts: &posts, Tags: &tags, LLM: f.llm, Classifier: f.jev, SearchIDs: f.ids, DiscoveredIDs: f.links}
+	f.s = &Service{DB: db, RawPosts: &rawPosts, Posts: &posts, Tags: &tags, LLM: f.llm, Classifier: f.jev, SearchIDs: f.ids, DiscoveredIDs: f.links, Calls: slog.New(slog.DiscardHandler)}
 
 	return f
 }
@@ -374,5 +376,70 @@ func TestEnrichProposalLimits(t *testing.T) {
 	var n int
 	if err := f.db.QueryRow(context.Background(), `SELECT count(*) FROM tags WHERE key IN ('', '_', 'p6')`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("bad proposals saved: %d, %v", n, err)
+	}
+}
+
+func TestEnrichSteps(t *testing.T) {
+	f := setup(t)
+	rec := newCapture()
+	f.s.Calls = slog.New(rec)
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := rec.stepLine(raw.ID); got != "enrich:passed discover:passed" {
+		t.Fatalf("steps %q", got)
+	}
+
+	p, _ := f.post(t, raw.URL)
+
+	if out, _ := rec.steps(raw.ID)[0].attrs["response"].(map[string]any); out["postId"] != p.ID {
+		t.Errorf("enrich output %v, post %s", out, p.ID)
+	}
+
+	if err := enrich(f, raw.ID); err != nil || rec.stepLine(raw.ID) != "enrich:passed discover:passed" {
+		t.Errorf("existing post: %v, steps %q", err, rec.stepLine(raw.ID))
+	}
+}
+
+func TestEnrichStepsFailure(t *testing.T) {
+	f := setup(t)
+	rec := newCapture()
+	f.s.Calls = slog.New(rec)
+	f.llm.err = errors.New("deepseek: 500")
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	enrich(f, raw.ID)
+	enrich(f, raw.ID)
+
+	if got := rec.stepLine(raw.ID); got != "enrich:error enrich:error" {
+		t.Errorf("steps %q", got)
+	}
+
+	if reason, _ := rec.last(raw.ID).attrs["reason"].(string); reason == "" {
+		t.Error("error step without a reason")
+	}
+}
+
+func TestEnrichCallsCarryRawPostID(t *testing.T) {
+	f := setup(t)
+	rec := newCapture()
+	f.s.Calls = slog.New(rec)
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, l := range map[string]*slog.Logger{"llm": f.llm.l, "jev": f.jev.l} {
+		l.Info("probe")
+
+		got := (*rec.records)[len(*rec.records)-1]
+
+		if got.msg != "probe" || got.attrs["raw_post_id"] != raw.ID || got.attrs["step"] != domain.StepEnrich {
+			t.Errorf("%s: record %+v", name, got)
+		}
 	}
 }
