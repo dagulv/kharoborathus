@@ -58,7 +58,7 @@ type AdminPost struct {
 	Tags         []string   `json:"tags"`
 	Authors      []string   `json:"authors"`
 	PostedAt     *time.Time `json:"postedAt"`
-	Status       string     `json:"status"` // published when a post with the same url exists
+	Status       string     `json:"status"` // published when a post with the same url exists, unless a resync is running
 	CreatedAt    time.Time  `json:"createdAt"`
 	Content      string     `json:"content,omitempty"`
 	SourceURL    string     `json:"sourceUrl,omitempty"`

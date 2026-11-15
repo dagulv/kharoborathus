@@ -437,6 +437,15 @@ func TestGetAdminPost(t *testing.T) {
 		t.Errorf("published %+v, %v", p, err)
 	}
 
+	if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = 'pending' WHERE id = $1`, list.Posts[0].ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A published post being resynced shows as in the pipeline.
+	if p, err := s.GetAdminPost(ctx, list.Posts[0].ID); err != nil || p.Status != "pending" || p.PostID == nil {
+		t.Errorf("resyncing %+v, %v", p, err)
+	}
+
 	if p, err := s.GetAdminPost(ctx, rejected); err != nil || p.Content != "raw body" || p.Title != "Two" || p.Status != "rejected" {
 		t.Errorf("rejected %+v, %v", p, err)
 	}
