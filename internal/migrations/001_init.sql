@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS sources (
   url TEXT NOT NULL,
   enabled BOOLEAN NOT NULL DEFAULT false,
   rate INT NOT NULL DEFAULT 15,
-  lang TEXT NOT NULL DEFAULT '', -- for posts whose page or feed gives none
+  lang TEXT, -- for posts whose page or feed gives none
   metadata JSONB NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'active', -- proposed | active | flagged
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -82,8 +82,8 @@ CREATE TABLE IF NOT EXISTS raw_posts (
   url TEXT UNIQUE NOT NULL,
   lang TEXT NOT NULL,
   domain_id UUID NOT NULL REFERENCES domains (id),
-  raw_content TEXT NOT NULL,
-  content JSONB NOT NULL, -- {content, title, authors, posted_at} from the fetch and extraction
+  raw_content TEXT,
+  content JSONB, -- {content, title, authors, posted_at} from the fetch and extraction
   simhash BIGINT,
   status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
   retry_count INT NOT NULL DEFAULT 0, -- failed enrich attempts

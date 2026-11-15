@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -171,7 +172,8 @@ func (s *RawPostStore) FailEnrich(ctx context.Context, id string) error {
 }
 
 func scanRawPost(row pgx.Row, p domain.RawPost) (domain.RawPost, error) {
-	var content rawContent
+	var rawContentText sql.NullString
+	var content *rawContent
 
 	if err := row.Scan(
 		&p.ID,
@@ -179,7 +181,7 @@ func scanRawPost(row pgx.Row, p domain.RawPost) (domain.RawPost, error) {
 		&p.URL,
 		&p.Lang,
 		&p.DomainID,
-		&p.RawContent,
+		&rawContentText,
 		&content,
 		&p.Simhash,
 		&p.Status,
@@ -187,6 +189,12 @@ func scanRawPost(row pgx.Row, p domain.RawPost) (domain.RawPost, error) {
 		&p.CreatedAt,
 	); err != nil {
 		return p, err
+	}
+
+	p.RawContent = rawContentText.String
+
+	if content == nil {
+		return p, nil
 	}
 
 	p.Content, p.Title, p.Authors, p.PostedAt = content.Content, content.Title, content.Authors, content.PostedAt

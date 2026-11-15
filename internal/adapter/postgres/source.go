@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"iter"
@@ -105,6 +106,8 @@ func (s *SourceStore) GetSource(ctx context.Context, id string) (domain.Source, 
 }
 
 func scanSource(row pgx.Row) (source domain.Source, err error) {
+	var lang sql.NullString
+
 	err = row.Scan(
 		&source.ID,
 		&source.DomainID,
@@ -113,10 +116,12 @@ func scanSource(row pgx.Row) (source domain.Source, err error) {
 		&source.Enabled,
 		&source.Status,
 		&source.Rate,
-		&source.Lang,
+		&lang,
 		&source.Metadata,
 		&source.CreatedAt,
 	)
+
+	source.Lang = lang.String
 
 	return
 }
@@ -207,12 +212,15 @@ func (s *SourceStore) ListAdminSources(ctx context.Context, includeDeleted bool)
 
 	for rows.Next() {
 		var a domain.AdminSource
+		var lang sql.NullString
 		if err := rows.Scan(
-			&a.ID, &a.DomainID, &a.Adapter, &a.URL, &a.Enabled, &a.Status, &a.Rate, &a.Lang, &a.Metadata, &a.CreatedAt, &a.DeletedAt,
+			&a.ID, &a.DomainID, &a.Adapter, &a.URL, &a.Enabled, &a.Status, &a.Rate, &lang, &a.Metadata, &a.CreatedAt, &a.DeletedAt,
 			&a.DomainURL, &a.PostCount, &a.LastPostedAt,
 		); err != nil {
 			return nil, fmt.Errorf("err scan admin source: %w", err)
 		}
+
+		a.Lang = lang.String
 
 		out = append(out, a)
 	}

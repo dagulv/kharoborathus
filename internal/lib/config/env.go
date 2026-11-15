@@ -22,7 +22,7 @@ type Environment struct {
 	DeepseekAPIKey   string   `env:"DEEPSEEK_API_KEY" envDefault:""`
 	TypesafeAPIKey   string   `env:"TYPESAFE_API_KEY" envDefault:""`
 	BraveAPIKey      string   `env:"BRAVE_API_KEY" envDefault:""`
-	AdminOrigins     []string `env:"ADMIN_ORIGINS" envSeparator:"," envDefault:"http://localhost:5173"`
+	AdminOrigins     []string `env:"ADMIN_ORIGINS" envSeparator:"," envDefault:"http://localhost:5173,http://localhost:5174"`
 }
 
 func Load(useFile ...bool) (e *Environment, err error) {
