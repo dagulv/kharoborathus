@@ -7,6 +7,7 @@ import (
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
+	"github.com/jackc/pgx/v5"
 )
 
 type Store struct {
@@ -83,4 +84,30 @@ func (s *Store) SetExtractRule(ctx context.Context, id, key string, rule json.Ra
 	}
 
 	return nil
+}
+
+// ListPages returns the domain's newest fetched pages.
+func (s *Store) ListPages(ctx context.Context, domainID string, limit int) ([]domain.RawPost, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT
+			url,
+			raw_content
+		FROM raw_posts
+		WHERE domain_id = $1 AND raw_content IS NOT NULL
+		ORDER BY created_at DESC
+		LIMIT $2
+		`, domainID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("err list pages %s: %w", domainID, err)
+	}
+
+	pages, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (p domain.RawPost, err error) {
+		err = row.Scan(&p.URL, &p.RawContent)
+		return p, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("err scan pages %s: %w", domainID, err)
+	}
+
+	return pages, nil
 }
