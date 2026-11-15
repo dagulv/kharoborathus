@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
@@ -14,25 +15,57 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestInsertPost(t *testing.T) {
+func TestSavePost(t *testing.T) {
 	db, _, base := rawPostDB(t)
 	ctx := context.Background()
 	s := NewPostStore(db)
 	p := domain.Post{SourceID: base.SourceID, DomainID: base.DomainID, URL: "https://a.example/1", Lang: "sv", Title: "t", ShortContent: "s", Content: "c", Tags: []string{"acquisition"}}
+	contentAt := time.Now().Add(-time.Hour)
 
-	for i, want := range []bool{true, false} {
-		var inserted bool
+	save := func(p domain.Post, contentAt time.Time) (out domain.Post, saved bool) {
+		t.Helper()
 
 		if err := pgx.BeginFunc(ctx, db, func(tx pgx.Tx) (err error) {
-			_, inserted, err = s.InsertPost(ctx, tx, p)
+			out, saved, err = s.SavePost(ctx, tx, p, contentAt)
 			return err
-		}); err != nil || inserted != want {
-			t.Errorf("insert %d: inserted %v, %v", i, inserted, err)
+		}); err != nil {
+			t.Fatal(err)
 		}
+
+		return out, saved
 	}
 
-	if exists, err := s.PostExists(ctx, p.URL); err != nil || !exists {
-		t.Errorf("exists %v, %v", exists, err)
+	first, saved := save(p, contentAt)
+	if !saved {
+		t.Fatal("first save not saved")
+	}
+
+	if _, saved := save(p, contentAt); saved {
+		t.Error("second save of the same content saved")
+	}
+
+	if current, err := s.PostCurrent(ctx, p.URL, contentAt); err != nil || !current {
+		t.Errorf("current %v, %v", current, err)
+	}
+
+	resynced := time.Now().Add(time.Minute)
+
+	if current, err := s.PostCurrent(ctx, p.URL, resynced); err != nil || current {
+		t.Errorf("current after resync %v, %v", current, err)
+	}
+
+	p.Title, p.Tags = "t2", []string{"buyback"}
+
+	second, saved := save(p, resynced)
+	if !saved || second.ID != first.ID || !second.CreatedAt.Equal(first.CreatedAt) {
+		t.Errorf("resave saved %v, id %s want %s, created %v want %v", saved, second.ID, first.ID, second.CreatedAt, first.CreatedAt)
+	}
+
+	var title string
+	var tags []string
+
+	if err := db.QueryRow(ctx, `SELECT title, tags FROM posts WHERE id = $1`, first.ID).Scan(&title, &tags); err != nil || title != "t2" || !slices.Equal(tags, p.Tags) {
+		t.Errorf("title %q, tags %v, %v", title, tags, err)
 	}
 }
 
@@ -82,7 +115,7 @@ func postsDB(t *testing.T) (*database.Database, PostStore, domain.Post, domain.P
 		p := domain.Post{SourceID: base.SourceID, DomainID: base.DomainID, URL: url, Lang: "sv", Title: title, ShortContent: "s", Content: "c", Tags: tags}
 
 		if err := pgx.BeginFunc(ctx, db, func(tx pgx.Tx) (err error) {
-			p, _, err = s.InsertPost(ctx, tx, p)
+			p, _, err = s.SavePost(ctx, tx, p, time.Now())
 			return err
 		}); err != nil {
 			t.Fatal(err)

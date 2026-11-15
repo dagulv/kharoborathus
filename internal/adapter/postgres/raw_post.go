@@ -199,7 +199,7 @@ func (s *RawPostStore) ListUnenriched(ctx context.Context, limit int, minAge tim
 		WHERE (r.status = 'accepted' OR (r.status = 'failed' AND r.retry_count < $3))
 			AND r.content IS NOT NULL
 			AND r.created_at < now() - $2::interval
-			AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = r.url)
+			AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = r.url AND p.updated_at >= r.created_at)
 		ORDER BY r.retry_count, r.created_at
 		LIMIT $1
 		`, limit, minAge, maxRetries)

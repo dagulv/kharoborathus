@@ -105,8 +105,8 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		return domain.Post{}, discovery.Found{}, nil
 	}
 
-	exists, err := s.Posts.PostExists(ctx, p.URL)
-	if err != nil || exists {
+	current, err := s.Posts.PostCurrent(ctx, p.URL, p.CreatedAt)
+	if err != nil || current {
 		return domain.Post{}, discovery.Found{}, err
 	}
 
@@ -207,7 +207,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 
 		post.Tags = tags
 
-		post, ok, err := s.Posts.InsertPost(ctx, tx, post)
+		post, ok, err := s.Posts.SavePost(ctx, tx, post, p.CreatedAt)
 		if err != nil || !ok {
 			return err
 		}

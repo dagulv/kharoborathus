@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS posts (
   posted_at TIMESTAMPTZ,
   authors TEXT[] NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), -- last enrich write, older than its raw post's content after a resync
   simhash BIGINT,
   ts tsvector GENERATED ALWAYS AS (
     CASE lang
