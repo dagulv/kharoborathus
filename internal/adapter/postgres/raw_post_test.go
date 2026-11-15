@@ -224,6 +224,49 @@ func TestListUnenrichedRetryCap(t *testing.T) {
 	}
 }
 
+func TestReclaim(t *testing.T) {
+	db, s, base := rawPostDB(t)
+	ctx := context.Background()
+	p := create(t, s, base, "https://a.example/1", 1)
+
+	if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = 'rejected', retry_count = 2, created_at = now() - interval '1 day' WHERE id = $1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := s.Reclaim(ctx, p.ID)
+	if err != nil || !ok || got.Content != "c" || got.Status != domain.StatusPending {
+		t.Fatalf("reclaim ok %v, content %q, status %q, %v", ok, got.Content, got.Status, err)
+	}
+
+	var cleared, fresh bool
+	var retries int
+
+	if err := db.QueryRow(ctx, `
+		SELECT content IS NULL AND raw_content IS NULL AND simhash IS NULL, created_at > now() - interval '1 minute', retry_count
+		FROM raw_posts WHERE id = $1
+		`, p.ID).Scan(&cleared, &fresh, &retries); err != nil || !cleared || !fresh || retries != 0 {
+		t.Errorf("cleared %v, fresh %v, retries %d, %v", cleared, fresh, retries, err)
+	}
+
+	if _, ok, err := s.Reclaim(ctx, p.ID); err != nil || ok {
+		t.Errorf("reclaim in flight: ok %v, %v", ok, err)
+	}
+
+	if _, err := db.Exec(ctx, `UPDATE raw_posts SET created_at = now() - interval '10 minutes' WHERE id = $1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := s.Reclaim(ctx, p.ID); err != nil || !ok {
+		t.Errorf("reclaim stuck: ok %v, %v", ok, err)
+	}
+
+	for _, id := range []string{"00000000-0000-0000-0000-000000000000", "nope"} {
+		if _, ok, err := s.Reclaim(ctx, id); err != nil || ok {
+			t.Errorf("%s: ok %v, %v", id, ok, err)
+		}
+	}
+}
+
 func TestFailEnrich(t *testing.T) {
 	_, s, base := rawPostDB(t)
 	ctx := context.Background()

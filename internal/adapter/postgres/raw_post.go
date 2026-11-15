@@ -133,6 +133,35 @@ func (s *RawPostStore) MoveURL(ctx context.Context, id, url string) (moved bool,
 	return true, nil
 }
 
+// Reclaim puts a raw post back to pending for a resync, as a fresh claim with no content. The
+// returned post keeps its old content, which the resync falls back to when the page fails to fetch.
+// claimed is false when the post is unknown or still in the pipeline.
+func (s *RawPostStore) Reclaim(ctx context.Context, id string) (p domain.RawPost, claimed bool, err error) {
+	p, err = scanRawPost(s.db.QueryRow(ctx, `
+		WITH old AS (
+			SELECT `+rawPostColumns+` FROM raw_posts
+			WHERE id = $1 AND (status <> 'pending' OR created_at < now() - interval '5 minutes')
+			FOR UPDATE
+		), reset AS (
+			UPDATE raw_posts r
+			SET status = 'pending', raw_content = NULL, content = NULL, simhash = NULL, retry_count = 0, created_at = now()
+			FROM old WHERE r.id = old.id
+		)
+		SELECT `+rawPostColumns+` FROM old
+		`, id), domain.RawPost{})
+	if errors.Is(err, pgx.ErrNoRows) || isInvalidText(err) {
+		return p, false, nil
+	}
+
+	if err != nil {
+		return p, false, fmt.Errorf("err reclaim raw post %s: %w", id, err)
+	}
+
+	p.Status = domain.StatusPending
+
+	return p, true, nil
+}
+
 // Only earlier rows count, so of two near-identical posts exactly one is the duplicate.
 func (s *RawPostStore) HasDuplicate(ctx context.Context, p domain.RawPost) (exists bool, err error) {
 	if p.Simhash == nil {
