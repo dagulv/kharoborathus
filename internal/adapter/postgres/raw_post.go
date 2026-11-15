@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -28,7 +29,8 @@ const rawPostColumns = `
 	simhash,
 	status,
 	retry_count,
-	created_at`
+	created_at,
+	discovery_post_id`
 
 // The content column, which carries what the fetch and extraction found until the post is created.
 type rawContent struct {
@@ -72,6 +74,68 @@ func (s *RawPostStore) CreateRawPost(ctx context.Context, p domain.RawPost) (dom
 	}
 
 	return out, nil
+}
+
+// An empty SourceID or DiscoveryPostID is stored as NULL.
+type Claim struct {
+	URL             string
+	Lang            string
+	SourceID        string
+	DiscoveryPostID string
+}
+
+// ClaimRawPost stores the url as pending before it is fetched, so every step can log against its id.
+// A url already stored is claimed again only when it stopped before it had content, as a link
+// with no row always was. claimed is false when another sync owns the url or it is done.
+func (s *RawPostStore) ClaimRawPost(ctx context.Context, c Claim) (p domain.RawPost, claimed bool, err error) {
+	baseURL, err := domain.BaseURL(c.URL)
+	if err != nil {
+		return p, false, fmt.Errorf("err claim raw post %s: %w", c.URL, err)
+	}
+
+	p, err = scanRawPost(s.db.QueryRow(ctx, `
+		WITH d AS (
+			INSERT INTO domains (base_url) VALUES ($1)
+			ON CONFLICT (base_url) DO UPDATE SET base_url = EXCLUDED.base_url
+			RETURNING id
+		)
+		INSERT INTO raw_posts (source_id, discovery_post_id, url, lang, domain_id)
+		SELECT NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, $4, $5, d.id FROM d
+		ON CONFLICT (url) DO UPDATE SET status = 'pending'
+		WHERE raw_posts.content IS NULL AND (
+			raw_posts.status IN ('failed', 'missing')
+			OR (raw_posts.status = 'pending' AND raw_posts.created_at < now() - interval '5 minutes')
+		)
+		RETURNING `+rawPostColumns,
+		baseURL, c.SourceID, c.DiscoveryPostID, c.URL, c.Lang,
+	), domain.RawPost{})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return p, false, nil
+	}
+
+	if err != nil {
+		return p, false, fmt.Errorf("err claim raw post %s: %w", c.URL, err)
+	}
+
+	return p, true, nil
+}
+
+// An empty SourceID keeps the stored one.
+func (s *RawPostStore) SaveContent(ctx context.Context, p domain.RawPost) error {
+	content, err := json.Marshal(rawContent{Content: p.Content, Title: p.Title, Authors: p.Authors, PostedAt: p.PostedAt})
+	if err != nil {
+		return fmt.Errorf("err marshal raw post content %s: %w", p.URL, err)
+	}
+
+	if _, err := s.db.Exec(ctx, `
+		UPDATE raw_posts
+		SET source_id = coalesce(NULLIF($2, '')::uuid, source_id), domain_id = $3, lang = $4, raw_content = $5, content = $6, simhash = $7
+		WHERE id = $1
+		`, p.ID, p.SourceID, p.DomainID, p.Lang, p.RawContent, content, p.Simhash); err != nil {
+		return fmt.Errorf("err save raw post content %s: %w", p.URL, err)
+	}
+
+	return nil
 }
 
 func (s *RawPostStore) RawPostExists(ctx context.Context, url string) (exists bool, err error) {
@@ -123,7 +187,7 @@ func (s *RawPostStore) GetRawPost(ctx context.Context, id string) (domain.RawPos
 func (s *RawPostStore) ListPending(ctx context.Context, limit int, minAge time.Duration) ([]domain.RawPost, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT `+rawPostColumns+` FROM raw_posts
-		WHERE status = 'pending' AND created_at < now() - $2::interval
+		WHERE status = 'pending' AND content IS NOT NULL AND created_at < now() - $2::interval
 		ORDER BY created_at
 		LIMIT $1
 		`, limit, minAge)
@@ -146,6 +210,7 @@ func (s *RawPostStore) ListUnenriched(ctx context.Context, limit int, minAge tim
 	rows, err := s.db.Query(ctx, `
 		SELECT r.id FROM raw_posts r
 		WHERE (r.status = 'accepted' OR (r.status = 'failed' AND r.retry_count < $3))
+			AND r.content IS NOT NULL
 			AND r.created_at < now() - $2::interval
 			AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = r.url)
 		ORDER BY r.retry_count, r.created_at
@@ -172,12 +237,12 @@ func (s *RawPostStore) FailEnrich(ctx context.Context, id string) error {
 }
 
 func scanRawPost(row pgx.Row, p domain.RawPost) (domain.RawPost, error) {
-	var rawContentText sql.NullString
+	var sourceID, rawContentText, discoveryPostID sql.NullString
 	var content *rawContent
 
 	if err := row.Scan(
 		&p.ID,
-		&p.SourceID,
+		&sourceID,
 		&p.URL,
 		&p.Lang,
 		&p.DomainID,
@@ -187,10 +252,13 @@ func scanRawPost(row pgx.Row, p domain.RawPost) (domain.RawPost, error) {
 		&p.Status,
 		&p.RetryCount,
 		&p.CreatedAt,
+		&discoveryPostID,
 	); err != nil {
 		return p, err
 	}
 
+	p.SourceID = sourceID.String
+	p.DiscoveryPostID = discoveryPostID.String
 	p.RawContent = rawContentText.String
 
 	if content == nil {
