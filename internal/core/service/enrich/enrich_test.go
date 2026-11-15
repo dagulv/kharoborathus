@@ -319,6 +319,32 @@ func TestEnrichExistingPost(t *testing.T) {
 	}
 }
 
+// A resync saves new content after the post, so enrich writes the post again in place.
+func TestEnrichResyncedPost(t *testing.T) {
+	f := setup(t)
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	before, _ := f.post(t, raw.URL)
+
+	raw.Title = "Volvo köper igen"
+	if _, err := f.rawPosts.SaveContent(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	after, _ := f.post(t, raw.URL)
+	if after.ID != before.ID || after.Title != "Volvo köper igen" {
+		t.Errorf("post %s %q, want %s with the new title", after.ID, after.Title, before.ID)
+	}
+}
+
 func TestEnrichRetries(t *testing.T) {
 	f := setup(t)
 	exhausted := f.rawPost(t, true, "https://own.example/1", domain.StatusFailed, 10)

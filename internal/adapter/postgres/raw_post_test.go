@@ -189,12 +189,15 @@ func TestListUnenriched(t *testing.T) {
 	mk("https://a.example/fresh", domain.StatusAccepted, 0, "1 minute")
 	mk("https://a.example/rejected", domain.StatusRejected, 0, "1 hour")
 	posted := mk("https://a.example/posted", domain.StatusAccepted, 0, "1 hour")
+	resynced := mk("https://a.example/resynced", domain.StatusAccepted, 0, "90 minutes")
 
-	if _, err := db.Exec(ctx, `
-		INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content)
-		SELECT source_id, url, lang, domain_id, 't', 's', 'c' FROM raw_posts WHERE id = $1
-		`, posted); err != nil {
-		t.Fatal(err)
+	for id, updated := range map[string]string{posted: "0 minutes", resynced: "2 hours"} {
+		if _, err := db.Exec(ctx, `
+			INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content, updated_at)
+			SELECT source_id, url, lang, domain_id, 't', 's', 'c', now() - $2::interval FROM raw_posts WHERE id = $1
+			`, id, updated); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	ids, err := s.ListUnenriched(ctx, 20, 5*time.Minute, 10)
@@ -202,7 +205,7 @@ func TestListUnenriched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if want := []string{older, accepted, retried}; !slices.Equal(ids, want) {
+	if want := []string{older, resynced, accepted, retried}; !slices.Equal(ids, want) {
 		t.Errorf("got %v, want %v", ids, want)
 	}
 }

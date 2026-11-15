@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"strings"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
@@ -23,28 +24,34 @@ func NewPostStore(db *database.Database) PostStore {
 	}
 }
 
-func (s *PostStore) PostExists(ctx context.Context, url string) (exists bool, err error) {
-	if err = s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM posts WHERE url = $1)`, url).Scan(&exists); err != nil {
-		return false, fmt.Errorf("err post exists: %w", err)
+// A post is current when enrich wrote it after its raw post's content arrived. A resync makes it stale.
+func (s *PostStore) PostCurrent(ctx context.Context, url string, contentAt time.Time) (current bool, err error) {
+	if err = s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM posts WHERE url = $1 AND updated_at >= $2)`, url, contentAt).Scan(&current); err != nil {
+		return false, fmt.Errorf("err post current: %w", err)
 	}
 
-	return exists, nil
+	return current, nil
 }
 
-// Inserted is false when another worker stored the url first.
-func (s *PostStore) InsertPost(ctx context.Context, tx pgx.Tx, p domain.Post) (out domain.Post, inserted bool, err error) {
+// SavePost inserts the post, or overwrites a stale one in place, keeping its id and created_at.
+// Saved is false when the post is already current, as when another worker stored it first.
+func (s *PostStore) SavePost(ctx context.Context, tx pgx.Tx, p domain.Post, contentAt time.Time) (out domain.Post, saved bool, err error) {
 	err = tx.QueryRow(ctx, `
 		INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content, tags, posted_at, authors, simhash)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::text[], '{}'), $9, COALESCE($10::text[], '{}'), $11)
-		ON CONFLICT (url) DO NOTHING
+		ON CONFLICT (url) DO UPDATE SET
+			source_id = EXCLUDED.source_id, lang = EXCLUDED.lang, domain_id = EXCLUDED.domain_id, title = EXCLUDED.title,
+			short_content = EXCLUDED.short_content, content = EXCLUDED.content, tags = EXCLUDED.tags,
+			posted_at = EXCLUDED.posted_at, authors = EXCLUDED.authors, simhash = EXCLUDED.simhash, updated_at = now()
+		WHERE posts.updated_at < $12
 		RETURNING id, created_at
-		`, p.SourceID, p.URL, p.Lang, p.DomainID, p.Title, p.ShortContent, p.Content, p.Tags, p.PostedAt, p.Authors, p.Simhash).Scan(&p.ID, &p.CreatedAt)
+		`, p.SourceID, p.URL, p.Lang, p.DomainID, p.Title, p.ShortContent, p.Content, p.Tags, p.PostedAt, p.Authors, p.Simhash, contentAt).Scan(&p.ID, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, false, nil
 	}
 
 	if err != nil {
-		return p, false, fmt.Errorf("err insert post %s: %w", p.URL, err)
+		return p, false, fmt.Errorf("err save post %s: %w", p.URL, err)
 	}
 
 	return p, true, nil
