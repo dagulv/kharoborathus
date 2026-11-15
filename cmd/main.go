@@ -167,6 +167,7 @@ func app(ctx context.Context) (err error) {
 
 	syncs := make(chan domain.Source, source.SyncQueue)
 	backfills := make(chan domain.Source, source.BackfillQueue)
+	resyncs := make(chan domain.Resync, source.ResyncQueue)
 
 	sourceService := source.NewService(&sourceStore, &domainStore, &rawPostStore, extractor, classifier, fetcher.NewPages(pacer), enrichIDs, schedule.Always, syncs, calls)
 
@@ -194,7 +195,7 @@ func app(ctx context.Context) (err error) {
 	protected := http.NewServeMux()
 	source.Routes(protected, &sourceStore, syncs, backfills, fetcher.NewProber(l.WithGroup("probe"), calls), l.WithGroup("source"))
 	traceStore := postgres.NewTraceStore(db)
-	admin.Routes(protected, backfills, admin.Stores{Stats: &statsStore, Sources: &sourceStore, Posts: &postStore, Tags: &tagStore, Logs: &logStore, Traces: &traceStore}, l.WithGroup("admin"))
+	admin.Routes(protected, backfills, resyncs, admin.Stores{Stats: &statsStore, Sources: &sourceStore, Posts: &postStore, Tags: &tagStore, Logs: &logStore, Traces: &traceStore}, l.WithGroup("admin"))
 
 	adminMux := http.NewServeMux()
 	auth.Routes(adminMux, protected, &userStore, &sessionStore, l.WithGroup("auth"))
@@ -244,6 +245,10 @@ func app(ctx context.Context) (err error) {
 
 	g.Go(func() error {
 		return enrichService.Run(ctx, enrichIDs, l.WithGroup("enrich"))
+	})
+
+	g.Go(func() error {
+		return source.RunResyncs(ctx, discovered, resyncs, l.WithGroup("resync"))
 	})
 
 	g.Go(func() error {
