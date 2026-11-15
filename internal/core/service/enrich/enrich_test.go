@@ -124,8 +124,14 @@ func (f fixture) rawPost(t *testing.T, trusted bool, url, status string, retries
 	// Recent, since discovery starts no search for posts older than its window.
 	posted := time.Now().UTC().Truncate(time.Hour)
 
-	p, err := f.rawPosts.CreateRawPost(ctx, domain.RawPost{SourceID: sourceID, DomainID: domainID, URL: url, Lang: "sv", Content: article, Title: "Volvo köper", Authors: []string{"TT"}, PostedAt: &posted})
+	p, _, err := f.rawPosts.ClaimRawPost(ctx, postgres.Claim{URL: url, SourceID: sourceID})
 	if err != nil {
+		t.Fatal(err)
+	}
+
+	p.SourceID, p.DomainID, p.Lang, p.Content, p.Title, p.Authors, p.PostedAt = sourceID, domainID, "sv", article, "Volvo köper", []string{"TT"}, &posted
+
+	if err := f.rawPosts.SaveContent(ctx, p); err != nil {
 		t.Fatal(err)
 	}
 

@@ -11,7 +11,6 @@ import (
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/pipeline"
-	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -176,17 +175,6 @@ func (s *Service) fetch(ctx context.Context, _ *slog.Logger, p domain.RawPost) (
 
 func (s *Service) saveContent(ctx context.Context, _ *slog.Logger, p domain.RawPost) (domain.RawPost, error) {
 	return p, s.RawPostStore.SaveContent(ctx, p)
-}
-
-// Stored as pending before the quality check, so a Jev outage or a crash loses no fetched post.
-// A url another worker stored first is not a failure.
-func (s *Service) insert(ctx context.Context, _ *slog.Logger, p domain.RawPost) (domain.RawPost, error) {
-	out, err := s.RawPostStore.CreateRawPost(ctx, p)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return p, pipeline.ErrSkip
-	}
-
-	return out, err
 }
 
 // A dropped id is found again by enrich's catch-up job, so a full queue is not a failure.

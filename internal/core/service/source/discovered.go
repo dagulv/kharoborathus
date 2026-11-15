@@ -2,15 +2,16 @@ package source
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
-	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/pipeline"
 )
 
@@ -25,9 +26,6 @@ const (
 type Discovered struct {
 	Service *Service
 	Store   *postgres.DiscoveredStore
-	Pages   port.PageFetcher
-	// Third-party requests, one row each in the logs table.
-	Calls *slog.Logger
 }
 
 // One link at a time.
@@ -96,34 +94,47 @@ func (d Discovered) ingest(ctx context.Context, l *slog.Logger, id string) error
 }
 
 // An error leaves the link pending for the catch-up. Every status is final.
+// The returned status is the discovery post's.
 func (d Discovered) rawPost(ctx context.Context, l *slog.Logger, link postgres.Discovered) (domain.RawPost, string, error) {
-	exists, err := d.Service.RawPostStore.RawPostExists(ctx, link.URL)
-	if err != nil || exists {
-		return domain.RawPost{}, domain.StatusDuplicate, err
+	s := d.Service
+
+	p, ok, err := s.RawPostStore.ClaimRawPost(ctx, postgres.Claim{URL: link.URL, DiscoveryPostID: link.ID})
+	if err != nil || !ok {
+		return p, domain.StatusDuplicate, err
 	}
+
+	s.step(ctx, p.ID, domain.StepFoundBy, domain.OutcomePassed, "", map[string]any{
+		"discoveryPostId": link.ID,
+		"fromPostId":      link.FromPostID,
+		"searchQueryId":   link.QueryID,
+	}, nil)
 
 	// Checked before the fetch, so a blocked domain gets no request.
-	dom, err := d.Service.DomainStore.GetOrCreateDomain(ctx, link.URL)
+	domainIn := map[string]any{"domainId": p.DomainID}
+
+	_, blocked, err := s.SourceStore.DomainSource(ctx, p.DomainID)
 	if err != nil {
-		return domain.RawPost{}, "", err
+		return p, "", err
 	}
 
-	if _, blocked, err := d.Service.SourceStore.DomainSource(ctx, dom.ID); err != nil || blocked {
-		return domain.RawPost{}, domain.StatusFailed, err
+	if blocked {
+		return d.end(ctx, p, domain.StatusFailed, domain.StepDomainCheck, "domain blocked", domainIn, nil)
 	}
 
-	page, finalURL, err := d.Pages.Page(ctx, d.Calls.With("discovery_post_id", link.ID), link.URL)
-	if ctx.Err() != nil {
-		return domain.RawPost{}, "", ctx.Err()
+	s.step(ctx, p.ID, domain.StepDomainCheck, domain.OutcomePassed, "", domainIn, nil)
+
+	p, err = s.fetch(ctx, l, p)
+	if errors.Is(err, pipeline.ErrSkip) {
+		return p, domain.StatusFailed, nil
 	}
 
 	if err != nil {
-		l.Debug("fetch", "err", err)
-		return domain.RawPost{}, domain.StatusFailed, nil
+		return p, "", err
 	}
 
-	// A redirect can leave the host, so the domain and its source come from the final url.
-	p, err := d.Service.Extract(ctx, l, domain.RawPost{URL: finalURL, Lang: normalizeLang(htmlLang(page)), RawContent: string(page)})
+	p.Lang = normalizeLang(htmlLang([]byte(p.RawContent)))
+
+	p, err = s.Extract(ctx, l, p)
 	if errors.Is(err, pipeline.ErrSkip) {
 		return p, domain.StatusRejected, nil
 	}
@@ -132,25 +143,38 @@ func (d Discovered) rawPost(ctx context.Context, l *slog.Logger, link postgres.D
 		return p, "", err
 	}
 
+	dateIn := map[string]any{"postedAt": p.PostedAt, "windowDays": discoveredWindow}
+
 	if p.PostedAt != nil && p.PostedAt.Before(time.Now().AddDate(0, 0, -discoveredWindow)) {
-		return p, domain.StatusRejected, nil
+		reason := fmt.Sprintf("posted %s, older than %d days", p.PostedAt.Format(time.DateOnly), discoveredWindow)
+		return d.end(ctx, p, domain.StatusRejected, domain.StepDateWindow, reason, dateIn, nil)
 	}
+
+	s.step(ctx, p.ID, domain.StepDateWindow, domain.OutcomePassed, "", dateIn, nil)
 
 	p, _ = SetMarkdown(ctx, l, p)
 	p, _ = SetSimhash(ctx, l, p)
 
-	source, blocked, err := d.Service.SourceStore.DomainSource(ctx, p.DomainID)
-	if err != nil || blocked {
-		return p, domain.StatusFailed, err
+	source, blocked, err := s.SourceStore.DomainSource(ctx, p.DomainID)
+	if err != nil {
+		return p, "", err
 	}
 
-	if source.ID == "" {
-		baseURL, err := domain.BaseURL(finalURL)
+	matchIn := map[string]any{"domainId": p.DomainID}
+
+	if blocked {
+		return d.end(ctx, p, domain.StatusFailed, domain.StepSourceMatch, "source blocked", matchIn, nil)
+	}
+
+	proposed := source.ID == ""
+
+	if proposed {
+		baseURL, err := domain.BaseURL(cmp.Or(p.FinalURL, p.URL))
 		if err != nil {
-			return p, domain.StatusFailed, nil
+			return d.end(ctx, p, domain.StatusFailed, domain.StepSourceMatch, "no base url: "+err.Error(), matchIn, nil)
 		}
 
-		if source.ID, err = d.Service.SourceStore.CreateProposed(ctx, p.DomainID, baseURL, link.FromPostID); err != nil {
+		if source.ID, err = s.SourceStore.CreateProposed(ctx, p.DomainID, baseURL, link.FromPostID); err != nil {
 			return p, "", err
 		}
 	}
@@ -160,16 +184,22 @@ func (d Discovered) rawPost(ctx context.Context, l *slog.Logger, link postgres.D
 		p.Lang = source.Lang
 	}
 
-	p, err = d.Service.insert(ctx, l, p)
-	if errors.Is(err, pipeline.ErrSkip) {
-		return p, domain.StatusDuplicate, nil
-	}
+	s.step(ctx, p.ID, domain.StepSourceMatch, domain.OutcomePassed, "", matchIn, map[string]any{"sourceId": source.ID, "proposed": proposed})
 
-	if err != nil {
+	if p, err = s.saveContent(ctx, l, p); err != nil {
 		return p, "", err
 	}
 
 	return p, domain.StatusAccepted, nil
+}
+
+// end stops the raw post with status and gives the discovery post's matching status.
+func (d Discovered) end(ctx context.Context, p domain.RawPost, status, step, reason string, input, output any) (domain.RawPost, string, error) {
+	if err := d.Service.stop(ctx, p, status, step, reason, input, output); !errors.Is(err, pipeline.ErrSkip) {
+		return p, "", err
+	}
+
+	return p, status, nil
 }
 
 func htmlLang(page []byte) string {

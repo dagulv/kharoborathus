@@ -50,32 +50,6 @@ func NewRawPostStore(db *database.Database) RawPostStore {
 	}
 }
 
-// Returns pgx.ErrNoRows when the url is already stored.
-func (s *RawPostStore) CreateRawPost(ctx context.Context, p domain.RawPost) (domain.RawPost, error) {
-	status := domain.StatusPending
-	if p.Status != "" {
-		status = p.Status
-	}
-
-	content, err := json.Marshal(rawContent{Content: p.Content, Title: p.Title, Authors: p.Authors, PostedAt: p.PostedAt})
-	if err != nil {
-		return p, fmt.Errorf("err marshal raw post content %s: %w", p.URL, err)
-	}
-
-	out, err := scanRawPost(s.db.QueryRow(ctx, `
-		INSERT INTO raw_posts (source_id, url, lang, domain_id, raw_content, content, simhash, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (url) DO NOTHING
-		RETURNING `+rawPostColumns,
-		p.SourceID, p.URL, p.Lang, p.DomainID, p.RawContent, content, p.Simhash, status,
-	), p)
-	if err != nil {
-		return out, fmt.Errorf("err create raw post %s: %w", p.URL, err)
-	}
-
-	return out, nil
-}
-
 // An empty SourceID or DiscoveryPostID is stored as NULL.
 type Claim struct {
 	URL             string
@@ -86,7 +60,8 @@ type Claim struct {
 
 // ClaimRawPost stores the url as pending before it is fetched, so every step can log against its id.
 // A url already stored is claimed again only when it stopped before it had content, as a link
-// with no row always was. claimed is false when another sync owns the url or it is done.
+// with no row always was, or when the same discovered link retries after an error.
+// claimed is false when another sync owns the url or it is done.
 func (s *RawPostStore) ClaimRawPost(ctx context.Context, c Claim) (p domain.RawPost, claimed bool, err error) {
 	baseURL, err := domain.BaseURL(c.URL)
 	if err != nil {
@@ -105,6 +80,7 @@ func (s *RawPostStore) ClaimRawPost(ctx context.Context, c Claim) (p domain.RawP
 		WHERE raw_posts.content IS NULL AND (
 			raw_posts.status IN ('failed', 'missing')
 			OR (raw_posts.status = 'pending' AND raw_posts.created_at < now() - interval '5 minutes')
+			OR (raw_posts.status = 'pending' AND raw_posts.discovery_post_id = EXCLUDED.discovery_post_id)
 		)
 		RETURNING `+rawPostColumns,
 		baseURL, c.SourceID, c.DiscoveryPostID, c.URL, c.Lang,
@@ -136,14 +112,6 @@ func (s *RawPostStore) SaveContent(ctx context.Context, p domain.RawPost) error 
 	}
 
 	return nil
-}
-
-func (s *RawPostStore) RawPostExists(ctx context.Context, url string) (exists bool, err error) {
-	if err = s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM raw_posts WHERE url = $1)`, url).Scan(&exists); err != nil {
-		return false, fmt.Errorf("err raw post exists: %w", err)
-	}
-
-	return exists, nil
 }
 
 // Only earlier rows count, so of two near-identical posts exactly one is the duplicate.

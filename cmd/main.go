@@ -173,8 +173,6 @@ func app(ctx context.Context) (err error) {
 	discovered := source.Discovered{
 		Service: &sourceService,
 		Store:   &discoveredStore,
-		Pages:   fetcher.NewPages(pacer),
-		Calls:   calls,
 	}
 
 	enrichService := enrich.Service{

@@ -37,10 +37,20 @@ func rawPostDB(t *testing.T) (*database.Database, RawPostStore, domain.RawPost) 
 func create(t *testing.T, s RawPostStore, p domain.RawPost, url string, hash int64) domain.RawPost {
 	t.Helper()
 
-	p.URL = url
-	p.Simhash = &hash
+	ctx := context.Background()
 
-	out, err := s.CreateRawPost(context.Background(), p)
+	out, _, err := s.ClaimRawPost(ctx, Claim{URL: url, Lang: p.Lang, SourceID: p.SourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out.Lang, out.Content, out.Simhash = p.Lang, p.Content, &hash
+
+	if err := s.SaveContent(ctx, out); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err = s.GetRawPost(ctx, out.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,36 +125,6 @@ func TestSetStatus(t *testing.T) {
 	var status string
 	if err := db.QueryRow(ctx, `SELECT status FROM raw_posts WHERE id = $1`, p.ID).Scan(&status); err != nil || status != domain.StatusAccepted {
 		t.Errorf("status %q, %v", status, err)
-	}
-}
-
-func TestCreateRawPostExists(t *testing.T) {
-	_, s, base := rawPostDB(t)
-	create(t, s, base, "https://a.example/1", 1)
-
-	base.URL = "https://a.example/1"
-	if _, err := s.CreateRawPost(context.Background(), base); !errors.Is(err, pgx.ErrNoRows) {
-		t.Errorf("err %v", err)
-	}
-}
-
-func TestRawPostContentRoundTrip(t *testing.T) {
-	_, s, base := rawPostDB(t)
-	posted := time.Date(2026, 11, 8, 8, 0, 0, 0, time.UTC)
-
-	base.URL = "https://a.example/1"
-	base.Content = "# Rubrik\n\nText"
-	base.Title = "Rubrik"
-	base.Authors = []string{"A", "B"}
-	base.PostedAt = &posted
-
-	out, err := s.CreateRawPost(context.Background(), domain.RawPost{SourceID: base.SourceID, DomainID: base.DomainID, Lang: "sv", URL: base.URL, Content: base.Content, Title: base.Title, Authors: base.Authors, PostedAt: base.PostedAt})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if out.Content != base.Content || out.Title != "Rubrik" || len(out.Authors) != 2 || out.PostedAt == nil || !out.PostedAt.Equal(posted) || out.RetryCount != 0 {
-		t.Errorf("got %+v", out)
 	}
 }
 
@@ -413,5 +393,35 @@ func TestListsSkipRowsWithoutContent(t *testing.T) {
 	unenriched, err := s.ListUnenriched(ctx, 20, 5*time.Minute, 10)
 	if err != nil || len(unenriched) != 0 {
 		t.Errorf("unenriched %v, %v", unenriched, err)
+	}
+}
+
+func TestClaimRawPostSameLinkAgain(t *testing.T) {
+	db, s, _ := rawPostDB(t)
+	ctx := context.Background()
+
+	var fromPost, link string
+	if err := db.QueryRow(ctx, `
+		INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content)
+		SELECT id, 'https://a.example/from', 'sv', domain_id, 't', 's', 'c' FROM sources LIMIT 1 RETURNING id
+		`).Scan(&fromPost); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.QueryRow(ctx, `INSERT INTO discovery_posts (url, from_post_id) VALUES ('https://b.example/x', $1) RETURNING id`, fromPost).Scan(&link); err != nil {
+		t.Fatal(err)
+	}
+
+	c := Claim{URL: "https://b.example/x", DiscoveryPostID: link}
+
+	first, _, err := s.ClaimRawPost(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The same link, retried by the catch-up after an error, claims its own pending row again.
+	again, ok, err := s.ClaimRawPost(ctx, c)
+	if err != nil || !ok || again.ID != first.ID {
+		t.Errorf("again %v, %v, %+v", ok, err, again)
 	}
 }

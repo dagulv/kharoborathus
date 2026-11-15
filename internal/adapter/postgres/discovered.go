@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -23,14 +24,19 @@ type Discovered struct {
 	ID         string
 	URL        string
 	FromPostID string
+	QueryID    string // empty for a link found in a post
 }
 
 // Rows older than the window stay pending, so a link queued long ago is not fetched as stale news.
 func (s *DiscoveredStore) GetPending(ctx context.Context, id string, windowDays int) (d Discovered, found bool, err error) {
+	var queryID sql.NullString
+
 	err = s.db.QueryRow(ctx, `
-		SELECT id, url, from_post_id FROM discovery_posts
+		SELECT id, url, from_post_id, discovery_search_query_id FROM discovery_posts
 		WHERE id = $1 AND status = 'pending' AND created_at > now() - make_interval(days => $2)
-		`, id, windowDays).Scan(&d.ID, &d.URL, &d.FromPostID)
+		`, id, windowDays).Scan(&d.ID, &d.URL, &d.FromPostID, &queryID)
+
+	d.QueryID = queryID.String
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Discovered{}, false, nil
 	}
