@@ -1,0 +1,8 @@
+{
+  "sites": {
+    "name": "kharoborathus-admin",
+    "dir": "admin/build",
+    // SvelteKit is not in the CLI's list of single-page frameworks.
+    "spa": true
+  }
+}
