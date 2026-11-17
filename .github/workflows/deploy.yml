@@ -1,7 +1,7 @@
 name: CI/CD
 
 # Pull requests build the changed images. main migrates, then deploys the changed targets with Haloy.
-# db deploys by hand, since Haloy protects it. The admin SPA builds here and uploads to bunny.net.
+# db deploys by hand, since Haloy protects it. The admin SPA builds here and deploys to bunny.net.
 on:
   push:
     branches: [main]
@@ -59,7 +59,7 @@ jobs:
           changed '^internal/migrations/' && migrate=true
 
           admin=false
-          changed '^admin/|^infra/admin/' && admin=true
+          changed '^admin/|^bunny\.jsonc$' && admin=true
 
           echo "admin=$admin" >> "$GITHUB_OUTPUT"
           echo "migrate=$migrate" >> "$GITHUB_OUTPUT"
@@ -194,11 +194,6 @@ jobs:
     concurrency:
       group: deploy-admin
       cancel-in-progress: false
-    env:
-      SOPS_VERSION: v3.13.3
-      SOPS_SHA256: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
-      YQ_VERSION: v4.54.3
-      YQ_SHA256: 129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -216,18 +211,13 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
-      - name: Install sops and yq
-        run: |
-          curl -fsSL -o sops "https://github.com/getsops/sops/releases/download/$SOPS_VERSION/sops-$SOPS_VERSION.linux.amd64"
-          curl -fsSL -o yq "https://github.com/mikefarah/yq/releases/download/$YQ_VERSION/yq_linux_amd64"
-          sha256sum -c - <<EOF
-          $SOPS_SHA256  sops
-          $YQ_SHA256  yq
-          EOF
-          sudo install -m 755 sops yq /usr/local/bin/
-
-      # secrets.sh skips Bitwarden when SOPS_AGE_KEY is set and unsets it before the upload runs.
-      - name: Upload to bunny.net
-        env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-        run: infra/secrets.sh prod:bunny bash infra/admin/upload.sh admin/build
+      # The SPA fallback comes from bunny.jsonc, since the action has no input for it.
+      - name: Deploy to bunny.net
+        uses: BunnyWay/actions/deploy-site@931a74b9c45ea9f9f01435fbbf1649830e67d3b3 # deploy-site_0.1.2
+        with:
+          site: kharoborathus-admin
+          directory: admin/build
+          api_key: ${{ secrets.BUNNYNET_API_KEY }}
+          cli_version: 0.19.0
+          # The job's environment already records the deploy.
+          deployments: false

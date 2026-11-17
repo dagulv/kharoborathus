@@ -20,7 +20,7 @@ The dev db also builds from `infra/db/Dockerfile`.
 | dev | `kharoborathus/app.yaml` | `POSTGRES_PASSWORD`, `DEEPSEEK_API_KEY`, `TYPESAFE_API_KEY`, `BRAVE_API_KEY` |
 | prod | `kharoborathus/app.yaml` | The dev keys plus `POSTGRES_CONNECTION_STRING` |
 | prod | `kharoborathus/tofu.yaml` | `UPCLOUD_TOKEN`, `TF_VAR_state_passphrase` |
-| prod | `kharoborathus/bunny.yaml` | `BUNNY_STORAGE_ZONE`, `BUNNY_STORAGE_HOST`, `BUNNY_STORAGE_PASSWORD`, `BUNNY_API_KEY`, `BUNNY_PULL_ZONE_ID` |
+| prod | `kharoborathus/bunny.yaml` | `BUNNYNET_API_KEY` |
 
 Each file is a Kubernetes `Secret` with the keys under `stringData`. [.sops.yaml](.sops.yaml) encrypts only `data` and `stringData`, so key names stay readable. Nothing here deploys to a cluster.
 
@@ -140,17 +140,24 @@ Running containers keep their old env, and CI does not redeploy for a vault chan
 
 The admin is a static SvelteKit SPA in `admin/`, served by bunny.net at `admin.kharoborathus.dagulv.me`. It reads and writes only through the Go app's `/admin/*` routes. The Go app sets the session cookie on `api.kharoborathus.dagulv.me` and answers CORS for the origins in `ADMIN_ORIGINS`, which `haloy.yaml` sets for prod and which defaults to `http://localhost:5173` in dev.
 
-Set up once by hand:
+It is a bunny.net site named `kharoborathus-admin`, a storage zone and a pull zone that `bunny sites` wires together. [bunny.jsonc](../bunny.jsonc) names it, points it at `admin/build` and turns on the SPA fallback, which serves `index.html` for unknown paths.
 
-1. In bunny.net, create a storage zone. Note its name, its storage hostname, such as `storage.bunnycdn.com`, and its password.
-2. Create a pull zone with the storage zone as its origin. Note its ID.
-3. On the pull zone, add an edge rule that rewrites requests for missing files to `/index.html`, so deep links reach the SPA.
-4. Add `admin.kharoborathus.dagulv.me` as a hostname on the pull zone, point a CNAME at the pull zone's hostname and enable its certificate.
-5. Add the prod vault's `bunny.yaml` with sops, holding the five `BUNNY_*` keys above. `BUNNY_API_KEY` is the account API key, which the cache purge needs.
+Set up once by hand, with the account API key as `BUNNYNET_API_KEY`:
 
-A push to `main` that touches `admin/` or `infra/admin/` builds the SPA with `PUBLIC_API_URL=https://api.kharoborathus.dagulv.me`. [upload.sh](admin/upload.sh) then mirrors `admin/build` into the storage zone, deletes files the build no longer has and purges the pull zone. Pull requests only build. Upload by hand with:
+1. Create the site and attach the domain. It prints the CNAME to point at the pull zone:
+
+   ```bash
+   pnpm dlx @bunny.net/cli@0.19.0 sites create kharoborathus-admin --domain admin.kharoborathus.dagulv.me
+   ```
+
+   An existing storage zone behind a pull zone imports instead with `--from-zone <zone>`, keeping its hostnames.
+2. Add the account API key as the `BUNNYNET_API_KEY` secret in the GitHub `production` environment.
+3. Add it to the prod vault's `bunny.yaml` with sops too, for deploys by hand.
+
+A push to `main` that touches `admin/` or `bunny.jsonc` builds the SPA with `PUBLIC_API_URL=https://api.kharoborathus.dagulv.me`, and Bunny's `deploy-site` action deploys `admin/build`. Each deploy uploads to its own directory and goes live by repointing the pull zone, so a deploy never serves half-replaced files. Pull requests only build. Deploy or roll back by hand from the repo root with:
 
 ```bash
 PUBLIC_API_URL=https://api.kharoborathus.dagulv.me pnpm -C admin build
-infra/secrets.sh prod:bunny bash infra/admin/upload.sh admin/build
+infra/secrets.sh prod:bunny pnpm dlx @bunny.net/cli@0.19.0 sites deploy admin/build --site kharoborathus-admin
+infra/secrets.sh prod:bunny pnpm dlx @bunny.net/cli@0.19.0 sites deployments publish --site kharoborathus-admin --previous
 ```
