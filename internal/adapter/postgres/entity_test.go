@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/dbtest"
+	"github.com/dagulv/kharoborathus/internal/lib/query"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -444,5 +446,140 @@ func TestPromptKeys(t *testing.T) {
 	keys, err = f.s.PromptKeys(context.Background())
 	if err != nil || len(keys) != 300 || !slices.Equal(keys[:5], []string{"z_focus", "active_strong", "active_weak", "proposed_strong", "filler_1"}) {
 		t.Errorf("capped: %d %v, %v", len(keys), keys[:min(len(keys), 5)], err)
+	}
+}
+
+func (f *entityFixture) linkKeys(p domain.Post, keys ...string) {
+	f.t.Helper()
+
+	for _, k := range keys {
+		f.exec(fmt.Sprintf(`INSERT INTO post_entities (post_id, entity) VALUES ('%s', '%s')`, p.ID, k))
+	}
+}
+
+func publicKeys(es []domain.Entity) []string {
+	keys := make([]string, 0, len(es))
+
+	for _, e := range es {
+		keys = append(keys, e.Key)
+	}
+
+	return keys
+}
+
+func TestListPublicEntities(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+
+	f.exec(
+		`INSERT INTO entities (key, name, kind, status, focus) VALUES
+			('a_weak', 'A', 'company', 'active', true), ('b_strong', 'B', 'technology', 'active', false),
+			('c_tie', 'C', 'company', 'active', false), ('d_tie', 'D', 'company', 'active', false)`,
+		`INSERT INTO entities (key, name, kind) VALUES ('e_proposed', 'E', 'company')`,
+		`INSERT INTO entities (key, name, kind, status, enabled) VALUES ('f_disabled', 'F', 'company', 'active', false)`,
+		`INSERT INTO entity_terms (key, lang, term) VALUES ('a_weak', 'sv', 'ett'), ('a_weak', 'sv', 'en'), ('a_weak', 'en', 'one')`,
+		`INSERT INTO tags (key) VALUES ('electric')`,
+		`INSERT INTO categories (key) VALUES ('energy'), ('hidden'), ('proposed_only')`,
+		`INSERT INTO categories (key, enabled) VALUES ('off', false)`,
+		`INSERT INTO category_tags (category, tag) VALUES
+			('energy', 'batteries'), ('energy', 'electric'), ('off', 'batteries'), ('hidden', 'old_tech'), ('proposed_only', 'new_tech')`,
+		`INSERT INTO entity_tags (entity, tag) VALUES
+			('a_weak', 'electric'), ('b_strong', 'batteries'), ('b_strong', 'electric'), ('b_strong', 'new_tech'),
+			('c_tie', 'old_tech'), ('d_tie', 'new_tech'), ('e_proposed', 'batteries'), ('f_disabled', 'batteries')`,
+	)
+
+	for i, key := range []string{"b_strong", "b_strong", "a_weak", "c_tie", "d_tie"} {
+		f.linkKeys(f.post(i%3, "sv"), key)
+	}
+
+	// Outside the strength window.
+	f.exec(`UPDATE post_entities SET created_at = now() - interval '31 days' WHERE entity = 'd_tie'`)
+
+	list := func(filter domain.EntityFilter) []string {
+		es, err := f.s.ListPublic(ctx, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return publicKeys(es)
+	}
+
+	all := []string{"b_strong", "a_weak", "c_tie", "d_tie"}
+
+	cases := map[string]struct {
+		filter domain.EntityFilter
+		want   []string
+	}{
+		"strength then key":    {domain.EntityFilter{}, all},
+		"kind":                 {domain.EntityFilter{Kind: "technology"}, []string{"b_strong"}},
+		"unknown kind":         {domain.EntityFilter{Kind: "person"}, nil},
+		"tag":                  {domain.EntityFilter{Tag: "electric"}, []string{"b_strong", "a_weak"}},
+		"proposed tag":         {domain.EntityFilter{Tag: "new_tech"}, nil},
+		"disabled tag":         {domain.EntityFilter{Tag: "old_tech"}, nil},
+		"category":             {domain.EntityFilter{Category: "energy"}, []string{"b_strong", "a_weak"}},
+		"disabled category":    {domain.EntityFilter{Category: "off"}, nil},
+		"category of hidden":   {domain.EntityFilter{Category: "hidden"}, nil},
+		"category of proposed": {domain.EntityFilter{Category: "proposed_only"}, nil},
+		"unknown category":     {domain.EntityFilter{Category: "nope"}, nil},
+		"kind and tag":         {domain.EntityFilter{Kind: "company", Tag: "electric"}, []string{"a_weak"}},
+		"limit":                {domain.EntityFilter{Filter: query.Filter{Limit: "2"}}, all[:2]},
+		"offset":               {domain.EntityFilter{Filter: query.Filter{Limit: "2", Offset: "2"}}, all[2:]},
+	}
+
+	for name, c := range cases {
+		if got := list(c.filter); !slices.Equal(got, c.want) {
+			t.Errorf("%s: got %v, want %v", name, got, c.want)
+		}
+	}
+
+	es, err := f.s.ListPublic(ctx, domain.EntityFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, a := es[0], es[1]
+	if b.Strength != 2 || a.Strength != 1 || es[3].Strength != 0 {
+		t.Errorf("strength %d %d %d", b.Strength, a.Strength, es[3].Strength)
+	}
+
+	if !slices.Equal(b.Tags, []string{"batteries", "electric"}) || b.Name != "B" || b.Kind != "technology" || b.Status != domain.StatusActive || !b.Enabled || b.CreatedAt.IsZero() {
+		t.Errorf("b_strong %+v", b)
+	}
+
+	if !slices.Equal(a.Terms["sv"], []string{"en", "ett"}) || !slices.Equal(a.Terms["en"], []string{"one"}) || !a.Focus {
+		t.Errorf("a_weak terms %v", a.Terms)
+	}
+
+	if es[2].Tags == nil || es[2].Terms == nil || len(es[2].Tags) != 0 || len(es[2].Terms) != 0 {
+		t.Errorf("c_tie tags %v, terms %v", es[2].Tags, es[2].Terms)
+	}
+}
+
+func TestGetPublicEntity(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+
+	f.exec(
+		`INSERT INTO entities (key, name, kind, status) VALUES ('volvo_cars', 'Volvo Cars', 'company', 'active')`,
+		`INSERT INTO entities (key, name, kind) VALUES ('northvolt', 'Northvolt', 'company')`,
+		`INSERT INTO entities (key, name, kind, status, enabled) VALUES ('off', 'Off', 'company', 'active', false)`,
+		`INSERT INTO entity_aliases (alias, key) VALUES ('volvo_car_corporation', 'volvo_cars'), ('northvolt_ab', 'northvolt'), ('off_alias', 'off')`,
+		`INSERT INTO entity_terms (key, lang, term) VALUES ('volvo_cars', 'sv', 'Volvo Cars')`,
+		`INSERT INTO entity_tags (entity, tag) VALUES ('volvo_cars', 'batteries'), ('volvo_cars', 'new_tech'), ('volvo_cars', 'old_tech')`,
+	)
+
+	f.linkKeys(f.post(0, "sv"), "volvo_cars")
+
+	for _, key := range []string{"volvo_cars", "volvo_car_corporation"} {
+		e, err := f.s.GetPublic(ctx, key)
+		if err != nil || e.Key != "volvo_cars" || e.Name != "Volvo Cars" || e.Strength != 1 || !slices.Equal(e.Tags, []string{"batteries"}) || !slices.Equal(e.Terms["sv"], []string{"Volvo Cars"}) {
+			t.Errorf("%s: %+v, %v", key, e, err)
+		}
+	}
+
+	for _, key := range []string{"northvolt", "northvolt_ab", "off", "off_alias", "nope"} {
+		if _, err := f.s.GetPublic(ctx, key); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("%s: err %v", key, err)
+		}
 	}
 }

@@ -65,7 +65,7 @@ func serve(s Store, target string) *httptest.ResponseRecorder {
 func TestListPosts(t *testing.T) {
 	s := &fakeStore{posts: []domain.Post{{ID: "1", Title: "Volvo", Tags: []string{"acquisition"}}, {ID: "2", Title: "Ericsson"}}}
 
-	w := serve(s, "/posts?limit=10&offset=5&order=asc&orderBy=createdAt&search=volvo&tag=acquisition&tag=contract&category=finance&category=macro&after=9")
+	w := serve(s, "/posts?limit=10&offset=5&order=asc&orderBy=createdAt&search=volvo&tag=acquisition&tag=contract&category=finance&category=macro&entity=volvo_cars&entity=northvolt&after=9")
 	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("status %d, type %q", w.Code, w.Header().Get("Content-Type"))
 	}
@@ -76,7 +76,7 @@ func TestListPosts(t *testing.T) {
 	}
 
 	f := s.filter
-	if f.Limit != "10" || f.Offset != "5" || f.Order != "asc" || f.OrderBy != "createdAt" || f.Search != "volvo" || f.After != "9" || !slices.Equal(f.Tags, []string{"acquisition", "contract"}) || !slices.Equal(f.Categories, []string{"finance", "macro"}) {
+	if f.Limit != "10" || f.Offset != "5" || f.Order != "asc" || f.OrderBy != "createdAt" || f.Search != "volvo" || f.After != "9" || !slices.Equal(f.Tags, []string{"acquisition", "contract"}) || !slices.Equal(f.Categories, []string{"finance", "macro"}) || !slices.Equal(f.Entities, []string{"volvo_cars", "northvolt"}) {
 		t.Errorf("filter %+v", f)
 	}
 }
@@ -107,6 +107,35 @@ func TestListPostsCategoryLimit(t *testing.T) {
 
 	if w := serve(&fakeStore{}, query(maxCategories-1)); w.Code != http.StatusOK {
 		t.Errorf("%d distinct: status %d", maxCategories, w.Code)
+	}
+}
+
+func TestListPostsEntitiesDeduped(t *testing.T) {
+	s := &fakeStore{}
+
+	serve(s, "/posts?entity=volvo_cars&entity=northvolt&entity=volvo_cars")
+
+	if !slices.Equal(s.filter.Entities, []string{"volvo_cars", "northvolt"}) {
+		t.Errorf("entities %v", s.filter.Entities)
+	}
+}
+
+func TestListPostsEntityLimit(t *testing.T) {
+	query := func(n int) string {
+		target := "/posts?entity=dup&entity=dup"
+		for i := range n {
+			target += fmt.Sprintf("&entity=e%d", i)
+		}
+
+		return target
+	}
+
+	if w := serve(&fakeStore{}, query(maxEntities)); w.Code != http.StatusBadRequest {
+		t.Errorf("%d distinct plus dup: status %d", maxEntities+1, w.Code)
+	}
+
+	if w := serve(&fakeStore{}, query(maxEntities-1)); w.Code != http.StatusOK {
+		t.Errorf("%d distinct: status %d", maxEntities, w.Code)
 	}
 }
 

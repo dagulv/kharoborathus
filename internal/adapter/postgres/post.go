@@ -78,14 +78,20 @@ func isInvalidText(err error) bool {
 
 // Only enabled, active tag keys are public. Proposed keys stay on the row for promotion to count.
 const postsQuery = `
-	SELECT p.id, p.source_id, p.domain_id, d.base_url, p.url, p.lang, p.title, p.short_content, %s, v.tags, p.authors, p.posted_at, p.created_at
+	SELECT p.id, p.source_id, p.domain_id, d.base_url, p.url, p.lang, p.title, p.short_content, %s, v.tags, ev.keys, p.authors, p.posted_at, p.created_at
 	FROM posts p
 	JOIN domains d ON d.id = p.domain_id
 	CROSS JOIN LATERAL (
 		SELECT COALESCE(array_agg(u.key ORDER BY u.ord), '{}') AS tags
 		FROM unnest(p.tags) WITH ORDINALITY AS u (key, ord)
 		WHERE EXISTS (SELECT 1 FROM tags t WHERE t.key = u.key AND t.enabled AND t.status = 'active')
-	) v`
+	) v
+	CROSS JOIN LATERAL (
+		SELECT COALESCE(array_agg(pe.entity ORDER BY pe.entity), '{}') AS keys
+		FROM post_entities pe
+		JOIN entities e ON e.key = pe.entity
+		WHERE pe.post_id = p.id AND e.enabled AND e.status = 'active'
+	) ev`
 
 // Lists leave the article out. Only a single post carries it.
 var (
@@ -109,6 +115,13 @@ func categoryTags(arg int) string {
 		SELECT ct.tag FROM category_tags ct JOIN categories c ON c.key = ct.category
 		WHERE c.key = $%d AND c.enabled
 	`, arg)
+}
+
+func entityFilter(arg int) string {
+	return fmt.Sprintf(`EXISTS (
+		SELECT 1 FROM post_entities pe JOIN entities e ON e.key = pe.entity
+		WHERE pe.post_id = p.id AND e.key = $%d AND e.enabled AND e.status = 'active'
+	)`, arg)
 }
 
 // Newest publication first by default, with created_at for posts whose date is unknown.
@@ -148,6 +161,11 @@ func (s *PostStore) ListPosts(ctx context.Context, filter domain.PostFilter) ite
 		for _, key := range filter.Categories {
 			args = append(args, key)
 			conds = append(conds, categoryFilter(len(args)))
+		}
+
+		for _, key := range filter.Entities {
+			args = append(args, key)
+			conds = append(conds, entityFilter(len(args)))
 		}
 
 		if filter.Search != "" {
@@ -232,7 +250,7 @@ func (s *PostStore) GetPost(ctx context.Context, id string) (domain.Post, error)
 }
 
 func scanPost(row pgx.Row) (p domain.Post, err error) {
-	err = row.Scan(&p.ID, &p.SourceID, &p.DomainID, &p.DomainURL, &p.URL, &p.Lang, &p.Title, &p.ShortContent, &p.Content, &p.Tags, &p.Authors, &p.PostedAt, &p.CreatedAt)
+	err = row.Scan(&p.ID, &p.SourceID, &p.DomainID, &p.DomainURL, &p.URL, &p.Lang, &p.Title, &p.ShortContent, &p.Content, &p.Tags, &p.Entities, &p.Authors, &p.PostedAt, &p.CreatedAt)
 
 	return
 }

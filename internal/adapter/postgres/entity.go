@@ -275,3 +275,72 @@ func grounded(text, term string) bool {
 func isWordRune(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }
+
+const publicEntityQuery = `
+	SELECT e.key, e.name, e.kind, e.status, e.enabled, e.focus,
+		COALESCE((
+			SELECT jsonb_object_agg(g.lang, g.terms)
+			FROM (SELECT t.lang, array_agg(t.term ORDER BY t.term) AS terms FROM entity_terms t WHERE t.key = e.key GROUP BY t.lang) g
+		), '{}'),
+		COALESCE((
+			SELECT array_agg(t.key ORDER BY t.key)
+			FROM entity_tags et JOIN tags t ON t.key = et.tag
+			WHERE et.entity = e.key AND t.enabled AND t.status = 'active'
+		), '{}'),
+		(SELECT count(*) FROM post_entities pe WHERE pe.entity = e.key AND pe.created_at > now() - interval '30 days') AS strength,
+		e.created_at
+	FROM entities e
+	WHERE e.enabled AND e.status = 'active'`
+
+func scanPublicEntity(row pgx.CollectableRow) (e domain.Entity, err error) {
+	err = row.Scan(&e.Key, &e.Name, &e.Kind, &e.Status, &e.Enabled, &e.Focus, &e.Terms, &e.Tags, &e.Strength, &e.CreatedAt)
+
+	return
+}
+
+// Tag and category filters count public tags only, like the feed's category filter.
+func (s *EntityStore) ListPublic(ctx context.Context, f domain.EntityFilter) ([]domain.Entity, error) {
+	rows, err := s.db.Query(ctx, publicEntityQuery+`
+		AND ($1 = '' OR e.kind = $1)
+		AND ($2 = '' OR EXISTS (
+			SELECT 1 FROM entity_tags et JOIN tags t ON t.key = et.tag
+			WHERE et.entity = e.key AND t.key = $2 AND t.enabled AND t.status = 'active'
+		))
+		AND ($3 = '' OR EXISTS (
+			SELECT 1 FROM entity_tags et
+			JOIN tags t ON t.key = et.tag AND t.enabled AND t.status = 'active'
+			JOIN category_tags ct ON ct.tag = et.tag
+			JOIN categories c ON c.key = ct.category AND c.enabled
+			WHERE et.entity = e.key AND c.key = $3
+		))
+		ORDER BY strength DESC, e.key
+		LIMIT $4 OFFSET $5
+		`, f.Kind, f.Tag, f.Category, f.GetLimit(), f.GetOffset())
+	if err != nil {
+		return nil, fmt.Errorf("err query public entities: %w", err)
+	}
+
+	entities, err := pgx.CollectRows(rows, scanPublicEntity)
+	if err != nil {
+		return nil, fmt.Errorf("err scan public entities: %w", err)
+	}
+
+	return entities, nil
+}
+
+// An alias gives its target. A proposed or disabled entity is no rows.
+func (s *EntityStore) GetPublic(ctx context.Context, key string) (domain.Entity, error) {
+	rows, err := s.db.Query(ctx, publicEntityQuery+`
+		AND e.key = COALESCE((SELECT a.key FROM entity_aliases a WHERE a.alias = $1), $1)
+		`, key)
+	if err != nil {
+		return domain.Entity{}, fmt.Errorf("err query public entity %s: %w", key, err)
+	}
+
+	e, err := pgx.CollectExactlyOneRow(rows, scanPublicEntity)
+	if err != nil {
+		return domain.Entity{}, fmt.Errorf("err get public entity %s: %w", key, err)
+	}
+
+	return e, nil
+}

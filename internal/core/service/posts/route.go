@@ -26,8 +26,11 @@ func Routes(mux *http.ServeMux, s Store, l *slog.Logger) {
 	mux.HandleFunc("GET /posts/{id}", getPost(s, l))
 }
 
-// Each category adds a subquery to the feed query.
-const maxCategories = 10
+// Each category and each entity adds a subquery to the feed query.
+const (
+	maxCategories = 10
+	maxEntities   = 10
+)
 
 func listPosts(s Store, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +39,12 @@ func listPosts(s Store, l *slog.Logger) http.HandlerFunc {
 		categories := unique(q["category"])
 		if len(categories) > maxCategories {
 			http.Error(w, fmt.Sprintf("at most %d categories: %v", maxCategories, domain.ErrInvalidFilter), http.StatusBadRequest)
+			return
+		}
+
+		entities := unique(q["entity"])
+		if len(entities) > maxEntities {
+			http.Error(w, fmt.Sprintf("at most %d entities: %v", maxEntities, domain.ErrInvalidFilter), http.StatusBadRequest)
 			return
 		}
 
@@ -49,6 +58,7 @@ func listPosts(s Store, l *slog.Logger) http.HandlerFunc {
 			},
 			Tags:       q["tag"],
 			Categories: categories,
+			Entities:   entities,
 			After:      q.Get("after"),
 		}
 
