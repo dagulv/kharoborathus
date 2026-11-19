@@ -67,6 +67,15 @@ CREATE TABLE post_entities (post_id UUID REFERENCES posts (id) ON DELETE CASCADE
 
 Depth queries repeat the same text weekly, so the unique index on `discovery_search_queries.query` leaves out `action = 'depth'`. The migration also backfills entities from the entities discovery already recorded.
 
+## Deploy and rollback
+
+The migration drops `UNIQUE (query)` on `discovery_search_queries`. The pre-entities `insertQuery` uses `ON CONFLICT (query)` and fails against the partial index. So event discovery breaks until the new api runs.
+
+- Deploy the api right after the migration. CI migrates before the deploy.
+- Prefer a time outside DeepSeek's off-peak enrich window.
+- A rollback of the api to a pre-entities image breaks event discovery the same way.
+- Before such a rollback, remove the depth rows: `DELETE FROM discovery_search_queries WHERE action = 'depth'`. Or dedupe them. Then restore `UNIQUE (query)`.
+
 ## Defaults
 
 | Parameter | Value | Why |
