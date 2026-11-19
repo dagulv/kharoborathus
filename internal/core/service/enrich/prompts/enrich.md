@@ -13,6 +13,10 @@ summary: the text a news feed shows below the title. The reader has already read
 - Only facts stated in the article. No opinions of your own, no speculation, no information from elsewhere. Keep numbers, units and currencies as written.
 - Plain text only. No markdown, no headings, no lists, no quotes around the summary.
 
+Example, for the title "Nordhavn beats expectations":
+- Weak: The article reports that Nordhavn beat expectations in the third quarter thanks to strong sales.
+- Good: Operating profit rose 18 percent to SEK 412 million in the third quarter as orders from Germany doubled. Nordhavn raises its full-year margin target to 9 percent.
+
 tags: the topics the article is about, for example acquisition, merger, contract, layoffs, quarterly_report, dividend, share_buyback, ipo, bankruptcy or new_factory. Each with:
 - key: the concept in English, lowercase, words joined by underscores, like acquisition or share_buyback. Reuse an existing tag key whenever one fits, and only create a new key when none of the existing ones does.
 - term: the same concept in the article's language, in its base form: singular, indefinite and lowercase. For Swedish that is investering, not investeringar or investeringen. For English articles the term is the key in plain words.
