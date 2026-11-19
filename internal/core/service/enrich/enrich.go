@@ -23,11 +23,12 @@ const (
 )
 
 type Service struct {
-	DB       *database.Database
-	RawPosts *postgres.RawPostStore
-	Posts    *postgres.PostStore
-	Tags     *postgres.TagStore
-	LLM      port.LLM
+	DB         *database.Database
+	RawPosts   *postgres.RawPostStore
+	Posts      *postgres.PostStore
+	Tags       *postgres.TagStore
+	Categories *postgres.CategoryStore
+	LLM        port.LLM
 	// Nil when Jev is not configured. Posts then get proposed keys only.
 	Classifier port.Classifier
 	SearchIDs  chan<- string
@@ -122,20 +123,20 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		return domain.Post{}, discovery.Found{}, err
 	}
 
-	active := set.active
+	classifiable := set.classifiable
 
 	var tags []string
 
 	// Before DeepSeek, so a Jev outage never wastes a paid call.
 	if s.Classifier != nil {
-		if tags, err = jevTags(ctx, s.Classifier, calls, p.Title, p.Content, active); err != nil {
+		if tags, err = jevTags(ctx, s.Classifier, calls, p.Lang, p.Title, p.Content, set.categories, classifiable); err != nil {
 			return domain.Post{}, discovery.Found{}, err
 		}
 	}
 
 	var quality []string
 
-	for _, t := range active {
+	for _, t := range classifiable {
 		if t.Type == domain.TagTypeQuality && t.Status == domain.StatusActive {
 			quality = append(quality, t.Key)
 		}
@@ -225,7 +226,12 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 }
 
 func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
-	active, err := s.Tags.ClassifiableTags(ctx, lang)
+	classifiable, err := s.Tags.ClassifiableTags(ctx, lang)
+	if err != nil {
+		return tagSet{}, err
+	}
+
+	categories, err := s.Categories.EnabledCategories(ctx)
 	if err != nil {
 		return tagSet{}, err
 	}
@@ -235,5 +241,5 @@ func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
 		return tagSet{}, err
 	}
 
-	return tagSet{keys: keys, active: active}, nil
+	return tagSet{keys: keys, classifiable: classifiable, categories: categories}, nil
 }

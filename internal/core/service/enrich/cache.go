@@ -12,8 +12,9 @@ import (
 const tagCacheTTL = time.Minute
 
 type tagSet struct {
-	keys   []string
-	active []domain.Tag
+	keys         []string
+	classifiable []domain.Tag
+	categories   []domain.Category
 }
 
 type cachedTags struct {

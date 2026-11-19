@@ -17,7 +17,7 @@ func TestTagCache(t *testing.T) {
 	loads := map[string]int{}
 	load := func(_ context.Context, lang string) (tagSet, error) {
 		loads[lang]++
-		return tagSet{keys: []string{lang}, active: []domain.Tag{{Key: lang}}}, nil
+		return tagSet{keys: []string{lang}, classifiable: []domain.Tag{{Key: lang}}}, nil
 	}
 
 	for range 3 {

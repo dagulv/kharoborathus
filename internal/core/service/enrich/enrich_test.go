@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ type fakeLLM struct {
 	err      error
 	schedule schedule.Schedule
 	calls    int
+	prompt   string
 	cancel   context.CancelFunc
 	l        *slog.Logger
 }
@@ -34,9 +36,10 @@ func (f *fakeLLM) Prompt(context.Context, *slog.Logger, port.Request) (string, e
 	return "", nil
 }
 
-func (f *fakeLLM) Unmarshal(_ context.Context, l *slog.Logger, _ port.Request, out any) error {
+func (f *fakeLLM) Unmarshal(_ context.Context, l *slog.Logger, req port.Request, out any) error {
 	f.calls++
 	f.l = l
+	f.prompt = req.Prompt
 
 	if f.cancel != nil {
 		f.cancel()
@@ -85,6 +88,8 @@ func setup(t *testing.T) fixture {
 		`INSERT INTO tags (key) VALUES ('acquisition')`,
 		`INSERT INTO tag_terms (key, lang, term) VALUES ('acquisition', 'sv', 'förvärv')`,
 		`INSERT INTO tag_aliases (alias, key) VALUES ('takeover', 'acquisition')`,
+		`INSERT INTO categories (key) VALUES ('deals')`,
+		`INSERT INTO category_tags (category, tag) VALUES ('deals', 'acquisition')`,
 	} {
 		if _, err := db.Exec(ctx, q); err != nil {
 			t.Fatal(err)
@@ -94,16 +99,17 @@ func setup(t *testing.T) fixture {
 	rawPosts := postgres.NewRawPostStore(db)
 	posts := postgres.NewPostStore(db)
 	tags := postgres.NewTagStore(db)
+	categories := postgres.NewCategoryStore(db)
 
 	f := fixture{
 		db:       db,
 		llm:      &fakeLLM{answer: goodAnswer},
-		jev:      &fakeClassifier{scores: map[string]float64{"acquisition": 0.9}},
+		jev:      &fakeClassifier{scores: map[string]float64{"deals": 0.9, "acquisition": 0.9}},
 		ids:      make(chan string, 10),
 		links:    make(chan string, 10),
 		rawPosts: &rawPosts,
 	}
-	f.s = &Service{DB: db, RawPosts: &rawPosts, Posts: &posts, Tags: &tags, LLM: f.llm, Classifier: f.jev, SearchIDs: f.ids, DiscoveredIDs: f.links, Calls: slog.New(slog.DiscardHandler)}
+	f.s = &Service{DB: db, RawPosts: &rawPosts, Posts: &posts, Tags: &tags, Categories: &categories, LLM: f.llm, Classifier: f.jev, SearchIDs: f.ids, DiscoveredIDs: f.links, Calls: slog.New(slog.DiscardHandler)}
 
 	return f
 }
@@ -194,6 +200,42 @@ func TestEnrich(t *testing.T) {
 
 	if len(f.ids) != 1 || len(f.links) != 1 {
 		t.Errorf("enqueued %d query ids, %d links", len(f.ids), len(f.links))
+	}
+}
+
+func TestEnrichCategoryMiss(t *testing.T) {
+	f := setup(t)
+	f.jev.scores["deals"] = 0
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if p, _ := f.post(t, raw.URL); !slices.Equal(p.Tags, []string{"new_factory"}) {
+		t.Errorf("tags %v", p.Tags)
+	}
+
+	if len(f.jev.requests) != 1 {
+		t.Errorf("jev requests %d", len(f.jev.requests))
+	}
+}
+
+func TestEnrichProposedQualityTagNotAnEventAction(t *testing.T) {
+	f := setup(t)
+
+	if _, err := f.db.Exec(context.Background(), `INSERT INTO tags (key, status) VALUES ('rumor', 'proposed')`); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(f.llm.prompt, "- Quality tag keys: acquisition\n") {
+		t.Errorf("prompt %q", f.llm.prompt)
 	}
 }
 
