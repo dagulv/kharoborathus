@@ -117,6 +117,15 @@ func setup(t *testing.T) fixture {
 	return f
 }
 
+// Events only search for active or focused entities.
+func (f fixture) activeVolvo(t *testing.T) {
+	t.Helper()
+
+	if _, err := f.db.Exec(context.Background(), `INSERT INTO entities (key, name, kind, status) VALUES ('volvo_cars', 'Volvo Cars', 'company', 'active')`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (f fixture) rawPost(t *testing.T, trusted bool, url, status string, retries int) domain.RawPost {
 	t.Helper()
 
@@ -182,6 +191,7 @@ func enrich(f fixture, id string) error {
 
 func TestEnrich(t *testing.T) {
 	f := setup(t)
+	f.activeVolvo(t)
 	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
 
 	if err := enrich(f, raw.ID); err != nil {
@@ -411,6 +421,7 @@ func TestEnrichCancelled(t *testing.T) {
 
 func TestEnrichExistingPost(t *testing.T) {
 	f := setup(t)
+	f.activeVolvo(t)
 	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
 
 	if err := enrich(f, raw.ID); err != nil {

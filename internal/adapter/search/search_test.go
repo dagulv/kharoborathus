@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/jackc/pgx/v5"
 )
@@ -266,9 +267,9 @@ func TestEnqueueFull(t *testing.T) {
 func TestStoreSearch(t *testing.T) {
 	db := discoverDB(t)
 	early := seedPost(t, db, seed{Trusted: true, Content: volvoArticle, Lang: "sv", Age: time.Hour})
-	ids := discover(t, db, early, volvoTakeover)
+	ids := discover(t, db, early, []domain.LinkedEntity{volvoLinked}, volvoTakeover)
 	late := seedPost(t, db, seed{Trusted: true, Content: volvoArticle, Lang: "en"})
-	discover(t, db, late, volvoTakeover)
+	discover(t, db, late, []domain.LinkedEntity{volvoLinked}, volvoTakeover)
 
 	ctx := context.Background()
 	s := NewStore(db)
