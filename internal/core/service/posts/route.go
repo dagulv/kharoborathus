@@ -37,8 +37,9 @@ func listPosts(s Store, l *slog.Logger) http.HandlerFunc {
 				OrderBy: q.Get("orderBy"),
 				Search:  q.Get("search"),
 			},
-			Tags:  q["tag"],
-			After: q.Get("after"),
+			Tags:       q["tag"],
+			Categories: q["category"],
+			After:      q.Get("after"),
 		}
 
 		// Collected first, so a failure mid-list is a 500 and never a truncated 200.

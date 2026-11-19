@@ -65,7 +65,7 @@ func serve(s Store, target string) *httptest.ResponseRecorder {
 func TestListPosts(t *testing.T) {
 	s := &fakeStore{posts: []domain.Post{{ID: "1", Title: "Volvo", Tags: []string{"acquisition"}}, {ID: "2", Title: "Ericsson"}}}
 
-	w := serve(s, "/posts?limit=10&offset=5&order=asc&orderBy=createdAt&search=volvo&tag=acquisition&tag=contract&after=9")
+	w := serve(s, "/posts?limit=10&offset=5&order=asc&orderBy=createdAt&search=volvo&tag=acquisition&tag=contract&category=finance&category=macro&after=9")
 	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("status %d, type %q", w.Code, w.Header().Get("Content-Type"))
 	}
@@ -76,7 +76,7 @@ func TestListPosts(t *testing.T) {
 	}
 
 	f := s.filter
-	if f.Limit != "10" || f.Offset != "5" || f.Order != "asc" || f.OrderBy != "createdAt" || f.Search != "volvo" || f.After != "9" || !slices.Equal(f.Tags, []string{"acquisition", "contract"}) {
+	if f.Limit != "10" || f.Offset != "5" || f.Order != "asc" || f.OrderBy != "createdAt" || f.Search != "volvo" || f.After != "9" || !slices.Equal(f.Tags, []string{"acquisition", "contract"}) || !slices.Equal(f.Categories, []string{"finance", "macro"}) {
 		t.Errorf("filter %+v", f)
 	}
 }
