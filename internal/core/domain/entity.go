@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/dagulv/kharoborathus/internal/lib/query"
+)
 
 var EntityKinds = []string{"company", "organization", "technology", "product", "strategy", "concept"}
 
@@ -25,4 +29,12 @@ type LinkedEntity struct {
 	Names   []string `json:"names"`   // Lowercased name and terms
 	Aliases []string `json:"aliases"` // Alias keys
 	Term    string   `json:"term"`    // The extracted term that grounded it in this post
+}
+
+type EntityFilter struct {
+	query.Filter
+
+	Kind     string `query:"kind"`
+	Tag      string `query:"tag"`
+	Category string `query:"category"`
 }

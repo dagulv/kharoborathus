@@ -58,6 +58,7 @@ type Post struct {
 	ShortContent string     `json:"shortContent"`      // Plain text short content, llm summary of content
 	Content      string     `json:"content,omitempty"` // Markdown content, left out of lists
 	Tags         []string   `json:"tags"`
+	Entities     []string   `json:"entities"` // Keys of enabled, active linked entities
 	PostedAt     *time.Time `json:"postedAt"`
 	Authors      []string   `json:"authors"`
 	CreatedAt    time.Time  `json:"createdAt"`
@@ -71,6 +72,7 @@ type PostFilter struct {
 
 	Tags       []string `query:"tag"`
 	Categories []string `query:"category"`
+	Entities   []string `query:"entity"`
 	// A keyset cursor: the id of the last post already seen. Only valid with the default order.
 	After string `query:"after"`
 }

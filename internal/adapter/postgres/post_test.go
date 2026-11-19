@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -263,6 +264,57 @@ func TestListPostsCategoryWithTagAndAfter(t *testing.T) {
 
 	if ids, _ := listIDs(t, s, domain.PostFilter{Categories: []string{"dead"}}); len(ids) != 0 {
 		t.Errorf("category with only a disabled tag: got %v", ids)
+	}
+}
+
+func TestListPostsEntity(t *testing.T) {
+	db, s, volvo, ericsson := postsDB(t)
+
+	execAll(t, db,
+		`INSERT INTO entities (key, name, kind, status) VALUES ('volvo_cars', 'Volvo Cars', 'company', 'active'), ('northvolt', 'Northvolt', 'company', 'active')`,
+		`INSERT INTO entities (key, name, kind) VALUES ('new_factory', 'New factory', 'concept')`,
+		`INSERT INTO entities (key, name, kind, status, enabled) VALUES ('off', 'Off', 'company', 'active', false)`,
+		fmt.Sprintf(`INSERT INTO post_entities (post_id, entity) VALUES
+			('%[1]s', 'volvo_cars'), ('%[1]s', 'northvolt'), ('%[1]s', 'new_factory'), ('%[1]s', 'off'), ('%[2]s', 'volvo_cars')`, volvo.ID, ericsson.ID),
+	)
+
+	cases := map[string]struct {
+		entities []string
+		want     []string
+	}{
+		"one entity":      {[]string{"volvo_cars"}, []string{ericsson.ID, volvo.ID}},
+		"other entity":    {[]string{"northvolt"}, []string{volvo.ID}},
+		"both entities":   {[]string{"volvo_cars", "northvolt"}, []string{volvo.ID}},
+		"proposed entity": {[]string{"new_factory"}, nil},
+		"disabled entity": {[]string{"off"}, nil},
+		"unknown entity":  {[]string{"nope"}, nil},
+		"one unknown":     {[]string{"volvo_cars", "nope"}, nil},
+		"no entity":       {nil, []string{ericsson.ID, volvo.ID}},
+	}
+
+	for name, c := range cases {
+		if ids, _ := listIDs(t, s, domain.PostFilter{Entities: c.entities}); !slices.Equal(ids, c.want) {
+			t.Errorf("%s: got %v, want %v", name, ids, c.want)
+		}
+	}
+
+	_, posts := listIDs(t, s, domain.PostFilter{Filter: query.Filter{OrderBy: "createdAt", Order: "asc"}})
+	if !slices.Equal(posts[0].Entities, []string{"northvolt", "volvo_cars"}) {
+		t.Errorf("volvo entities %v", posts[0].Entities)
+	}
+
+	if posts[1].Entities == nil || len(posts[1].Entities) != 1 {
+		t.Errorf("ericsson entities %v", posts[1].Entities)
+	}
+
+	execAll(t, db, `DELETE FROM post_entities WHERE post_id = '`+ericsson.ID+`'`)
+
+	if got, err := s.GetPost(context.Background(), ericsson.ID); err != nil || got.Entities == nil || len(got.Entities) != 0 {
+		t.Errorf("no entities: %v, %v", got.Entities, err)
+	}
+
+	if got, err := s.GetPost(context.Background(), volvo.ID); err != nil || !slices.Equal(got.Entities, []string{"northvolt", "volvo_cars"}) {
+		t.Errorf("get: %v, %v", got.Entities, err)
 	}
 }
 
