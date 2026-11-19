@@ -27,12 +27,25 @@ Rules for tags:
 - No sentiment or market direction, like bullish, bearish, price_rise or volatility.
 - At most five tags, the most important first. An article without such topics gets an empty list.
 
+entities: the specific things the article is substantially about. Each with:
+- key: the entity in English, lowercase, words joined by underscores, like solid_state_battery or volvo_cars. Reuse a listed existing entity key when it is the same entity, and only create a new key when none of them is.
+- name: the display name in English, or the official name for a company or organisation.
+- term: the entity as the article writes it, in its base form. It must appear in the article.
+- kind: exactly one of company, organization, technology, product, strategy or concept.
+- tags: the keys of existing tags the entity belongs under, using the listed tag keys exactly. An empty list when none fits.
+Rules for entities:
+- Only entities the article is substantially about, never ones mentioned in passing.
+- Specific, more specific than a tag. Not generic words like company, market or price.
+- No people, no places.
+- At most eight entities, the most important first. An article without such entities gets an empty list.
+
 {{ .Events }}
 {{ end }}
 
 {{ define "enrich_user_prompt" }}
 - Language: {{ .Lang }}
 - Existing tag keys: {{ if .Keys }}{{ join .Keys ", " }}{{ else }}none{{ end }}
+- Existing entity keys: {{ if .EntityKeys }}{{ join .EntityKeys ", " }}{{ else }}none{{ end }}
 - Categories: {{ if .Categories }}{{ join .Categories ", " }}{{ else }}none{{ end }}
 {{ .Events }}
 - Title: {{ .Title }}

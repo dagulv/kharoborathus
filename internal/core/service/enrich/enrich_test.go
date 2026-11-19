@@ -66,9 +66,10 @@ var closed = schedule.Schedule{Closed: []schedule.Window{{
 const article = "Volvo Cars köper Northvolt. [Läs mer](https://news.example/a)"
 
 var goodAnswer = answer{
-	Summary: "Volvo Cars köper Northvolt.",
-	Tags:    []postgres.Proposal{{Key: "New Factory", Term: "ny fabrik"}, {Key: "acquisition", Term: "förvärv"}},
-	Events:  []discovery.Keyword{{Entity: "Volvo Cars", Action: "takeover", Query: "Volvo Cars köper Northvolt"}},
+	Summary:  "Volvo Cars köper Northvolt.",
+	Tags:     []postgres.Proposal{{Key: "New Factory", Term: "ny fabrik"}, {Key: "acquisition", Term: "förvärv"}},
+	Events:   []discovery.Keyword{{Entity: "Volvo Cars", Action: "takeover", Query: "Volvo Cars köper Northvolt"}},
+	Entities: []postgres.ExtractedEntity{{Key: "Volvo Cars", Name: "Volvo Cars", Term: "volvo cars", Kind: "company"}},
 }
 
 type fixture struct {
@@ -101,6 +102,7 @@ func setup(t *testing.T) fixture {
 	posts := postgres.NewPostStore(db)
 	tags := postgres.NewTagStore(db)
 	categories := postgres.NewCategoryStore(db)
+	entities := postgres.NewEntityStore(db)
 
 	f := fixture{
 		db:       db,
@@ -110,7 +112,7 @@ func setup(t *testing.T) fixture {
 		links:    make(chan string, 10),
 		rawPosts: &rawPosts,
 	}
-	f.s = &Service{DB: db, RawPosts: &rawPosts, Posts: &posts, Tags: &tags, Categories: &categories, LLM: f.llm, Classifier: f.jev, SearchIDs: f.ids, DiscoveredIDs: f.links, Calls: slog.New(slog.DiscardHandler)}
+	f.s = &Service{DB: db, RawPosts: &rawPosts, Posts: &posts, Tags: &tags, Categories: &categories, Entities: &entities, LLM: f.llm, Classifier: f.jev, SearchIDs: f.ids, DiscoveredIDs: f.links, Calls: slog.New(slog.DiscardHandler)}
 
 	return f
 }
@@ -305,6 +307,31 @@ func TestEnrichUntrusted(t *testing.T) {
 	var n int
 	if err := f.db.QueryRow(context.Background(), `SELECT count(*) FROM tags WHERE key = 'new_factory'`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("untrusted post created %d tags, %v", n, err)
+	}
+
+	if err := f.db.QueryRow(context.Background(), `SELECT count(*) FROM entities`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("untrusted post created %d entities, %v", n, err)
+	}
+}
+
+func TestEnrichEntities(t *testing.T) {
+	f := setup(t)
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	var key, status string
+
+	err := f.db.QueryRow(context.Background(), `
+		SELECT pe.entity, e.status FROM post_entities pe
+		JOIN entities e ON e.key = pe.entity
+		JOIN posts p ON p.id = pe.post_id
+		WHERE p.url = $1
+		`, raw.URL).Scan(&key, &status)
+	if err != nil || key != "volvo_cars" || status != domain.StatusProposed {
+		t.Errorf("entity %q %q, %v", key, status, err)
 	}
 }
 

@@ -130,6 +130,7 @@ func app(ctx context.Context) (err error) {
 	postStore := postgres.NewPostStore(db)
 	tagStore := postgres.NewTagStore(db)
 	categoryStore := postgres.NewCategoryStore(db)
+	entityStore := postgres.NewEntityStore(db)
 	sessionStore := postgres.NewSessionStore(db)
 	userStore := postgres.NewUserStore(db)
 	statsStore := postgres.NewStatsStore(db)
@@ -184,6 +185,7 @@ func app(ctx context.Context) (err error) {
 		Posts:         &postStore,
 		Tags:          &tagStore,
 		Categories:    &categoryStore,
+		Entities:      &entityStore,
 		LLM:           llm,
 		Classifier:    classifier,
 		SearchIDs:     searchIDs,

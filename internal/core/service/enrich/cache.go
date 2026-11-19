@@ -15,6 +15,7 @@ type tagSet struct {
 	keys         []string
 	classifiable []domain.Tag
 	categories   []domain.Category
+	entityKeys   []string
 }
 
 type cachedTags struct {
