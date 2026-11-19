@@ -92,7 +92,7 @@ Results are read from `web.results` and `news.results` and deduplicated by URL. 
 | ---------------------------- | ------------------ | ----------------------------------------------------- |
 | Dedupe window                | 7 days             | Same as freshness.                                    |
 | Results per query            | 20 per result type | One call, filter cuts the rest.                       |
-| Freshness                    | `pw`              | Same event, not old coverage.                         |
+| Freshness                    | `pw`               | Same event, not old coverage.                         |
 | Depth freshness              | `pm`               | A week between searches, a month of material.         |
 | Depth window                 | 7 days             | Same as the event dedupe.                             |
 | Depth searches a day         | 50                 | Inside the 322 cap, so events keep priority.          |
