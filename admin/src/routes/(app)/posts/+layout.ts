@@ -7,6 +7,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 	const filter = {
 		source: params.get('source') || undefined,
 		tag: params.get('tag') || undefined,
+		category: params.get('category') || undefined,
 		search: params.get('search') || undefined,
 		status: params.get('status') || undefined,
 		page: Math.max(1, Number(params.get('page')) || 1)

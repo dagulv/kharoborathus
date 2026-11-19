@@ -108,6 +108,17 @@ export type Tag = {
 	type: string;
 	createdAt: string;
 	terms: string[];
+	categories: string[];
+	postCount: number;
+};
+
+export type Category = {
+	key: string;
+	enabled: boolean;
+	terms: Record<string, string>;
+	tags: string[];
+	createdAt: string;
+	tagCount: number;
 	postCount: number;
 };
 
