@@ -43,6 +43,7 @@
 		{#if filter.source}<input type="hidden" name="source" value={filter.source} />{/if}
 		{#if filter.tag}<input type="hidden" name="tag" value={filter.tag} />{/if}
 		{#if filter.category}<input type="hidden" name="category" value={filter.category} />{/if}
+		{#if filter.entity}<input type="hidden" name="entity" value={filter.entity} />{/if}
 		{#if filter.status}<input type="hidden" name="status" value={filter.status} />{/if}
 		<Input name="search" value={filter.search ?? ''} placeholder="Search posts…" class="w-64" />
 		<Button type="submit" size="sm">Search</Button>
@@ -60,7 +61,7 @@
 	{/each}
 </div>
 
-{#if filter.source || filter.tag || filter.category || filter.search}
+{#if filter.source || filter.tag || filter.category || filter.entity || filter.search}
 	<div class="mb-3 flex flex-wrap gap-2">
 		{#if filter.source}
 			<Badge variant="secondary" href={link({ source: undefined, page: undefined })}>
@@ -77,6 +78,12 @@
 		{#if filter.category}
 			<Badge variant="secondary" href={link({ category: undefined, page: undefined })}>
 				category: {filter.category}
+				<XIcon />
+			</Badge>
+		{/if}
+		{#if filter.entity}
+			<Badge variant="secondary" href={link({ entity: undefined, page: undefined })}>
+				entity: {filter.entity}
 				<XIcon />
 			</Badge>
 		{/if}

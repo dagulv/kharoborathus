@@ -122,6 +122,55 @@ export type Category = {
 	postCount: number;
 };
 
+// Mirrors domain.EntityKinds in the Go app
+export const ENTITY_KINDS = [
+	'company',
+	'organization',
+	'technology',
+	'product',
+	'strategy',
+	'concept'
+] as const;
+
+export type EntityKind = (typeof ENTITY_KINDS)[number];
+
+export type Entity = {
+	key: string;
+	name: string;
+	kind: EntityKind;
+	status: 'proposed' | 'active';
+	enabled: boolean;
+	focus: boolean;
+	terms: Record<string, string[]>;
+	tags: string[];
+	strength: number;
+	createdAt: string;
+};
+
+export type EntityPage = {
+	entities: Entity[];
+	total: number;
+	page: number;
+	pageSize: number;
+};
+
+export type SearchQuery = {
+	id: string;
+	normalizedEntity: string;
+	action: string;
+	query: string;
+	searchedAt: string | null;
+	// kept is absent until the result filter has run
+	result: { results?: unknown[]; kept?: number[] } | null;
+	createdAt: string;
+};
+
+export type AdminEntity = Entity & {
+	aliases: string[];
+	support: number;
+	queries: SearchQuery[];
+};
+
 export type TagProposal = {
 	key: string;
 	terms: string[];

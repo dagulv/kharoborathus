@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import BoxIcon from '@lucide/svelte/icons/box';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import HouseIcon from '@lucide/svelte/icons/house';
 	import LogOutIcon from '@lucide/svelte/icons/log-out';
@@ -18,6 +19,7 @@
 		{ href: '/sources', label: 'Sources', icon: RssIcon },
 		{ href: '/tags', label: 'Tags', icon: TagIcon },
 		{ href: '/categories', label: 'Categories', icon: ShapesIcon },
+		{ href: '/entities', label: 'Entities', icon: BoxIcon },
 		{ href: '/posts', label: 'Posts', icon: FileTextIcon },
 		{ href: '/logs', label: 'Logs', icon: ScrollTextIcon }
 	];
