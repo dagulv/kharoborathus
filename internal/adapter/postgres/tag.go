@@ -40,25 +40,32 @@ func (s *TagStore) TagKeys(ctx context.Context) ([]string, error) {
 	return keys, nil
 }
 
-func (s *TagStore) ActiveTags(ctx context.Context, lang string) ([]domain.Tag, error) {
+// Proposed tags are offered only while recent, so stale proposals drop out without a cleanup job.
+func (s *TagStore) ClassifiableTags(ctx context.Context, lang string) ([]domain.Tag, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT t.key, t.type, COALESCE(array_agg(tt.term ORDER BY tt.term) FILTER (WHERE tt.term IS NOT NULL), '{}')
+		SELECT t.key, t.status, t.type,
+			COALESCE((SELECT array_agg(tt.term ORDER BY tt.term) FROM tag_terms tt WHERE tt.key = t.key AND tt.lang = $1), '{}'),
+			COALESCE((SELECT array_agg(ct.category ORDER BY ct.category) FROM category_tags ct JOIN categories c ON c.key = ct.category WHERE ct.tag = t.key AND c.enabled), '{}')
 		FROM tags t
-		LEFT JOIN tag_terms tt ON tt.key = t.key AND tt.lang = $1
-		WHERE t.enabled AND t.status = 'active'
-		GROUP BY t.key, t.type
+		WHERE t.enabled AND (
+			t.status = 'active'
+			OR (t.status = 'proposed' AND (
+				t.created_at > now() - interval '30 days'
+				OR EXISTS (SELECT 1 FROM posts p WHERE p.tags @> ARRAY[t.key] AND p.created_at > now() - interval '30 days')
+			))
+		)
 		ORDER BY t.key
 		`, lang)
 	if err != nil {
-		return nil, fmt.Errorf("err query active tags: %w", err)
+		return nil, fmt.Errorf("err query classifiable tags: %w", err)
 	}
 
 	tags, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (t domain.Tag, err error) {
-		err = row.Scan(&t.Key, &t.Type, &t.Terms)
+		err = row.Scan(&t.Key, &t.Status, &t.Type, &t.Terms, &t.Categories)
 		return
 	})
 	if err != nil {
-		return nil, fmt.Errorf("err scan active tags: %w", err)
+		return nil, fmt.Errorf("err scan classifiable tags: %w", err)
 	}
 
 	return tags, nil

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/dbtest"
 	"github.com/jackc/pgx/v5"
@@ -39,16 +40,53 @@ func TestTagKeys(t *testing.T) {
 	}
 }
 
-func TestActiveTags(t *testing.T) {
-	_, s := tagDB(t)
+func TestClassifiableTags(t *testing.T) {
+	db, s := tagDB(t)
+	ctx := context.Background()
 
-	tags, err := s.ActiveTags(context.Background(), "sv")
+	for _, q := range []string{
+		`INSERT INTO categories (key) VALUES ('deals')`,
+		`INSERT INTO categories (key, enabled) VALUES ('macro', false)`,
+		`INSERT INTO category_tags (category, tag) VALUES ('deals', 'acquisition'), ('macro', 'acquisition')`,
+		`INSERT INTO tags (key, status, created_at) VALUES ('old_factory', 'proposed', now() - interval '40 days'), ('old_carried', 'proposed', now() - interval '40 days')`,
+		`INSERT INTO domains (base_url) VALUES ('https://a.example')`,
+		`INSERT INTO sources (domain_id, adapter, url) SELECT id, 'rss', 'https://a.example/feed' FROM domains`,
+		`INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content, tags)
+		SELECT s.id, 'https://a.example/1', 'sv', s.domain_id, 't', 's', 'c', '{old_carried}' FROM sources s`,
+	} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tags, err := s.ClassifiableTags(ctx, "sv")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(tags) != 2 || tags[0].Key != "acquisition" || tags[0].Type != "quality" || !slices.Equal(tags[0].Terms, []string{"förvärv", "uppköp"}) || tags[1].Key != "contract" || len(tags[1].Terms) != 0 {
-		t.Errorf("got %+v", tags)
+	got := make(map[string]domain.Tag, len(tags))
+	keys := make([]string, 0, len(tags))
+
+	for _, tag := range tags {
+		got[tag.Key] = tag
+		keys = append(keys, tag.Key)
+	}
+
+	if want := []string{"acquisition", "contract", "new_factory", "old_carried"}; !slices.Equal(keys, want) {
+		t.Fatalf("keys %v, want %v", keys, want)
+	}
+
+	acq := got["acquisition"]
+	if acq.Status != domain.StatusActive || acq.Type != "quality" || !slices.Equal(acq.Terms, []string{"förvärv", "uppköp"}) || !slices.Equal(acq.Categories, []string{"deals"}) {
+		t.Errorf("acquisition %+v", acq)
+	}
+
+	if c := got["contract"]; len(c.Terms) != 0 || c.Categories == nil || len(c.Categories) != 0 {
+		t.Errorf("contract %+v", c)
+	}
+
+	if got["new_factory"].Status != domain.StatusProposed || got["old_carried"].Status != domain.StatusProposed {
+		t.Errorf("proposed statuses %+v %+v", got["new_factory"], got["old_carried"])
 	}
 }
 

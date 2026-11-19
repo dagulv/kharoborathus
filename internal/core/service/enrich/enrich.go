@@ -136,7 +136,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 	var quality []string
 
 	for _, t := range active {
-		if t.Type == domain.TagTypeQuality {
+		if t.Type == domain.TagTypeQuality && t.Status == domain.StatusActive {
 			quality = append(quality, t.Key)
 		}
 	}
@@ -225,7 +225,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 }
 
 func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
-	active, err := s.Tags.ActiveTags(ctx, lang)
+	active, err := s.Tags.ClassifiableTags(ctx, lang)
 	if err != nil {
 		return tagSet{}, err
 	}
