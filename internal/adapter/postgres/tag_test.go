@@ -262,7 +262,7 @@ func TestPromoteTags(t *testing.T) {
 
 	n := 0
 
-	post := func(tag string, domain int, enabled bool, ageDays int) {
+	post := func(tag string, site int, enabled bool, ageDays int) {
 		t.Helper()
 
 		n++
@@ -275,7 +275,7 @@ func TestPromoteTags(t *testing.T) {
 			)
 			INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content, tags, created_at)
 			SELECT id, $2, 'sv', domain_id, 't', 's', 'c', ARRAY[$4]::text[], now() - make_interval(days => $5) FROM s
-			`, fmt.Sprintf("https://d%d.example", domain), fmt.Sprintf("https://d%d.example/%d", domain, n), enabled, tag, ageDays); err != nil {
+			`, fmt.Sprintf("https://d%d.example", site), fmt.Sprintf("https://d%d.example/%d", site, n), enabled, tag, ageDays); err != nil {
 			t.Fatal(err)
 		}
 	}
