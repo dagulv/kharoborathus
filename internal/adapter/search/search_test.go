@@ -505,3 +505,34 @@ func TestSearchDepthBudget(t *testing.T) {
 		t.Errorf("event: err %v, calls %d", err, se.calls)
 	}
 }
+
+func TestSearchSkipsDisabledEntity(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	exec(t, db, `INSERT INTO entities (key, name, kind, enabled) VALUES ('disabled', 'D', 'company', false)`)
+
+	post := seedPost(t, db, seed{Trusted: true})
+
+	var id string
+	if err := db.QueryRow(ctx, `
+		INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ('disabled', 'acquisition', 'D köper X')
+		RETURNING id
+		`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+
+	exec(t, db, `INSERT INTO discovery_search_query_posts (query_id, post_id) VALUES ($1, $2)`, id, post.ID)
+
+	s := NewStore(db)
+	se := &fakeSearcher{results: searchResults}
+	l := slog.New(slog.DiscardHandler)
+
+	if err := searchQuery(ctx, &s, id, make(chan string, 10), se, NewResultFilter(&fakeClassifier{}), l, l); err != nil || se.calls != 0 {
+		t.Errorf("err %v, calls %d", err, se.calls)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries WHERE id = $1 AND searched_at IS NULL`, id); n != 1 {
+		t.Errorf("disabled query was marked searched")
+	}
+}
