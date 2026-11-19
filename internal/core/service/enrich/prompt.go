@@ -24,7 +24,7 @@ var prompts = template.Must(template.New("").
 // Static, so DeepSeek can cache it across calls.
 var systemPrompt = mustRender("enrich_system_prompt", map[string]any{"Events": discovery.EventsSystemPrompt})
 
-func userPrompt(lang string, keys, qualityKeys, categoryKeys []string, markdown string) (string, error) {
+func userPrompt(lang, title string, authors, keys, qualityKeys, categoryKeys []string, markdown string) (string, error) {
 	events, err := discovery.EventsUserPrompt(qualityKeys)
 	if err != nil {
 		return "", err
@@ -39,6 +39,8 @@ func userPrompt(lang string, keys, qualityKeys, categoryKeys []string, markdown 
 		"Keys":       keys[:min(len(keys), maxTagKeys)],
 		"Events":     events,
 		"Categories": categoryKeys,
+		"Title":      title,
+		"Authors":    authors,
 		"Article":    markdown,
 	})
 }
