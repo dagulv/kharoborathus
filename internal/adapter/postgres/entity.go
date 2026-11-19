@@ -517,6 +517,7 @@ func (s *EntityStore) PatchEntity(ctx context.Context, key string, p domain.Enti
 }
 
 // Searches from the newest linked post. Without one, the entity's first trusted post queues the search.
+// Runs after the patch's UPDATE, so a patch that disables the entity queues nothing.
 func queueFocusDepth(ctx context.Context, tx pgx.Tx, key string) (string, error) {
 	var postID, text string
 
@@ -528,7 +529,7 @@ func queueFocusDepth(ctx context.Context, tx pgx.Tx, key string) (string, error)
 		FROM post_entities pe
 		JOIN posts p ON p.id = pe.post_id
 		JOIN entities e ON e.key = pe.entity
-		WHERE pe.entity = $1
+		WHERE pe.entity = $1 AND e.enabled
 		ORDER BY pe.created_at DESC, pe.post_id
 		LIMIT 1
 		`, key).Scan(&postID, &text)
