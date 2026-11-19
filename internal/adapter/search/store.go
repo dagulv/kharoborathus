@@ -58,10 +58,15 @@ func (s *Store) GetQuery(ctx context.Context, id string) (i SearchItem, err erro
 func (s *Store) ListUnfinished(ctx context.Context, windowDays, limit int) ([]string, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT q.id FROM discovery_search_queries q
+		LEFT JOIN entities e ON e.key = q.normalized_entity
 		WHERE (q.searched_at IS NULL OR (q.result IS NOT NULL AND NOT q.result ? 'kept'))
 			AND q.created_at > now() - make_interval(days => $1)
 			AND EXISTS (SELECT 1 FROM discovery_search_query_posts qp WHERE qp.query_id = q.id)
-		ORDER BY q.searched_at IS NULL, q.created_at DESC
+		ORDER BY q.searched_at IS NULL,
+			q.action = 'depth',
+			COALESCE(e.focus, false) DESC,
+			(SELECT count(*) FROM post_entities pe WHERE pe.entity = q.normalized_entity AND pe.created_at > now() - interval '30 days') DESC,
+			q.created_at DESC
 		LIMIT $2
 		`, windowDays, limit)
 	if err != nil {

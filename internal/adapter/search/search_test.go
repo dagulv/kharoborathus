@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -362,6 +363,71 @@ func TestStoreSearch(t *testing.T) {
 
 	if n, err := s.DepthSearchesLastDay(ctx); err != nil || n != 1 {
 		t.Errorf("depth searches %d, %v", n, err)
+	}
+}
+
+func TestListUnfinishedPriority(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	exec(t, db, `INSERT INTO entities (key, name, kind, focus) VALUES
+		('focused', 'F', 'company', true),
+		('strong', 'S', 'company', false),
+		('weak', 'W', 'company', false)`)
+
+	// Inserted out of the wanted order, so created_at alone cannot satisfy the test.
+	queries := []struct {
+		name, entity, action string
+		posts                int
+		paid                 bool
+	}{
+		{"weak", "weak", "acquisition", 1, false},
+		{"depth", "unknown", "depth", 0, false},
+		{"strong", "strong", "acquisition", 5, false},
+		{"paid", "paid", "acquisition", 0, true},
+		{"unknown", "unknown", "acquisition", 0, false},
+		{"focused", "focused", "acquisition", 0, false},
+	}
+
+	ids := map[string]string{}
+	for _, q := range queries {
+		post := seedPost(t, db, seed{Trusted: true})
+		for range q.posts {
+			linked := seedPost(t, db, seed{Trusted: true})
+			exec(t, db, `INSERT INTO post_entities (post_id, entity) VALUES ($1, $2)`, linked.ID, q.entity)
+		}
+
+		searchedAt := "NULL"
+		if q.paid {
+			searchedAt = "now()"
+		}
+
+		var id string
+		if err := db.QueryRow(ctx, `
+			INSERT INTO discovery_search_queries (normalized_entity, action, query, searched_at, result)
+			VALUES ($1, $2, $3, `+searchedAt+`, CASE WHEN $4 THEN '{"results": []}'::jsonb END)
+			RETURNING id
+			`, q.entity, q.action, fmt.Sprintf("%s %s", q.entity, q.action), q.paid).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+
+		exec(t, db, `INSERT INTO discovery_search_query_posts (query_id, post_id) VALUES ($1, $2)`, id, post.ID)
+		ids[q.name] = id
+	}
+
+	store := NewStore(db)
+	got, err := store.ListUnfinished(ctx, dedupeWindow, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var want []string
+	for _, name := range []string{"paid", "focused", "strong", "weak", "unknown", "depth"} {
+		want = append(want, ids[name])
+	}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
