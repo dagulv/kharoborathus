@@ -47,7 +47,7 @@ func RequireSession(s Sessions, l *slog.Logger, next http.Handler) http.Handler 
 // A cross-origin JSON write needs a CORS preflight, so this keeps plain form posts from other sites out.
 func RequireJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
+		if r.Method != http.MethodPost && r.Method != http.MethodPatch && r.Method != http.MethodPut {
 			next.ServeHTTP(w, r)
 			return
 		}
