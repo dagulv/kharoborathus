@@ -99,11 +99,16 @@ func tagFilter(arg int) string {
 }
 
 // v.tags only holds public tags, so a post counts when one of them is in the enabled category.
+// p.tags && narrows through the GIN index first, since v.tags is not indexed.
 func categoryFilter(arg int) string {
-	return fmt.Sprintf(`v.tags && ARRAY(
+	return fmt.Sprintf(`p.tags && ARRAY(%[1]s) AND v.tags && ARRAY(%[1]s)`, categoryTags(arg))
+}
+
+func categoryTags(arg int) string {
+	return fmt.Sprintf(`
 		SELECT ct.tag FROM category_tags ct JOIN categories c ON c.key = ct.category
 		WHERE c.key = $%d AND c.enabled
-	)`, arg)
+	`, arg)
 }
 
 // Newest publication first by default, with created_at for posts whose date is unknown.
