@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS sources (
   url TEXT NOT NULL,
   enabled BOOLEAN NOT NULL DEFAULT false,
   rate INT NOT NULL DEFAULT 15,
-  lang TEXT, -- for posts whose page or feed gives none
+  lang TEXT NOT NULL DEFAULT '', -- for posts whose page or feed gives none
   metadata JSONB NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'active', -- proposed | active | flagged
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -78,14 +78,14 @@ CREATE INDEX IF NOT EXISTS sources_enabled_idx ON sources (enabled);
 
 CREATE TABLE IF NOT EXISTS raw_posts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  source_id UUID REFERENCES sources (id), -- NULL for a discovered link until its source is matched
+  source_id UUID NOT NULL REFERENCES sources (id),
   url TEXT UNIQUE NOT NULL,
-  lang TEXT NOT NULL DEFAULT '',
+  lang TEXT NOT NULL,
   domain_id UUID NOT NULL REFERENCES domains (id),
-  raw_content TEXT,
-  content JSONB, -- {content, title, authors, posted_at} from the fetch and extraction
+  raw_content TEXT NOT NULL,
+  content JSONB NOT NULL, -- {content, title, authors, posted_at} from the fetch and extraction
   simhash BIGINT,
-  status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed | missing
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | rejected | duplicate | failed
   retry_count INT NOT NULL DEFAULT 0, -- failed enrich attempts
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -103,7 +103,6 @@ CREATE TABLE IF NOT EXISTS posts (
   posted_at TIMESTAMPTZ,
   authors TEXT[] NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), -- last enrich write, older than its raw post's content after a resync
   simhash BIGINT,
   ts tsvector GENERATED ALWAYS AS (
     CASE lang
@@ -177,9 +176,6 @@ CREATE TABLE IF NOT EXISTS discovery_posts (
   checked_at TIMESTAMPTZ
 );
 
--- Declared here since discovery_posts is created after raw_posts.
-ALTER TABLE raw_posts ADD COLUMN IF NOT EXISTS discovery_post_id UUID REFERENCES discovery_posts (id) ON DELETE SET NULL;
-
 CREATE TABLE discovery_related_posts (
   from_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
   to_post_id UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
@@ -205,10 +201,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- One row per outbound request or pipeline step, written by the slog handler in internal/lib/logs.
+-- One row per outbound request, written by the slog handler in internal/lib/logs.
 CREATE TABLE IF NOT EXISTS logs (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  type TEXT NOT NULL, -- deepseek | jev | brave | rss | page | trim | ingest | robots | homepage | wordpress | step
+  type TEXT NOT NULL, -- deepseek | jev | brave | rss | page | trim | ingest | robots | homepage | wordpress
   level TEXT NOT NULL,
   request JSONB NOT NULL,
   response JSONB,
