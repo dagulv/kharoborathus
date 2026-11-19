@@ -100,6 +100,17 @@ func (s *Store) SearchesLastDay(ctx context.Context) (n int, err error) {
 	return n, nil
 }
 
+func (s *Store) DepthSearchesLastDay(ctx context.Context) (n int, err error) {
+	if err = s.db.QueryRow(ctx, `
+		SELECT count(*) FROM discovery_search_queries
+		WHERE action = $1 AND searched_at > now() - interval '1 day' AND result IS NOT NULL
+		`, DepthAction).Scan(&n); err != nil {
+		return 0, fmt.Errorf("err count depth searches: %w", err)
+	}
+
+	return n, nil
+}
+
 func (s *Store) MarkRejected(ctx context.Context, id string) error {
 	if _, err := s.db.Exec(ctx, `UPDATE discovery_search_queries SET searched_at = now() WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("err mark rejected: %w", err)
@@ -274,6 +285,30 @@ func insertQuery(ctx context.Context, tx pgx.Tx, entity, action, query string) (
 	}
 
 	return id, false, nil
+}
+
+// Depth text repeats weekly, so no conflict clause.
+func QueueDepth(ctx context.Context, tx pgx.Tx, entity, postID, query string) (id string, created bool, err error) {
+	if err := lockEvent(ctx, tx, entity, DepthAction); err != nil {
+		return "", false, err
+	}
+
+	if _, found, err := recentQuery(ctx, tx, entity, DepthAction, dedupeWindow); err != nil || found {
+		return "", false, err
+	}
+
+	if err = tx.QueryRow(ctx, `
+		INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ($1, $2, $3)
+		RETURNING id
+		`, entity, DepthAction, query).Scan(&id); err != nil {
+		return "", false, fmt.Errorf("err insert depth query: %w", err)
+	}
+
+	if err = linkQuery(ctx, tx, id, postID); err != nil {
+		return "", false, err
+	}
+
+	return id, true, nil
 }
 
 func linkQuery(ctx context.Context, tx pgx.Tx, queryID, postID string) error {

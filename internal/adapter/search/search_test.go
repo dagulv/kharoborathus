@@ -21,6 +21,7 @@ type fakeStore struct {
 	listed     int
 	pending    int
 	used       int
+	depthUsed  int
 	rejected   []string
 	saved      [][]SearchResult
 	kept       [][]int
@@ -38,6 +39,8 @@ func (s *fakeStore) ListUnfinished(_ context.Context, _, limit int) ([]string, e
 func (s *fakeStore) PendingResults(context.Context, int) (int, error) { return s.pending, nil }
 
 func (s *fakeStore) SearchesLastDay(context.Context) (int, error) { return s.used, nil }
+
+func (s *fakeStore) DepthSearchesLastDay(context.Context) (int, error) { return s.depthUsed, nil }
 
 func (s *fakeStore) MarkRejected(_ context.Context, id string) error {
 	s.rejected = append(s.rejected, id)
@@ -62,11 +65,13 @@ type fakeSearcher struct {
 	results []SearchResult
 	err     error
 	calls   int
+	queries []Query
 	cancel  context.CancelFunc
 }
 
-func (f *fakeSearcher) Search(context.Context, *slog.Logger, Query) ([]SearchResult, error) {
+func (f *fakeSearcher) Search(_ context.Context, _ *slog.Logger, q Query) ([]SearchResult, error) {
 	f.calls++
+	f.queries = append(f.queries, q)
 
 	if f.cancel != nil {
 		f.cancel()
@@ -344,6 +349,20 @@ func TestStoreSearch(t *testing.T) {
 	if n, err := s.SearchesLastDay(ctx); err != nil || n != 1 {
 		t.Errorf("searches after reject %d, %v", n, err)
 	}
+
+	if n, err := s.DepthSearchesLastDay(ctx); err != nil || n != 0 {
+		t.Errorf("depth searches before %d, %v", n, err)
+	}
+
+	exec(t, db, `INSERT INTO discovery_search_queries (normalized_entity, action, query, searched_at, result) VALUES
+		('volvo_cars', 'depth', 'Volvo Cars', now(), '{"results": []}'),
+		('saab', 'depth', 'Saab', now(), NULL),
+		('scania', 'depth', 'Scania', now() - interval '2 days', '{"results": []}'),
+		('man', 'depth', 'MAN', NULL, NULL)`)
+
+	if n, err := s.DepthSearchesLastDay(ctx); err != nil || n != 1 {
+		t.Errorf("depth searches %d, %v", n, err)
+	}
 }
 
 func TestSearchHeldBackLogged(t *testing.T) {
@@ -363,5 +382,57 @@ func TestSearchHeldBackLogged(t *testing.T) {
 		if !strings.Contains(buf.String(), "search held back") || !strings.Contains(buf.String(), reason) {
 			t.Errorf("%s: log %q", reason, buf.String())
 		}
+	}
+}
+
+func depthItem() SearchItem {
+	i := testItem()
+	i.Action = DepthAction
+	i.Query = "Volvo Cars"
+
+	return i
+}
+
+func TestSearchDepthFreshness(t *testing.T) {
+	cases := map[string]struct {
+		item SearchItem
+		want string
+	}{
+		"depth": {depthItem(), "pm"},
+		"event": {testItem(), ""},
+	}
+
+	for name, c := range cases {
+		se := &fakeSearcher{}
+
+		if err := runSearch(context.Background(), &fakeStore{item: c.item}, se, &fakeClassifier{}); err != nil {
+			t.Fatal(err)
+		}
+
+		if len(se.queries) != 1 || se.queries[0].Freshness != c.want {
+			t.Errorf("%s: queries %+v", name, se.queries)
+		}
+	}
+}
+
+func TestSearchDepthBudget(t *testing.T) {
+	var buf bytes.Buffer
+	l := slog.New(slog.NewTextHandler(&buf, nil))
+	s := &fakeStore{item: depthItem(), depthUsed: 50}
+	se := &fakeSearcher{}
+
+	if err := searchQuery(context.Background(), s, "q", nil, se, NewResultFilter(&fakeClassifier{}), l, l); err != nil || se.calls != 0 || s.writes() != 0 {
+		t.Errorf("err %v, calls %d, writes %d", err, se.calls, s.writes())
+	}
+
+	if !strings.Contains(buf.String(), "daily depth budget") {
+		t.Errorf("log %q", buf.String())
+	}
+
+	s = &fakeStore{item: testItem(), depthUsed: 50}
+	se = &fakeSearcher{}
+
+	if err := runSearch(context.Background(), s, se, &fakeClassifier{}); err != nil || se.calls != 1 {
+		t.Errorf("event: err %v, calls %d", err, se.calls)
 	}
 }
