@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -252,5 +253,79 @@ func TestSaveProposalCategories(t *testing.T) {
 
 	if got := append(cats("new_factory"), cats("acquisition")...); len(got) != 0 {
 		t.Errorf("existing tags: %v", got)
+	}
+}
+
+func TestPromoteTags(t *testing.T) {
+	db, s := tagDB(t)
+	ctx := context.Background()
+
+	n := 0
+
+	post := func(tag string, domain int, enabled bool, ageDays int) {
+		t.Helper()
+
+		n++
+
+		if _, err := db.Exec(ctx, `
+			WITH d AS (
+				INSERT INTO domains (base_url) VALUES ($1) ON CONFLICT (base_url) DO UPDATE SET base_url = EXCLUDED.base_url RETURNING id
+			), s AS (
+				INSERT INTO sources (domain_id, adapter, url, enabled) SELECT id, 'rss', $1 || '/feed', $3 FROM d RETURNING id, domain_id
+			)
+			INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content, tags, created_at)
+			SELECT id, $2, 'sv', domain_id, 't', 's', 'c', ARRAY[$4]::text[], now() - make_interval(days => $5) FROM s
+			`, fmt.Sprintf("https://d%d.example", domain), fmt.Sprintf("https://d%d.example/%d", domain, n), enabled, tag, ageDays); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, key := range []string{"promote_ok", "two_domains", "four_posts", "disabled_source", "old_post"} {
+		if _, err := db.Exec(ctx, `INSERT INTO tags (key, status) VALUES ($1, 'proposed')`, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for i := range 5 {
+		post("promote_ok", i%3, true, 0)
+		post("two_domains", i%2, true, 0)
+		post("acquisition", i%3, true, 0)
+		post("unknown", i%3, true, 0)
+	}
+
+	for i := range 4 {
+		post("four_posts", i%3, true, 0)
+		post("disabled_source", i%3, true, 0)
+		post("old_post", i%3, true, 0)
+	}
+
+	post("disabled_source", 2, false, 0)
+	post("old_post", 2, true, 31)
+
+	var promoted []string
+
+	if err := pgx.BeginFunc(ctx, db, func(tx pgx.Tx) (err error) {
+		promoted, err = s.PromoteTags(ctx, tx, []string{"two_domains", "promote_ok", "four_posts", "disabled_source", "old_post", "acquisition", "unknown", "promote_ok"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{"promote_ok"}; !slices.Equal(promoted, want) {
+		t.Errorf("promoted %v, want %v", promoted, want)
+	}
+
+	rows, err := db.Query(ctx, `SELECT key FROM tags WHERE status = 'proposed' ORDER BY key`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	left, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{"disabled_source", "four_posts", "ipo", "new_factory", "old_post", "two_domains"}; !slices.Equal(left, want) {
+		t.Errorf("still proposed %v, want %v", left, want)
 	}
 }

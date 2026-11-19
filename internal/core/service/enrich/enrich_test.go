@@ -221,6 +221,42 @@ func TestEnrichCategoryMiss(t *testing.T) {
 	}
 }
 
+func TestEnrichPromotes(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+
+	if _, err := f.db.Exec(ctx, `INSERT INTO tags (key, status) VALUES ('wind', 'proposed')`); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range 4 {
+		if _, err := f.db.Exec(ctx, `
+			WITH d AS (
+				INSERT INTO domains (base_url) VALUES ($1) ON CONFLICT (base_url) DO UPDATE SET base_url = EXCLUDED.base_url RETURNING id
+			), s AS (
+				INSERT INTO sources (domain_id, adapter, url, enabled) SELECT id, 'rss', $1 || '/feed', true FROM d RETURNING id, domain_id
+			)
+			INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content, tags)
+			SELECT id, $2, 'sv', domain_id, 't', 's', 'c', '{wind}' FROM s
+			`, fmt.Sprintf("https://seed%d.example", i%3), fmt.Sprintf("https://seed.example/%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	f.jev.scores["wind"] = 0.9
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	var status string
+
+	if err := f.db.QueryRow(ctx, `SELECT status FROM tags WHERE key = 'wind'`).Scan(&status); err != nil || status != domain.StatusActive {
+		t.Errorf("status %q, %v", status, err)
+	}
+}
+
 func TestEnrichProposedQualityTagNotAnEventAction(t *testing.T) {
 	f := setup(t)
 

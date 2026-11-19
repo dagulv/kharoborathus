@@ -213,6 +213,10 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 			return err
 		}
 
+		if _, err := s.Tags.PromoteTags(ctx, tx, post.Tags); err != nil {
+			return err
+		}
+
 		found, err = discovery.Discover(ctx, tx, post, a.Events)
 		inserted = post
 

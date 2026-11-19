@@ -280,3 +280,53 @@ func (s *TagStore) MergeTag(ctx context.Context, from, to string) error {
 
 	return nil
 }
+
+// Promotes in key order, so two posts promoting the same keys lock them in the same order.
+// The lock makes the count see the post a concurrent transaction committed first.
+func (s *TagStore) PromoteTags(ctx context.Context, tx pgx.Tx, keys []string) ([]string, error) {
+	var promoted []string
+
+	for _, key := range slices.Compact(slices.Sorted(slices.Values(keys))) {
+		var status string
+
+		err := tx.QueryRow(ctx, `SELECT status FROM tags WHERE key = $1`, key).Scan(&status)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("err get tag %s: %w", key, err)
+		}
+
+		if status != domain.StatusProposed {
+			continue
+		}
+
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('tag/' || $1))`, key); err != nil {
+			return nil, fmt.Errorf("err lock tag %s: %w", key, err)
+		}
+
+		var done string
+
+		err = tx.QueryRow(ctx, `
+			UPDATE tags SET status = 'active'
+			WHERE key = $1 AND status = 'proposed' AND EXISTS (
+				SELECT 1 FROM posts p JOIN sources s ON s.id = p.source_id
+				WHERE p.tags @> ARRAY[$1]::text[] AND s.enabled AND s.status = 'active' AND p.created_at > now() - interval '30 days'
+				HAVING count(*) >= 5 AND count(DISTINCT p.domain_id) >= 3
+			)
+			RETURNING key
+			`, key).Scan(&done)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("err promote tag %s: %w", key, err)
+		}
+
+		promoted = append(promoted, done)
+	}
+
+	return promoted, nil
+}
