@@ -21,6 +21,16 @@ type Entity struct {
 	CreatedAt time.Time           `json:"createdAt"`
 }
 
+// What the public API shows of an entity. Status, focus and enabled stay internal.
+type PublicEntity struct {
+	Key      string              `json:"key"`
+	Name     string              `json:"name"`
+	Kind     string              `json:"kind"`
+	Terms    map[string][]string `json:"terms"` // lang to terms
+	Tags     []string            `json:"tags"`
+	Strength int                 `json:"strength"` // Posts linked in the last 30 days, from any source
+}
+
 // An entity a post was linked to.
 type LinkedEntity struct {
 	Key     string   `json:"key"`

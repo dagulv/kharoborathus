@@ -15,27 +15,27 @@ import (
 )
 
 type fakeStore struct {
-	entities []domain.Entity
+	entities []domain.PublicEntity
 	filter   domain.EntityFilter
 	key      string
 	err      error
 }
 
-func (f *fakeStore) ListPublic(_ context.Context, filter domain.EntityFilter) ([]domain.Entity, error) {
+func (f *fakeStore) ListPublic(_ context.Context, filter domain.EntityFilter) ([]domain.PublicEntity, error) {
 	f.filter = filter
 
 	return f.entities, f.err
 }
 
-func (f *fakeStore) GetPublic(_ context.Context, key string) (domain.Entity, error) {
+func (f *fakeStore) GetPublic(_ context.Context, key string) (domain.PublicEntity, error) {
 	f.key = key
 
 	if f.err != nil {
-		return domain.Entity{}, f.err
+		return domain.PublicEntity{}, f.err
 	}
 
 	if len(f.entities) == 0 {
-		return domain.Entity{}, pgx.ErrNoRows
+		return domain.PublicEntity{}, pgx.ErrNoRows
 	}
 
 	return f.entities[0], nil
@@ -51,10 +51,10 @@ func serve(s Store, target string) *httptest.ResponseRecorder {
 	return w
 }
 
-var volvo = domain.Entity{Key: "volvo_cars", Name: "Volvo Cars", Kind: "company", Status: "active", Enabled: true, Terms: map[string][]string{"sv": {"Volvo Cars"}}, Tags: []string{"cars"}, Strength: 4}
+var volvo = domain.PublicEntity{Key: "volvo_cars", Name: "Volvo Cars", Kind: "company", Terms: map[string][]string{"sv": {"Volvo Cars"}}, Tags: []string{"cars"}, Strength: 4}
 
 func TestEntitiesRoutes(t *testing.T) {
-	s := &fakeStore{entities: []domain.Entity{volvo}}
+	s := &fakeStore{entities: []domain.PublicEntity{volvo}}
 
 	w := serve(s, "/entities?kind=company&tag=cars&category=industry&limit=10&offset=5")
 	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/json" {
@@ -67,9 +67,11 @@ func TestEntitiesRoutes(t *testing.T) {
 	}
 
 	terms, _ := list[0]["terms"].(map[string]any)
-	if list[0]["key"] != "volvo_cars" || list[0]["kind"] != "company" || list[0]["strength"] != float64(4) || list[0]["createdAt"] == nil || terms["sv"] == nil {
+	if list[0]["key"] != "volvo_cars" || list[0]["kind"] != "company" || list[0]["strength"] != float64(4) || terms["sv"] == nil {
 		t.Errorf("body %s", w.Body)
 	}
+
+	assertPublic(t, list[0])
 
 	f := s.filter
 	if f.Kind != "company" || f.Tag != "cars" || f.Category != "industry" || f.Limit != "10" || f.Offset != "5" {
@@ -81,6 +83,18 @@ func TestEntitiesRoutes(t *testing.T) {
 	var one map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &one); err != nil || w.Code != http.StatusOK || one["key"] != "volvo_cars" || one["name"] != "Volvo Cars" || s.key != "volvo_car_corporation" {
 		t.Errorf("status %d, body %s, key %q, %v", w.Code, w.Body, s.key, err)
+	}
+
+	assertPublic(t, one)
+}
+
+func assertPublic(t *testing.T, got map[string]any) {
+	t.Helper()
+
+	for _, k := range []string{"focus", "status", "enabled", "createdAt"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("%s is public: %v", k, got)
+		}
 	}
 }
 

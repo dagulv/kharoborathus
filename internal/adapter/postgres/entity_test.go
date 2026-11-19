@@ -457,7 +457,7 @@ func (f *entityFixture) linkKeys(p domain.Post, keys ...string) {
 	}
 }
 
-func publicKeys(es []domain.Entity) []string {
+func publicKeys(es []domain.PublicEntity) []string {
 	keys := make([]string, 0, len(es))
 
 	for _, e := range es {
@@ -542,11 +542,11 @@ func TestListPublicEntities(t *testing.T) {
 		t.Errorf("strength %d %d %d", b.Strength, a.Strength, es[3].Strength)
 	}
 
-	if !slices.Equal(b.Tags, []string{"batteries", "electric"}) || b.Name != "B" || b.Kind != "technology" || b.Status != domain.StatusActive || !b.Enabled || b.CreatedAt.IsZero() {
+	if !slices.Equal(b.Tags, []string{"batteries", "electric"}) || b.Name != "B" || b.Kind != "technology" {
 		t.Errorf("b_strong %+v", b)
 	}
 
-	if !slices.Equal(a.Terms["sv"], []string{"en", "ett"}) || !slices.Equal(a.Terms["en"], []string{"one"}) || !a.Focus {
+	if !slices.Equal(a.Terms["sv"], []string{"en", "ett"}) || !slices.Equal(a.Terms["en"], []string{"one"}) {
 		t.Errorf("a_weak terms %v", a.Terms)
 	}
 

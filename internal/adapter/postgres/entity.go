@@ -277,7 +277,7 @@ func isWordRune(r rune) bool {
 }
 
 const publicEntityQuery = `
-	SELECT e.key, e.name, e.kind, e.status, e.enabled, e.focus,
+	SELECT e.key, e.name, e.kind,
 		COALESCE((
 			SELECT jsonb_object_agg(g.lang, g.terms)
 			FROM (SELECT t.lang, array_agg(t.term ORDER BY t.term) AS terms FROM entity_terms t WHERE t.key = e.key GROUP BY t.lang) g
@@ -287,19 +287,18 @@ const publicEntityQuery = `
 			FROM entity_tags et JOIN tags t ON t.key = et.tag
 			WHERE et.entity = e.key AND t.enabled AND t.status = 'active'
 		), '{}'),
-		(SELECT count(*) FROM post_entities pe WHERE pe.entity = e.key AND pe.created_at > now() - interval '30 days') AS strength,
-		e.created_at
+		(SELECT count(*) FROM post_entities pe WHERE pe.entity = e.key AND pe.created_at > now() - interval '30 days') AS strength
 	FROM entities e
 	WHERE e.enabled AND e.status = 'active'`
 
-func scanPublicEntity(row pgx.CollectableRow) (e domain.Entity, err error) {
-	err = row.Scan(&e.Key, &e.Name, &e.Kind, &e.Status, &e.Enabled, &e.Focus, &e.Terms, &e.Tags, &e.Strength, &e.CreatedAt)
+func scanPublicEntity(row pgx.CollectableRow) (e domain.PublicEntity, err error) {
+	err = row.Scan(&e.Key, &e.Name, &e.Kind, &e.Terms, &e.Tags, &e.Strength)
 
 	return
 }
 
 // Tag and category filters count public tags only, like the feed's category filter.
-func (s *EntityStore) ListPublic(ctx context.Context, f domain.EntityFilter) ([]domain.Entity, error) {
+func (s *EntityStore) ListPublic(ctx context.Context, f domain.EntityFilter) ([]domain.PublicEntity, error) {
 	rows, err := s.db.Query(ctx, publicEntityQuery+`
 		AND ($1 = '' OR e.kind = $1)
 		AND ($2 = '' OR EXISTS (
@@ -329,17 +328,17 @@ func (s *EntityStore) ListPublic(ctx context.Context, f domain.EntityFilter) ([]
 }
 
 // An alias gives its target. A proposed or disabled entity is no rows.
-func (s *EntityStore) GetPublic(ctx context.Context, key string) (domain.Entity, error) {
+func (s *EntityStore) GetPublic(ctx context.Context, key string) (domain.PublicEntity, error) {
 	rows, err := s.db.Query(ctx, publicEntityQuery+`
 		AND e.key = COALESCE((SELECT a.key FROM entity_aliases a WHERE a.alias = $1), $1)
 		`, key)
 	if err != nil {
-		return domain.Entity{}, fmt.Errorf("err query public entity %s: %w", key, err)
+		return domain.PublicEntity{}, fmt.Errorf("err query public entity %s: %w", key, err)
 	}
 
 	e, err := pgx.CollectExactlyOneRow(rows, scanPublicEntity)
 	if err != nil {
-		return domain.Entity{}, fmt.Errorf("err get public entity %s: %w", key, err)
+		return domain.PublicEntity{}, fmt.Errorf("err get public entity %s: %w", key, err)
 	}
 
 	return e, nil

@@ -13,8 +13,8 @@ import (
 )
 
 type Store interface {
-	ListPublic(ctx context.Context, f domain.EntityFilter) ([]domain.Entity, error)
-	GetPublic(ctx context.Context, key string) (domain.Entity, error)
+	ListPublic(ctx context.Context, f domain.EntityFilter) ([]domain.PublicEntity, error)
+	GetPublic(ctx context.Context, key string) (domain.PublicEntity, error)
 }
 
 // The public API, so the web app can list entities to filter posts by.
@@ -43,7 +43,7 @@ func listEntities(s Store, l *slog.Logger) http.HandlerFunc {
 		}
 
 		if entities == nil {
-			entities = []domain.Entity{}
+			entities = []domain.PublicEntity{}
 		}
 
 		writeJSON(w, l, entities)

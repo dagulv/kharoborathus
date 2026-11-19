@@ -46,7 +46,7 @@ Entities are locked in key order, so two posts cannot deadlock.
 
 **Public API.**
 
-- `GET /entities` answers active, enabled entities with `key`, `name`, `kind`, `terms`, `tags`, `strength` and `createdAt`. It is ordered by strength, then key, and never null.
+- `GET /entities` answers active, enabled entities with `key`, `name`, `kind`, `terms`, `tags` and `strength`. Status, focus and enabled stay out. It is ordered by strength, then key, and never null.
 - Filters are `kind`, `tag`, `category`, `limit` and `offset`. The limits are the posts route's.
 - `tags` holds enabled, active tags only. The `tag` and `category` filters count those too.
 - `GET /entities/{key}` answers one entity. An alias key gives its target. An unknown, proposed or disabled entity gives 404.
