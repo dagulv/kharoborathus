@@ -1,0 +1,250 @@
+CREATE TABLE IF NOT EXISTS categories (
+  key TEXT PRIMARY KEY,
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One label per language. Jev questions and the UI use it.
+CREATE TABLE IF NOT EXISTS category_terms (
+  key TEXT NOT NULL REFERENCES categories (key) ON DELETE CASCADE,
+  lang TEXT NOT NULL,
+  term TEXT NOT NULL,
+  PRIMARY KEY (key, lang)
+);
+
+CREATE TABLE IF NOT EXISTS category_tags (
+  category TEXT NOT NULL REFERENCES categories (key) ON DELETE CASCADE,
+  tag TEXT NOT NULL REFERENCES tags (key) ON DELETE CASCADE,
+  PRIMARY KEY (category, tag)
+);
+
+CREATE INDEX IF NOT EXISTS category_tags_tag_idx ON category_tags (tag);
+
+INSERT INTO categories (key) VALUES
+  ('finance'),
+  ('markets'),
+  ('deals'),
+  ('governance'),
+  ('workforce'),
+  ('macro'),
+  ('policy'),
+  ('banking'),
+  ('energy'),
+  ('automotive'),
+  ('technology'),
+  ('industry'),
+  ('real_estate'),
+  ('healthcare'),
+  ('consumer'),
+  ('defense'),
+  ('transport'),
+  ('sustainability')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO category_terms (key, lang, term) VALUES
+  ('finance', 'sv', 'finans'),
+  ('finance', 'en', 'finance'),
+  ('markets', 'sv', 'aktiemarknad'),
+  ('markets', 'en', 'stock market'),
+  ('deals', 'sv', 'företagsaffär'),
+  ('deals', 'en', 'corporate transaction'),
+  ('governance', 'sv', 'bolagsstyrning'),
+  ('governance', 'en', 'corporate governance'),
+  ('workforce', 'sv', 'arbetsmarknad'),
+  ('workforce', 'en', 'labour market'),
+  ('macro', 'sv', 'makroekonomi'),
+  ('macro', 'en', 'macroeconomics'),
+  ('policy', 'sv', 'politik och regelverk'),
+  ('policy', 'en', 'policy and regulation'),
+  ('banking', 'sv', 'bank och försäkring'),
+  ('banking', 'en', 'banking and insurance'),
+  ('energy', 'sv', 'energi'),
+  ('energy', 'en', 'energy'),
+  ('automotive', 'sv', 'fordon'),
+  ('automotive', 'en', 'automotive'),
+  ('technology', 'sv', 'teknik'),
+  ('technology', 'en', 'technology'),
+  ('industry', 'sv', 'industri'),
+  ('industry', 'en', 'industry'),
+  ('real_estate', 'sv', 'fastighet'),
+  ('real_estate', 'en', 'real estate'),
+  ('healthcare', 'sv', 'hälsa och life science'),
+  ('healthcare', 'en', 'healthcare and life science'),
+  ('consumer', 'sv', 'konsument'),
+  ('consumer', 'en', 'consumer'),
+  ('defense', 'sv', 'försvar'),
+  ('defense', 'en', 'defense'),
+  ('transport', 'sv', 'transport och logistik'),
+  ('transport', 'en', 'transport and logistics'),
+  ('sustainability', 'sv', 'hållbarhet'),
+  ('sustainability', 'en', 'sustainability')
+ON CONFLICT DO NOTHING;
+
+-- A seed key that is an alias resolves to its target, so an alias never becomes a key.
+CREATE TEMP TABLE seed_tags (
+  key TEXT NOT NULL,
+  sv TEXT NOT NULL,
+  en TEXT NOT NULL,
+  categories TEXT[] NOT NULL
+) ON COMMIT DROP;
+
+INSERT INTO seed_tags (key, sv, en, categories) VALUES
+  ('annual_report', 'årsredovisning', 'annual report', ARRAY['finance']),
+  ('quarterly_report', 'kvartalsrapport', 'quarterly report', ARRAY['finance']),
+  ('earnings', 'resultat', 'earnings', ARRAY['finance']),
+  ('guidance', 'prognos', 'guidance', ARRAY['finance']),
+  ('profit_warning', 'vinstvarning', 'profit warning', ARRAY['finance', 'markets']),
+  ('dividend', 'utdelning', 'dividend', ARRAY['finance', 'markets']),
+  ('share_buyback', 'återköp av aktier', 'share buyback', ARRAY['finance', 'markets']),
+  ('new_share_issue', 'nyemission', 'share issue', ARRAY['finance', 'markets']),
+  ('rights_issue', 'företrädesemission', 'rights issue', ARRAY['finance', 'markets']),
+  ('bond_issue', 'obligationsemission', 'bond issue', ARRAY['finance', 'markets']),
+  ('refinancing', 'refinansiering', 'refinancing', ARRAY['finance']),
+  ('funding_round', 'finansieringsrunda', 'funding round', ARRAY['finance']),
+  ('venture_capital', 'riskkapital', 'venture capital', ARRAY['finance']),
+  ('private_equity', 'private equity', 'private equity', ARRAY['finance', 'deals']),
+  ('bankruptcy', 'konkurs', 'bankruptcy', ARRAY['finance']),
+  ('restructuring', 'rekonstruktion', 'restructuring', ARRAY['finance']),
+  ('credit_rating', 'kreditbetyg', 'credit rating', ARRAY['finance', 'banking']),
+  ('write_down', 'nedskrivning', 'write-down', ARRAY['finance']),
+  ('cost_cutting', 'besparing', 'cost cutting', ARRAY['finance', 'workforce']),
+  ('ipo', 'börsnotering', 'ipo', ARRAY['markets', 'finance']),
+  ('delisting', 'avnotering', 'delisting', ARRAY['markets']),
+  ('short_selling', 'blankning', 'short selling', ARRAY['markets']),
+  ('insider_trading', 'insynshandel', 'insider trading', ARRAY['markets', 'governance']),
+  ('stock_index', 'börsindex', 'stock index', ARRAY['markets']),
+  ('analyst_rating', 'analytikerrekommendation', 'analyst rating', ARRAY['markets']),
+  ('ownership_change', 'ägarförändring', 'ownership change', ARRAY['markets', 'deals']),
+  ('acquisition', 'förvärv', 'acquisition', ARRAY['deals']),
+  ('merger', 'fusion', 'merger', ARRAY['deals']),
+  ('divestment', 'avyttring', 'divestment', ARRAY['deals']),
+  ('spin_off', 'avknoppning', 'spin-off', ARRAY['deals', 'markets']),
+  ('public_takeover_bid', 'offentligt uppköpserbjudande', 'public takeover bid', ARRAY['deals', 'markets']),
+  ('joint_venture', 'samriskbolag', 'joint venture', ARRAY['deals']),
+  ('partnership', 'samarbete', 'partnership', ARRAY['deals']),
+  ('contract', 'avtal', 'contract', ARRAY['deals']),
+  ('order', 'order', 'order', ARRAY['deals', 'industry']),
+  ('ceo_change', 'vd-byte', 'ceo change', ARRAY['governance']),
+  ('board_change', 'styrelseförändring', 'board change', ARRAY['governance']),
+  ('annual_general_meeting', 'årsstämma', 'annual general meeting', ARRAY['governance']),
+  ('executive_compensation', 'ersättning till ledande befattningshavare', 'executive compensation', ARRAY['governance']),
+  ('nomination_committee', 'valberedning', 'nomination committee', ARRAY['governance']),
+  ('incentive_program', 'incitamentsprogram', 'incentive program', ARRAY['governance']),
+  ('layoffs', 'varsel', 'layoffs', ARRAY['workforce']),
+  ('hiring', 'rekrytering', 'hiring', ARRAY['workforce']),
+  ('strike', 'strejk', 'strike', ARRAY['workforce']),
+  ('collective_agreement', 'kollektivavtal', 'collective agreement', ARRAY['workforce']),
+  ('unemployment', 'arbetslöshet', 'unemployment', ARRAY['workforce', 'macro']),
+  ('labour_shortage', 'kompetensbrist', 'labour shortage', ARRAY['workforce']),
+  ('interest_rate', 'ränta', 'interest rate', ARRAY['macro', 'banking']),
+  ('inflation', 'inflation', 'inflation', ARRAY['macro']),
+  ('central_bank', 'centralbank', 'central bank', ARRAY['macro', 'banking']),
+  ('gdp', 'bnp', 'gdp', ARRAY['macro']),
+  ('recession', 'lågkonjunktur', 'recession', ARRAY['macro']),
+  ('exchange_rate', 'växelkurs', 'exchange rate', ARRAY['macro', 'markets']),
+  ('housing_market', 'bostadsmarknad', 'housing market', ARRAY['macro', 'real_estate']),
+  ('government_budget', 'statsbudget', 'government budget', ARRAY['macro', 'policy']),
+  ('foreign_trade', 'utrikeshandel', 'foreign trade', ARRAY['macro', 'policy']),
+  ('household_consumption', 'hushållskonsumtion', 'household consumption', ARRAY['macro', 'consumer']),
+  ('regulation', 'reglering', 'regulation', ARRAY['policy']),
+  ('tax', 'skatt', 'tax', ARRAY['policy']),
+  ('sanctions', 'sanktion', 'sanction', ARRAY['policy']),
+  ('tariffs', 'tull', 'tariff', ARRAY['policy', 'macro']),
+  ('state_aid', 'statsstöd', 'state aid', ARRAY['policy']),
+  ('competition_law', 'konkurrensrätt', 'competition law', ARRAY['policy', 'deals']),
+  ('lawsuit', 'stämning', 'lawsuit', ARRAY['policy']),
+  ('fine', 'böter', 'fine', ARRAY['policy']),
+  ('public_procurement', 'offentlig upphandling', 'public procurement', ARRAY['policy', 'deals']),
+  ('banking', 'bank', 'banking', ARRAY['banking']),
+  ('insurance', 'försäkring', 'insurance', ARRAY['banking']),
+  ('fintech', 'fintech', 'fintech', ARRAY['banking', 'technology']),
+  ('lending', 'utlåning', 'lending', ARRAY['banking']),
+  ('payments', 'betalning', 'payments', ARRAY['banking', 'technology']),
+  ('money_laundering', 'penningtvätt', 'money laundering', ARRAY['banking', 'policy']),
+  ('cryptocurrency', 'kryptovaluta', 'cryptocurrency', ARRAY['banking', 'technology']),
+  ('asset_management', 'kapitalförvaltning', 'asset management', ARRAY['banking', 'markets']),
+  ('nuclear_power', 'kärnkraft', 'nuclear power', ARRAY['energy']),
+  ('wind_power', 'vindkraft', 'wind power', ARRAY['energy', 'sustainability']),
+  ('solar_power', 'solenergi', 'solar power', ARRAY['energy', 'sustainability']),
+  ('hydropower', 'vattenkraft', 'hydropower', ARRAY['energy']),
+  ('electricity_price', 'elpris', 'electricity price', ARRAY['energy', 'macro']),
+  ('power_grid', 'elnät', 'power grid', ARRAY['energy']),
+  ('oil', 'olja', 'oil', ARRAY['energy']),
+  ('natural_gas', 'naturgas', 'natural gas', ARRAY['energy']),
+  ('hydrogen', 'vätgas', 'hydrogen', ARRAY['energy', 'industry', 'sustainability']),
+  ('energy_storage', 'energilagring', 'energy storage', ARRAY['energy']),
+  ('batteries', 'batteri', 'battery', ARRAY['energy', 'automotive', 'industry']),
+  ('cars', 'bil', 'car', ARRAY['automotive']),
+  ('electric_vehicles', 'elbil', 'electric vehicle', ARRAY['automotive', 'sustainability']),
+  ('trucks', 'lastbil', 'truck', ARRAY['automotive', 'transport']),
+  ('autonomous_driving', 'självkörande fordon', 'autonomous driving', ARRAY['automotive', 'technology']),
+  ('charging_infrastructure', 'laddinfrastruktur', 'charging infrastructure', ARRAY['automotive', 'energy']),
+  ('car_sales', 'bilförsäljning', 'car sales', ARRAY['automotive', 'consumer']),
+  ('artificial_intelligence', 'artificiell intelligens', 'artificial intelligence', ARRAY['technology']),
+  ('semiconductors', 'halvledare', 'semiconductor', ARRAY['technology', 'industry']),
+  ('software', 'mjukvara', 'software', ARRAY['technology']),
+  ('cybersecurity', 'cybersäkerhet', 'cybersecurity', ARRAY['technology', 'defense']),
+  ('cloud_computing', 'molntjänst', 'cloud computing', ARRAY['technology']),
+  ('telecom', 'telekom', 'telecom', ARRAY['technology']),
+  ('data_center', 'datacenter', 'data center', ARRAY['technology', 'energy', 'real_estate']),
+  ('quantum_computing', 'kvantdator', 'quantum computing', ARRAY['technology']),
+  ('video_games', 'dataspel', 'video games', ARRAY['technology', 'consumer']),
+  ('product_launch', 'produktlansering', 'product launch', ARRAY['technology', 'consumer']),
+  ('manufacturing', 'tillverkning', 'manufacturing', ARRAY['industry']),
+  ('new_factory', 'ny fabrik', 'new factory', ARRAY['industry']),
+  ('steel', 'stål', 'steel', ARRAY['industry']),
+  ('mining', 'gruvdrift', 'mining', ARRAY['industry']),
+  ('forest_industry', 'skogsindustri', 'forest industry', ARRAY['industry', 'sustainability']),
+  ('chemical_industry', 'kemiindustri', 'chemical industry', ARRAY['industry']),
+  ('construction', 'byggbransch', 'construction', ARRAY['industry', 'real_estate']),
+  ('supply_chain', 'leveranskedja', 'supply chain', ARRAY['industry', 'transport']),
+  ('raw_materials', 'råvara', 'raw material', ARRAY['industry', 'markets']),
+  ('infrastructure', 'infrastruktur', 'infrastructure', ARRAY['industry', 'transport']),
+  ('commercial_real_estate', 'kommersiell fastighet', 'commercial real estate', ARRAY['real_estate']),
+  ('residential_property', 'bostad', 'residential property', ARRAY['real_estate']),
+  ('property_transaction', 'fastighetsaffär', 'property transaction', ARRAY['real_estate', 'deals']),
+  ('rent', 'hyra', 'rent', ARRAY['real_estate']),
+  ('pharmaceuticals', 'läkemedel', 'pharmaceutical', ARRAY['healthcare']),
+  ('medtech', 'medicinteknik', 'medical technology', ARRAY['healthcare', 'technology']),
+  ('biotech', 'bioteknik', 'biotechnology', ARRAY['healthcare']),
+  ('clinical_trial', 'klinisk studie', 'clinical trial', ARRAY['healthcare']),
+  ('drug_approval', 'läkemedelsgodkännande', 'drug approval', ARRAY['healthcare', 'policy']),
+  ('healthcare_services', 'vård', 'healthcare services', ARRAY['healthcare']),
+  ('retail', 'detaljhandel', 'retail', ARRAY['consumer']),
+  ('e_commerce', 'e-handel', 'e-commerce', ARRAY['consumer', 'technology']),
+  ('consumer_goods', 'konsumentvara', 'consumer goods', ARRAY['consumer']),
+  ('food_industry', 'livsmedelsindustri', 'food industry', ARRAY['consumer', 'industry']),
+  ('tourism', 'turism', 'tourism', ARRAY['consumer', 'transport']),
+  ('defense_industry', 'försvarsindustri', 'defense industry', ARRAY['defense', 'industry']),
+  ('defense_spending', 'försvarsutgift', 'defense spending', ARRAY['defense', 'policy']),
+  ('shipping', 'sjöfart', 'shipping', ARRAY['transport']),
+  ('aviation', 'flyg', 'aviation', ARRAY['transport']),
+  ('rail', 'järnväg', 'rail', ARRAY['transport']),
+  ('logistics', 'logistik', 'logistics', ARRAY['transport']),
+  ('climate', 'klimat', 'climate', ARRAY['sustainability']),
+  ('emissions', 'utsläpp', 'emissions', ARRAY['sustainability', 'policy']),
+  ('carbon_capture', 'koldioxidinfångning', 'carbon capture', ARRAY['sustainability', 'industry']),
+  ('esg', 'esg', 'esg', ARRAY['sustainability', 'finance']),
+  ('circular_economy', 'cirkulär ekonomi', 'circular economy', ARRAY['sustainability']);
+
+CREATE TEMP TABLE seed_resolved ON COMMIT DROP AS
+SELECT
+  COALESCE((SELECT a.key FROM tag_aliases a WHERE a.alias = s.key), s.key) AS key,
+  s.sv,
+  s.en,
+  s.categories
+FROM seed_tags s;
+
+INSERT INTO tags (key, status, type)
+SELECT DISTINCT key, 'active', 'quality' FROM seed_resolved
+ON CONFLICT (key) DO UPDATE SET status = 'active';
+
+INSERT INTO tag_terms (key, lang, term)
+SELECT key, 'sv', sv FROM seed_resolved
+UNION ALL
+SELECT key, 'en', en FROM seed_resolved
+ON CONFLICT DO NOTHING;
+
+INSERT INTO category_tags (category, tag)
+SELECT DISTINCT c, key FROM seed_resolved, unnest(categories) AS c
+ON CONFLICT DO NOTHING;
