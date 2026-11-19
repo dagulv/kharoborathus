@@ -2,6 +2,7 @@ package migrations_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"testing"
 
@@ -128,5 +129,110 @@ func TestSeedExistingTags(t *testing.T) {
 
 	if n := count(t, conn, `SELECT count(*) FROM tag_terms WHERE key = 'acquisition_deal' AND lang = 'sv' AND term = 'förvärv'`); n != 1 {
 		t.Errorf("acquisition_deal sv term missing")
+	}
+}
+
+func TestEntitiesBackfill(t *testing.T) {
+	cases := map[string]struct {
+		volvoPosts int
+		volvo      string
+	}{
+		"two posts below the rule": {2, "proposed"},
+		"three trusted domains":    {3, "active"},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			connString := dbtest.Empty(t)
+			l := slog.New(slog.DiscardHandler)
+
+			if err := migrations.MigrateTo(ctx, connString, l, 3); err != nil {
+				t.Fatalf("err migrate to 3: %v", err)
+			}
+
+			conn, err := pgx.Connect(ctx, connString)
+			if err != nil {
+				t.Fatalf("err connect: %v", err)
+			}
+			defer conn.Close(ctx)
+
+			posts := make([]string, 3)
+			for i := range posts {
+				base := fmt.Sprintf("https://d%d.example", i)
+
+				var domainID, sourceID string
+				if err := conn.QueryRow(ctx, `INSERT INTO domains (base_url) VALUES ($1) RETURNING id`, base).Scan(&domainID); err != nil {
+					t.Fatalf("err insert domain: %v", err)
+				}
+
+				if err := conn.QueryRow(ctx, `INSERT INTO sources (domain_id, adapter, url, enabled) VALUES ($1, 'rss', $2, true) RETURNING id`, domainID, base+"/feed").Scan(&sourceID); err != nil {
+					t.Fatalf("err insert source: %v", err)
+				}
+
+				if err := conn.QueryRow(ctx, `
+					INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content)
+					VALUES ($1, $2, 'sv', $3, 't', 's', 'c') RETURNING id
+					`, sourceID, base+"/a", domainID).Scan(&posts[i]); err != nil {
+					t.Fatalf("err insert post: %v", err)
+				}
+			}
+
+			var volvo, ericsson string
+			for _, q := range []struct {
+				id     *string
+				entity string
+				query  string
+			}{
+				{&volvo, "volvo_cars", "Volvo Cars köper Northvolt"},
+				{&ericsson, "ericsson", "Ericsson säljer enhet"},
+			} {
+				if err := conn.QueryRow(ctx, `INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ($1, 'acquisition', $2) RETURNING id`, q.entity, q.query).Scan(q.id); err != nil {
+					t.Fatalf("err insert query: %v", err)
+				}
+			}
+
+			for i, post := range posts[:c.volvoPosts] {
+				if _, err := conn.Exec(ctx, `INSERT INTO discovery_search_query_posts (query_id, post_id) VALUES ($1, $2)`, volvo, post); err != nil {
+					t.Fatalf("err link volvo post %d: %v", i, err)
+				}
+			}
+
+			if _, err := conn.Exec(ctx, `INSERT INTO discovery_search_query_posts (query_id, post_id) VALUES ($1, $2)`, ericsson, posts[0]); err != nil {
+				t.Fatalf("err link ericsson post: %v", err)
+			}
+
+			if err := migrations.MigrateTo(ctx, connString, l, 4); err != nil {
+				t.Fatalf("err migrate to 4: %v", err)
+			}
+
+			if n := count(t, conn, `SELECT count(*) FROM entities`); n != 2 {
+				t.Errorf("entities = %d, want 2", n)
+			}
+
+			if n := count(t, conn, `SELECT count(*) FROM entities WHERE key = 'volvo_cars' AND name = 'Volvo Cars' AND kind = 'company' AND status = $1 AND enabled AND NOT focus`, c.volvo); n != 1 {
+				t.Errorf("volvo_cars not company named Volvo Cars with status %s", c.volvo)
+			}
+
+			if n := count(t, conn, `SELECT count(*) FROM entities WHERE key = 'ericsson' AND name = 'Ericsson' AND status = 'proposed'`); n != 1 {
+				t.Errorf("ericsson not proposed")
+			}
+
+			if n := count(t, conn, `SELECT count(*) FROM post_entities WHERE entity = 'volvo_cars'`); n != c.volvoPosts {
+				t.Errorf("volvo_cars post_entities = %d, want %d", n, c.volvoPosts)
+			}
+
+			if n := count(t, conn, `SELECT count(*) FROM post_entities pe JOIN posts p ON p.id = pe.post_id WHERE pe.created_at = p.created_at`); n != c.volvoPosts+1 {
+				t.Errorf("post_entities with post created_at = %d, want %d", n, c.volvoPosts+1)
+			}
+
+			if n := count(t, conn, `SELECT count(*) FROM entity_terms WHERE key = 'volvo_cars' AND lang = 'sv' AND term = 'Volvo Cars'`); n != 1 {
+				t.Errorf("volvo_cars sv term missing")
+			}
+
+			if n := count(t, conn, `SELECT count(*) FROM entity_terms`); n != 2 {
+				t.Errorf("entity_terms = %d, want 2", n)
+			}
+		})
 	}
 }
