@@ -28,8 +28,9 @@ func NewTagStore(db *database.Database) TagStore {
 	}
 }
 
+// Active keys come first so a cap on the prompt never cuts them for proposals.
 func (s *TagStore) TagKeys(ctx context.Context) ([]string, error) {
-	rows, err := s.db.Query(ctx, `SELECT key FROM tags ORDER BY key`)
+	rows, err := s.db.Query(ctx, `SELECT key FROM tags ORDER BY status <> 'active', key`)
 	if err != nil {
 		return nil, fmt.Errorf("err query tag keys: %w", err)
 	}

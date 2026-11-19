@@ -36,7 +36,7 @@ func TestTagKeys(t *testing.T) {
 	_, s := tagDB(t)
 
 	keys, err := s.TagKeys(context.Background())
-	if want := []string{"acquisition", "contract", "ipo", "layoffs", "new_factory"}; err != nil || !slices.Equal(keys, want) {
+	if want := []string{"acquisition", "contract", "layoffs", "ipo", "new_factory"}; err != nil || !slices.Equal(keys, want) {
 		t.Errorf("got %v, %v", keys, err)
 	}
 }
