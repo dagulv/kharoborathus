@@ -81,6 +81,7 @@
 	async function merge(e: SubmitEvent) {
 		e.preventDefault();
 		if (!target) return;
+		if (!confirm(`Merge ${entity.key} into ${target.key}? This cannot be undone.`)) return;
 		merging = true;
 		mergeError = '';
 		try {
