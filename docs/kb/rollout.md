@@ -47,6 +47,7 @@ Migration steps:
 - **Phase 1:** every source is manual, so every post is trusted. Trust checks arrive in phase 4 together with `origin` and source `status`, which existing sources get from column defaults.
 - **Every phase:** before migrations existed, schema changes went straight into `schema.sql`, which is now the `001_init.sql` baseline. New changes go in a new numbered file in `internal/migrations` and run with `kharoborathus migrate`.
 - **Phases 2, 4, 5 and 6:** `001_init.sql` inserts the phase's switch row with `ON CONFLICT DO NOTHING`, so a rerun never resets your choice.
+- **Entities (migration 003):** deploy the api right after the migration, outside DeepSeek's off-peak enrich window. A rollback to a pre-entities api needs the steps in [entities](entities.md#deploy-and-rollback).
 
 Monitoring:
 
