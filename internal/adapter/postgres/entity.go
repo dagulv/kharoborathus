@@ -144,17 +144,8 @@ func (s *EntityStore) LinkEntities(ctx context.Context, tx pgx.Tx, post domain.P
 			continue
 		}
 
-		if _, err := tx.Exec(ctx, `
-			UPDATE entities SET status = 'active'
-			WHERE key = $1 AND status = 'proposed' AND EXISTS (
-				SELECT 1 FROM post_entities pe
-				JOIN posts p ON p.id = pe.post_id
-				JOIN sources s ON s.id = p.source_id
-				WHERE pe.entity = $1 AND s.enabled AND s.status = 'active' AND pe.created_at > now() - interval '30 days'
-				HAVING count(*) >= 3 AND count(DISTINCT p.domain_id) >= 2
-			)
-			`, key); err != nil {
-			return nil, fmt.Errorf("err promote entity %s: %w", key, err)
+		if err := promoteEntity(ctx, tx, key); err != nil {
+			return nil, err
 		}
 	}
 
@@ -176,6 +167,23 @@ func (s *EntityStore) LinkEntities(ctx context.Context, tx pgx.Tx, post domain.P
 	}
 
 	return out, nil
+}
+
+func promoteEntity(ctx context.Context, tx pgx.Tx, key string) error {
+	if _, err := tx.Exec(ctx, `
+		UPDATE entities SET status = 'active'
+		WHERE key = $1 AND status = 'proposed' AND EXISTS (
+			SELECT 1 FROM post_entities pe
+			JOIN posts p ON p.id = pe.post_id
+			JOIN sources s ON s.id = p.source_id
+			WHERE pe.entity = $1 AND s.enabled AND s.status = 'active' AND pe.created_at > now() - interval '30 days'
+			HAVING count(*) >= 3 AND count(DISTINCT p.domain_id) >= 2
+		)
+		`, key); err != nil {
+		return fmt.Errorf("err promote entity %s: %w", key, err)
+	}
+
+	return nil
 }
 
 // Reports whether the post was linked, and the entity's status before promotion.
@@ -668,6 +676,10 @@ func (s *EntityStore) MergeEntities(ctx context.Context, from, to string) error 
 
 	if _, err := tx.Exec(ctx, `DELETE FROM entities WHERE key = $1`, from); err != nil {
 		return fmt.Errorf("err delete entity: %w", err)
+	}
+
+	if err := promoteEntity(ctx, tx, to); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
