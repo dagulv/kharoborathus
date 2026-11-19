@@ -188,3 +188,69 @@ func TestSaveProposalsConcurrent(t *testing.T) {
 		t.Errorf("b: keys %v, %v", r.keys, r.err)
 	}
 }
+
+func TestSaveProposalCategories(t *testing.T) {
+	db, s := tagDB(t)
+	ctx := context.Background()
+
+	for _, q := range []string{
+		`INSERT INTO categories (key) VALUES ('energy'), ('automotive')`,
+		`INSERT INTO categories (key, enabled) VALUES ('macro', false)`,
+	} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	save := func(p Proposal) {
+		if err := pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error {
+			_, err := s.SaveProposals(ctx, tx, "sv", []Proposal{p})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cats := func(tag string) []string {
+		rows, err := db.Query(ctx, `SELECT category FROM category_tags WHERE tag = $1 ORDER BY category`, tag)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return got
+	}
+
+	save(Proposal{Key: "solid_state_battery", Categories: []string{"energy", "automotive", "macro", "nope"}})
+
+	if got := cats("solid_state_battery"); !slices.Equal(got, []string{"automotive", "energy"}) {
+		t.Errorf("created: %v", got)
+	}
+
+	save(Proposal{Key: "solid_state_battery", Categories: []string{"macro"}})
+
+	if got := cats("solid_state_battery"); !slices.Equal(got, []string{"automotive", "energy"}) {
+		t.Errorf("second save: %v", got)
+	}
+
+	if _, err := db.Exec(ctx, `DELETE FROM category_tags WHERE tag = 'solid_state_battery'`); err != nil {
+		t.Fatal(err)
+	}
+
+	save(Proposal{Key: "solid_state_battery", Categories: []string{"energy"}})
+
+	if got := cats("solid_state_battery"); len(got) != 0 {
+		t.Errorf("cleared: %v", got)
+	}
+
+	save(Proposal{Key: "new_factory", Categories: []string{"energy"}})
+	save(Proposal{Key: "takeover", Categories: []string{"energy"}})
+
+	if got := append(cats("new_factory"), cats("acquisition")...); len(got) != 0 {
+		t.Errorf("existing tags: %v", got)
+	}
+}
