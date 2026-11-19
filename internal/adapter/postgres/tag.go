@@ -148,7 +148,8 @@ func (s *TagStore) TagOverview(ctx context.Context) (o domain.TagOverview, err e
 		SELECT
 			t.key, t.enabled, t.status, t.type, t.created_at,
 			coalesce(array_agg(tt.lang || ': ' || tt.term ORDER BY tt.lang, tt.term) FILTER (WHERE tt.term IS NOT NULL), '{}'),
-			(SELECT count(*) FROM posts p WHERE p.tags @> ARRAY[t.key])
+			(SELECT count(*) FROM posts p WHERE p.tags @> ARRAY[t.key]),
+			COALESCE((SELECT array_agg(ct.category ORDER BY ct.category) FROM category_tags ct WHERE ct.tag = t.key), '{}')
 		FROM tags t
 		LEFT JOIN tag_terms tt ON tt.key = t.key
 		GROUP BY t.key
@@ -159,7 +160,7 @@ func (s *TagStore) TagOverview(ctx context.Context) (o domain.TagOverview, err e
 	}
 
 	o.Tags, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (t domain.TagSummary, err error) {
-		err = row.Scan(&t.Key, &t.Enabled, &t.Status, &t.Type, &t.CreatedAt, &t.Terms, &t.PostCount)
+		err = row.Scan(&t.Key, &t.Enabled, &t.Status, &t.Type, &t.CreatedAt, &t.Terms, &t.PostCount, &t.Categories)
 		return
 	})
 	if err != nil {

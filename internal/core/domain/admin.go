@@ -37,6 +37,7 @@ type NewSource struct {
 type AdminPostFilter struct {
 	SourceID string
 	Tag      string
+	Category string
 	Search   string
 	Status   string // published, or a raw post status
 	Page     int
@@ -73,6 +74,7 @@ type AdminPostPage struct {
 
 var ErrMergeSelf = errors.New("merge tag into itself")
 
+// Tag.Categories lists all of the tag's categories here, enabled or not.
 type TagSummary struct {
 	Tag
 
