@@ -28,6 +28,7 @@ type Service struct {
 	Posts      *postgres.PostStore
 	Tags       *postgres.TagStore
 	Categories *postgres.CategoryStore
+	Entities   *postgres.EntityStore
 	LLM        port.LLM
 	// Nil when Jev is not configured. Posts then get proposed keys only.
 	Classifier port.Classifier
@@ -41,9 +42,10 @@ type Service struct {
 }
 
 type answer struct {
-	Summary string              `json:"summary"`
-	Tags    []postgres.Proposal `json:"tags"`
-	Events  []discovery.Keyword `json:"events"`
+	Summary  string                     `json:"summary"`
+	Tags     []postgres.Proposal        `json:"tags"`
+	Events   []discovery.Keyword        `json:"events"`
+	Entities []postgres.ExtractedEntity `json:"entities"`
 }
 
 // A closed schedule or shutdown is not an attempt. Any other error fails the raw post and counts a retry.
@@ -147,7 +149,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		categoryKeys[i] = c.Key
 	}
 
-	prompt, err := userPrompt(p.Lang, p.Title, p.Authors, set.keys, quality, categoryKeys, p.Content)
+	prompt, err := userPrompt(p.Lang, p.Title, p.Authors, set.keys, quality, categoryKeys, p.Content, set.entityKeys)
 	if err != nil {
 		return domain.Post{}, discovery.Found{}, err
 	}
@@ -234,6 +236,13 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 			return err
 		}
 
+		linked, err := s.Entities.LinkEntities(ctx, tx, post, trusted, p.Content, a.Entities)
+		if err != nil {
+			return err
+		}
+
+		_ = linked
+
 		found, err = discovery.Discover(ctx, tx, post, a.Events)
 		inserted = post
 
@@ -266,7 +275,12 @@ func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
 		return tagSet{}, err
 	}
 
-	return tagSet{keys: keys, classifiable: classifiable, categories: categories}, nil
+	entityKeys, err := s.Entities.PromptKeys(ctx)
+	if err != nil {
+		return tagSet{}, err
+	}
+
+	return tagSet{keys: keys, classifiable: classifiable, categories: categories, entityKeys: entityKeys}, nil
 }
 
 // A key that normalizes to underscores only names nothing.
