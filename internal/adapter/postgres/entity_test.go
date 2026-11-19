@@ -977,3 +977,28 @@ func TestMergeEntities(t *testing.T) {
 		t.Error("failed merge deleted the source")
 	}
 }
+
+func TestPatchEntityFocusDisabled(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+	yes, no := true, false
+
+	f.exec(`INSERT INTO entities (key, name, kind, enabled) VALUES ('off', 'Off', 'company', false), ('on', 'On', 'company', true)`)
+	f.linkKeys(f.post(0, "en"), "off")
+	f.linkKeys(f.post(1, "en"), "on")
+
+	cases := map[string]domain.EntityPatch{
+		"off": {Focus: &yes},
+		"on":  {Enabled: &no, Focus: &yes},
+	}
+
+	for key, patch := range cases {
+		if id, err := f.s.PatchEntity(ctx, key, patch); err != nil || id != "" || f.count(`SELECT count(*) FROM entities WHERE key = $1 AND focus AND NOT enabled`, key) != 1 {
+			t.Errorf("%s: %q, %v", key, id, err)
+		}
+	}
+
+	if n := f.count(`SELECT count(*) FROM discovery_search_queries`); n != 0 {
+		t.Errorf("queued %d for disabled entities", n)
+	}
+}
