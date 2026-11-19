@@ -254,6 +254,10 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		l.Info("promoted tags", "keys", promoted)
 	}
 
+	for _, e := range found.Unmatched {
+		l.Info("dropped event without a linked entity", "entity", e.Entity, "action", e.Action)
+	}
+
 	return inserted, found, nil
 }
 
