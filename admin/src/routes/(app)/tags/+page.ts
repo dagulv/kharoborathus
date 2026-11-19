@@ -1,9 +1,14 @@
 import { api, guard } from '$lib/api.js';
-import type { TagOverview } from '$lib/types.js';
+import type { Category, TagOverview } from '$lib/types.js';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ fetch, depends }) => {
+export const load: PageLoad = async ({ fetch, depends, url }) => {
 	depends('app:tags');
 
-	return { overview: await guard(api<TagOverview>('/admin/tags', { fetch })) };
+	const [overview, categories] = await Promise.all([
+		guard(api<TagOverview>('/admin/tags', { fetch })),
+		guard(api<Category[]>('/admin/categories', { fetch }))
+	]);
+
+	return { overview, categories, category: url.searchParams.get('category') || undefined };
 };

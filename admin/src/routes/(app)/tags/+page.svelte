@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
+	import XIcon from '@lucide/svelte/icons/x';
 	import { toast } from 'svelte-sonner';
 	import { api, actionError } from '$lib/api.js';
+	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
@@ -11,7 +13,13 @@
 
 	let { data }: PageProps = $props();
 
-	const tags = $derived(data.overview.tags);
+	const categories = $derived(data.categories);
+	const allTags = $derived(data.overview.tags);
+	const tags = $derived.by(() => {
+		const { category } = data;
+		if (!category) return allTags;
+		return allTags.filter((tag) => tag.categories.includes(category));
+	});
 	const proposals = $derived(data.overview.proposals);
 	const aliases = $derived(data.overview.aliases);
 
@@ -40,6 +48,18 @@
 		}
 		await invalidate('app:tags');
 	}
+
+	async function setCategories(key: string, keys: string[]) {
+		try {
+			await api(`/admin/tags/${encodeURIComponent(key)}/categories`, {
+				method: 'PUT',
+				body: { categories: keys }
+			});
+		} catch (err) {
+			toast.error(actionError(err, 'Update failed'));
+		}
+		await invalidate('app:tags');
+	}
 </script>
 
 <svelte:head><title>Tags · Admin</title></svelte:head>
@@ -48,13 +68,22 @@
 	Tags <span class="text-muted-foreground">({tags.length})</span>
 </h1>
 
+{#if data.category}
+	<div class="mb-3 flex flex-wrap gap-2">
+		<Badge variant="secondary" href="/tags">
+			category: {data.category}
+			<XIcon />
+		</Badge>
+	</div>
+{/if}
+
 <form class="mb-6 flex flex-wrap items-end gap-2 text-sm" onsubmit={merge}>
 	<div>
 		<span class="mb-1 block text-xs text-muted-foreground">Merge</span>
 		<Select.Root type="single" bind:value={from}>
 			<Select.Trigger size="sm" class="w-44">{from || 'tag'}</Select.Trigger>
 			<Select.Content>
-				{#each tags as tag (tag.key)}
+				{#each allTags as tag (tag.key)}
 					<Select.Item value={tag.key} label={tag.key} />
 				{/each}
 			</Select.Content>
@@ -65,7 +94,7 @@
 		<Select.Root type="single" bind:value={to}>
 			<Select.Trigger size="sm" class="w-44">{to || 'tag'}</Select.Trigger>
 			<Select.Content>
-				{#each tags as tag (tag.key)}
+				{#each allTags as tag (tag.key)}
 					<Select.Item value={tag.key} label={tag.key} />
 				{/each}
 			</Select.Content>
@@ -81,6 +110,7 @@
 			<Table.Row>
 				<Table.Head>Key</Table.Head>
 				<Table.Head>Terms</Table.Head>
+				<Table.Head>Categories</Table.Head>
 				<Table.Head>Status</Table.Head>
 				<Table.Head>Type</Table.Head>
 				<Table.Head class="text-right">Posts</Table.Head>
@@ -95,6 +125,22 @@
 					</Table.Cell>
 					<Table.Cell class="text-xs whitespace-normal text-muted-foreground">
 						{tag.terms.join(', ')}
+					</Table.Cell>
+					<Table.Cell>
+						<Select.Root
+							type="multiple"
+							value={tag.categories}
+							onValueChange={(value) => setCategories(tag.key, value)}
+						>
+							<Select.Trigger size="sm" class="w-48" aria-label="Categories of {tag.key}">
+								<span class="truncate">{tag.categories.join(', ') || 'none'}</span>
+							</Select.Trigger>
+							<Select.Content>
+								{#each categories as category (category.key)}
+									<Select.Item value={category.key} label={category.key} />
+								{/each}
+							</Select.Content>
+						</Select.Root>
 					</Table.Cell>
 					<Table.Cell>{tag.status}</Table.Cell>
 					<Table.Cell>{tag.type}</Table.Cell>
