@@ -81,15 +81,15 @@
 	async function merge(e: SubmitEvent) {
 		e.preventDefault();
 		if (!target) return;
-		if (!confirm(`Merge ${entity.key} into ${target.key}? This cannot be undone.`)) return;
+		const to = target.key;
+		if (!confirm(`Merge ${entity.key} into ${to}? This cannot be undone.`)) return;
 		merging = true;
 		mergeError = '';
 		try {
 			await api('/admin/entities/merge', {
 				method: 'POST',
-				body: { from: entity.key, to: target.key }
+				body: { from: entity.key, to }
 			});
-			const to = target.key;
 			target = undefined;
 			targetSearch = '';
 			candidates = [];
@@ -221,7 +221,8 @@
 					<li>
 						<button
 							type="button"
-							class="block w-full px-3 py-1.5 text-left hover:bg-muted/50"
+							class="block w-full px-3 py-1.5 text-left hover:bg-muted/50 disabled:opacity-50"
+							disabled={merging}
 							onclick={() => (target = c)}
 						>
 							{c.name} <span class="text-xs text-muted-foreground">{c.key}</span>
