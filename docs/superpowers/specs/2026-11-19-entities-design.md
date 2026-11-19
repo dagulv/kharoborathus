@@ -156,7 +156,7 @@ Events keep their shape. `entity` is still written as in the article, so groundi
 
 In the enrich transaction, before `Discover`, for each extracted entity in order:
 
-1. Drop it unless `term` appears in the article, compared in lowercase. This is the same grounding events use.
+1. Drop it unless `term` appears in the article, compared in lowercase. This is the same grounding events use. A term of 3 runes or fewer must match a whole word, so `AI` does not ground in `fair`.
 2. Normalize `key` with `TagKey`. Drop an unknown `kind`.
 3. Resolve to an existing entity, first match wins:
    - `key` is an entity key,
