@@ -51,7 +51,13 @@ func jevTags(ctx context.Context, c port.Classifier, l *slog.Logger, lang, title
 		}
 
 		tags = slices.DeleteFunc(slices.Clone(tags), func(tag domain.Tag) bool {
-			return len(tag.Categories) > 0 && !slices.ContainsFunc(tag.Categories, func(key string) bool { return matched[key] })
+			// A category disabled between the two cached queries is not asked about, and must not hide its tags.
+			inScope := slices.ContainsFunc(tag.Categories, func(key string) bool {
+				_, ok := matched[key]
+				return ok
+			})
+
+			return inScope && !slices.ContainsFunc(tag.Categories, func(key string) bool { return matched[key] })
 		})
 	}
 

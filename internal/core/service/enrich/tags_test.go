@@ -222,3 +222,13 @@ func TestExcerpt(t *testing.T) {
 		t.Errorf("runes %d", len([]rune(got)))
 	}
 }
+
+func TestJevTagsStaleCategory(t *testing.T) {
+	c := &fakeClassifier{scores: map[string]float64{"energy": 0.9, "ghost": 0.9}}
+	tags := []domain.Tag{{Key: "ghost", Categories: []string{"removed"}}}
+
+	got, err := jevTags(context.Background(), c, slog.New(slog.DiscardHandler), "sv", "t", "a", twoStageCategories[:1], tags)
+	if err != nil || !slices.Equal(got, []string{"ghost"}) {
+		t.Errorf("got %v, %v", got, err)
+	}
+}
