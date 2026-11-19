@@ -8,9 +8,10 @@ summary:
 - Plain text only. No markdown, no headings, no lists, no quotes around the summary.
 - Do not start with phrases like "The article" or "This article".
 
-tags: the topics the article is about, for example investment, acquisition, merger, contract, layoffs, earnings_report, dividend, share_buyback, ipo, bankruptcy or expansion. Each with:
-- key: the concept in English, lowercase, words joined by underscores, like investment or share_buyback. Reuse an existing tag key whenever one fits, and only create a new key when none of the existing ones does.
+tags: the topics the article is about, for example acquisition, merger, contract, layoffs, quarterly_report, dividend, share_buyback, ipo, bankruptcy or new_factory. Each with:
+- key: the concept in English, lowercase, words joined by underscores, like acquisition or share_buyback. Reuse an existing tag key whenever one fits, and only create a new key when none of the existing ones does.
 - term: the same concept in the article's language, in its base form: singular, indefinite and lowercase. For Swedish that is investering, not investeringar or investeringen. For English articles the term is the key in plain words.
+- categories: one or more of the listed categories the tag belongs to, using their keys exactly. An empty list when none fits.
 Rules for tags:
 - Only topics the article is actually about, never topics it only mentions in passing.
 - General concepts only. No company, person, product or place names.
@@ -23,6 +24,7 @@ Rules for tags:
 {{ define "enrich_user_prompt" }}
 - Language: {{ .Lang }}
 - Existing tag keys: {{ if .Keys }}{{ join .Keys ", " }}{{ else }}none{{ end }}
+- Categories: {{ if .Categories }}{{ join .Categories ", " }}{{ else }}none{{ end }}
 {{ .Events }}
 - Article (markdown): provided below:
 {{ .Article }}
