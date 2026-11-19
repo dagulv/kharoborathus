@@ -169,14 +169,14 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 
 	for _, t := range a.Tags {
 		t.Key = discovery.TagKey(t.Key)
-		if strings.Trim(t.Key, "_") == "" || len(proposals) == maxProposals {
+		if blankKey(t.Key) || len(proposals) == maxProposals {
 			continue
 		}
 
 		categories := make([]string, 0, len(t.Categories))
 
 		for _, c := range t.Categories {
-			if c = discovery.TagKey(c); strings.Trim(c, "_") != "" {
+			if c = discovery.TagKey(c); !blankKey(c) {
 				categories = append(categories, c)
 			}
 		}
@@ -267,4 +267,9 @@ func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
 	}
 
 	return tagSet{keys: keys, classifiable: classifiable, categories: categories}, nil
+}
+
+// A key that normalizes to underscores only names nothing.
+func blankKey(key string) bool {
+	return strings.Trim(key, "_") == ""
 }
