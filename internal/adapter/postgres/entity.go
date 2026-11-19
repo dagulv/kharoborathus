@@ -68,7 +68,8 @@ type entityCandidate struct {
 
 // Returns the linked entities in extraction order, with their status after promotion.
 func (s *EntityStore) LinkEntities(ctx context.Context, tx pgx.Tx, post domain.Post, trusted bool, article string, extracted []ExtractedEntity) ([]domain.LinkedEntity, error) {
-	text := strings.ToLower(article)
+	// Collapsed like the term, so a double or non-breaking space in the article still matches.
+	text := strings.ToLower(strings.Join(strings.Fields(article), " "))
 	candidates := make([]entityCandidate, 0, maxEntities)
 
 	for _, e := range extracted[:min(len(extracted), maxEntities)] {
