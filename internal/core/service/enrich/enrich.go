@@ -203,8 +203,11 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		Simhash:      p.Simhash,
 	}
 
-	var found discovery.Found
-	var inserted domain.Post
+	var (
+		found    discovery.Found
+		inserted domain.Post
+		promoted []string
+	)
 
 	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if trusted {
@@ -227,7 +230,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 			return err
 		}
 
-		if _, err := s.Tags.PromoteTags(ctx, tx, post.Tags); err != nil {
+		if promoted, err = s.Tags.PromoteTags(ctx, tx, post.Tags); err != nil {
 			return err
 		}
 
@@ -238,6 +241,10 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 	})
 	if err != nil {
 		return domain.Post{}, discovery.Found{}, fmt.Errorf("err save post: %w", err)
+	}
+
+	if len(promoted) > 0 {
+		l.Info("promoted tags", "keys", promoted)
 	}
 
 	return inserted, found, nil
