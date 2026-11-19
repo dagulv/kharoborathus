@@ -71,7 +71,9 @@
 			const seq = ++searchSeq;
 			try {
 				const res = await api<EntityPage>('/admin/entities', { query: { search } });
-				if (seq === searchSeq) candidates = res.entities.filter((c) => c.key !== entity.key);
+				if (seq !== searchSeq) return;
+				candidates = res.entities.filter((c) => c.key !== entity.key);
+				mergeError = '';
 			} catch (err) {
 				if (seq === searchSeq) mergeError = actionError(err, 'Search failed');
 			}
