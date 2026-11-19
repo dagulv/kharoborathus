@@ -20,6 +20,9 @@ func TestRequireJSON(t *testing.T) {
 		{http.MethodPost, "text/plain", http.StatusUnsupportedMediaType},
 		{http.MethodPost, "application/x-www-form-urlencoded", http.StatusUnsupportedMediaType},
 		{http.MethodPatch, "text/plain", http.StatusUnsupportedMediaType},
+		{http.MethodPut, "application/json", http.StatusOK},
+		{http.MethodPut, "text/plain", http.StatusUnsupportedMediaType},
+		{http.MethodPut, "", http.StatusUnsupportedMediaType},
 	}
 
 	for _, c := range cases {

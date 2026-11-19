@@ -138,3 +138,21 @@ func TestBraveInvalidToken(t *testing.T) {
 		t.Errorf("got %v", err)
 	}
 }
+
+func TestBraveFreshness(t *testing.T) {
+	cases := map[string]string{"pm": "pm", "": "pw"}
+
+	for in, want := range cases {
+		b := testBrave(t, func(w http.ResponseWriter, r *http.Request) {
+			if got := r.URL.Query().Get("freshness"); got != want {
+				t.Errorf("%q: freshness %q, want %q", in, got, want)
+			}
+
+			w.Write([]byte(`{}`))
+		})
+
+		if _, err := b.Search(context.Background(), slog.New(slog.DiscardHandler), Query{Q: "x", Freshness: in}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

@@ -32,6 +32,8 @@ func listPosts(s *postgres.PostStore, l *slog.Logger) http.HandlerFunc {
 		f := domain.AdminPostFilter{
 			SourceID: q.Get("source"),
 			Tag:      q.Get("tag"),
+			Category: q.Get("category"),
+			Entity:   q.Get("entity"),
 			Search:   strings.TrimSpace(q.Get("search")),
 			Status:   q.Get("status"),
 		}
@@ -46,8 +48,8 @@ func listPosts(s *postgres.PostStore, l *slog.Logger) http.HandlerFunc {
 			return
 		}
 
-		if len(f.Tag) > 200 || len(f.Search) > 500 {
-			http.Error(w, "tag or search too long", http.StatusBadRequest)
+		if len(f.Tag) > 200 || len(f.Category) > 200 || len(f.Entity) > 200 || len(f.Search) > 500 {
+			http.Error(w, "tag, category, entity or search too long", http.StatusBadRequest)
 			return
 		}
 

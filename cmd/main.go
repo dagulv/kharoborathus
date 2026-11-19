@@ -24,7 +24,9 @@ import (
 	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/core/service/admin"
 	"github.com/dagulv/kharoborathus/internal/core/service/auth"
+	"github.com/dagulv/kharoborathus/internal/core/service/categories"
 	"github.com/dagulv/kharoborathus/internal/core/service/enrich"
+	"github.com/dagulv/kharoborathus/internal/core/service/entities"
 	"github.com/dagulv/kharoborathus/internal/core/service/posts"
 	"github.com/dagulv/kharoborathus/internal/core/service/source"
 	"github.com/dagulv/kharoborathus/internal/lib/config"
@@ -128,6 +130,8 @@ func app(ctx context.Context) (err error) {
 	rawPostStore := postgres.NewRawPostStore(db)
 	postStore := postgres.NewPostStore(db)
 	tagStore := postgres.NewTagStore(db)
+	categoryStore := postgres.NewCategoryStore(db)
+	entityStore := postgres.NewEntityStore(db)
 	sessionStore := postgres.NewSessionStore(db)
 	userStore := postgres.NewUserStore(db)
 	statsStore := postgres.NewStatsStore(db)
@@ -181,6 +185,8 @@ func app(ctx context.Context) (err error) {
 		RawPosts:      &rawPostStore,
 		Posts:         &postStore,
 		Tags:          &tagStore,
+		Categories:    &categoryStore,
+		Entities:      &entityStore,
 		LLM:           llm,
 		Classifier:    classifier,
 		SearchIDs:     searchIDs,
@@ -190,12 +196,14 @@ func app(ctx context.Context) (err error) {
 
 	mux := http.NewServeMux()
 	posts.Routes(mux, &postStore, l.WithGroup("posts"))
+	categories.Routes(mux, &categoryStore, l.WithGroup("categories"))
+	entities.Routes(mux, &entityStore, l.WithGroup("entities"))
 
 	// The port is public, so every admin route but login sits behind the session cookie.
 	protected := http.NewServeMux()
 	source.Routes(protected, &sourceStore, syncs, backfills, fetcher.NewProber(l.WithGroup("probe"), calls), l.WithGroup("source"))
 	traceStore := postgres.NewTraceStore(db)
-	admin.Routes(protected, backfills, resyncs, admin.Stores{Stats: &statsStore, Sources: &sourceStore, Posts: &postStore, Tags: &tagStore, Logs: &logStore, Traces: &traceStore}, l.WithGroup("admin"))
+	admin.Routes(protected, backfills, resyncs, searchIDs, admin.Stores{Stats: &statsStore, Sources: &sourceStore, Posts: &postStore, Tags: &tagStore, Logs: &logStore, Traces: &traceStore, Categories: &categoryStore, Entities: &entityStore}, l.WithGroup("admin"))
 
 	adminMux := http.NewServeMux()
 	auth.Routes(adminMux, protected, &userStore, &sessionStore, l.WithGroup("auth"))

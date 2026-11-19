@@ -12,7 +12,7 @@ export class ApiError extends Error {
 }
 
 type Options = {
-	method?: 'GET' | 'POST' | 'PATCH';
+	method?: 'GET' | 'POST' | 'PATCH' | 'PUT';
 	body?: unknown;
 	query?: Record<string, string | number | undefined>;
 	fetch?: typeof fetch;

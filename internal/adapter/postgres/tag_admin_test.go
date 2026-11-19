@@ -19,6 +19,9 @@ func TestTagOverview(t *testing.T) {
 		INSERT INTO tags (key, status, enabled) VALUES ('buyback', 'active', true), ('newtag', 'proposed', true), ('sleepy', 'proposed', false);
 		INSERT INTO tag_terms (key, lang, term) VALUES ('buyback', 'sv', 'återköp'), ('buyback', 'en', 'share buyback'), ('newtag', 'en', 'new thing');
 		INSERT INTO tag_aliases (alias, key) VALUES ('buy-back', 'buyback');
+		INSERT INTO categories (key) VALUES ('finance'), ('deals');
+		INSERT INTO categories (key, enabled) VALUES ('macro', false);
+		INSERT INTO category_tags (category, tag) VALUES ('finance', 'buyback'), ('macro', 'buyback');
 		`); err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +44,10 @@ func TestTagOverview(t *testing.T) {
 
 	if len(got.Tags[2].Terms) != 0 || got.Tags[2].Terms == nil {
 		t.Errorf("tag without terms: %+v", got.Tags[2])
+	}
+
+	if !slices.Equal(got.Tags[0].Categories, []string{"finance", "macro"}) || got.Tags[2].Categories == nil || len(got.Tags[2].Categories) != 0 {
+		t.Errorf("categories: %+v, %+v", got.Tags[0].Categories, got.Tags[2].Categories)
 	}
 
 	if len(got.Proposals) != 1 || got.Proposals[0].Key != "newtag" || got.Proposals[0].PostCount != 2 || got.Proposals[0].DomainCount != 2 || !slices.Equal(got.Proposals[0].Terms, []string{"en: new thing"}) {
@@ -147,5 +154,45 @@ func TestMergeTag(t *testing.T) {
 
 	if len(got.Tags) != 1 || got.Tags[0].Key != "to" {
 		t.Errorf("tags %+v", got.Tags)
+	}
+}
+
+func TestMergeTagCategoriesAndEntities(t *testing.T) {
+	db := dbtest.New(t)
+	ctx := context.Background()
+
+	if _, err := db.Exec(ctx, `
+		INSERT INTO tags (key) VALUES ('from'), ('to');
+		INSERT INTO categories (key) VALUES ('energy'), ('deals');
+		INSERT INTO category_tags (category, tag) VALUES ('energy', 'from'), ('deals', 'from'), ('deals', 'to');
+		INSERT INTO entities (key, name, kind) VALUES ('volvo_cars', 'Volvo Cars', 'company'), ('northvolt', 'Northvolt', 'company');
+		INSERT INTO entity_tags (entity, tag) VALUES ('volvo_cars', 'from'), ('northvolt', 'from'), ('northvolt', 'to');
+		`); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewTagStore(db)
+
+	if err := s.MergeTag(ctx, "from", "to"); err != nil {
+		t.Fatal(err)
+	}
+
+	for q, want := range map[string][]string{
+		`SELECT category FROM category_tags WHERE tag = 'to' ORDER BY category`: {"deals", "energy"},
+		`SELECT entity FROM entity_tags WHERE tag = 'to' ORDER BY entity`:       {"northvolt", "volvo_cars"},
+	} {
+		rows, err := db.Query(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: got %v, want %v", q, got, want)
+		}
 	}
 }

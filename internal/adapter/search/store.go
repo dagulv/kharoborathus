@@ -22,13 +22,15 @@ func NewStore(db *database.Database) Store {
 }
 
 // The earliest linked post sets the search language and the own host for kept URLs.
+// A disabled entity reads as done, so a queued id or a stale catch-up batch is never searched.
 func (s *Store) GetQuery(ctx context.Context, id string) (i SearchItem, err error) {
 	var results []byte
 
 	if err = s.db.QueryRow(ctx, `
 		SELECT q.id, q.normalized_entity, q.action, q.query, q.searched_at, p.lang, p.id, d.base_url,
-			q.result->'results', q.searched_at IS NOT NULL AND (q.result IS NULL OR q.result ? 'kept')
+			q.result->'results', NOT COALESCE(e.enabled, true) OR (q.searched_at IS NOT NULL AND (q.result IS NULL OR q.result ? 'kept'))
 		FROM discovery_search_queries q
+		LEFT JOIN entities e ON e.key = q.normalized_entity
 		CROSS JOIN LATERAL (
 			SELECT p.id, p.lang, p.domain_id
 			FROM discovery_search_query_posts qp
@@ -55,13 +57,20 @@ func (s *Store) GetQuery(ctx context.Context, id string) (i SearchItem, err erro
 }
 
 // Paid results waiting for the filter go first. A query whose posts are all gone cannot be searched.
+// A disabled entity is never searched. A query with no entity row still is.
 func (s *Store) ListUnfinished(ctx context.Context, windowDays, limit int) ([]string, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT q.id FROM discovery_search_queries q
+		LEFT JOIN entities e ON e.key = q.normalized_entity
 		WHERE (q.searched_at IS NULL OR (q.result IS NOT NULL AND NOT q.result ? 'kept'))
 			AND q.created_at > now() - make_interval(days => $1)
 			AND EXISTS (SELECT 1 FROM discovery_search_query_posts qp WHERE qp.query_id = q.id)
-		ORDER BY q.searched_at IS NULL, q.created_at DESC
+			AND COALESCE(e.enabled, true)
+		ORDER BY q.searched_at IS NULL,
+			q.action = 'depth',
+			COALESCE(e.focus, false) DESC,
+			(SELECT count(*) FROM post_entities pe WHERE pe.entity = q.normalized_entity AND pe.created_at > now() - interval '30 days') DESC,
+			q.created_at DESC
 		LIMIT $2
 		`, windowDays, limit)
 	if err != nil {
@@ -95,6 +104,17 @@ func (s *Store) SearchesLastDay(ctx context.Context) (n int, err error) {
 		WHERE searched_at > now() - interval '1 day' AND result IS NOT NULL
 		`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("err count searches: %w", err)
+	}
+
+	return n, nil
+}
+
+func (s *Store) DepthSearchesLastDay(ctx context.Context) (n int, err error) {
+	if err = s.db.QueryRow(ctx, `
+		SELECT count(*) FROM discovery_search_queries
+		WHERE action = $1 AND searched_at > now() - interval '1 day' AND result IS NOT NULL
+		`, DepthAction).Scan(&n); err != nil {
+		return 0, fmt.Errorf("err count depth searches: %w", err)
 	}
 
 	return n, nil
@@ -258,7 +278,7 @@ func recentQuery(ctx context.Context, tx pgx.Tx, entity, action string, windowDa
 func insertQuery(ctx context.Context, tx pgx.Tx, entity, action, query string) (id string, created bool, err error) {
 	err = tx.QueryRow(ctx, `
 		INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ($1, $2, $3)
-		ON CONFLICT (query) DO NOTHING
+		ON CONFLICT (query) WHERE action <> 'depth' DO NOTHING
 		RETURNING id
 		`, entity, action, query).Scan(&id)
 	if err == nil {
@@ -269,11 +289,35 @@ func insertQuery(ctx context.Context, tx pgx.Tx, entity, action, query string) (
 		return "", false, fmt.Errorf("err insert query: %w", err)
 	}
 
-	if err = tx.QueryRow(ctx, `SELECT id FROM discovery_search_queries WHERE query = $1`, query).Scan(&id); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT id FROM discovery_search_queries WHERE query = $1 AND action <> 'depth'`, query).Scan(&id); err != nil {
 		return "", false, fmt.Errorf("err get conflicting query: %w", err)
 	}
 
 	return id, false, nil
+}
+
+// Depth text repeats weekly, so no conflict clause.
+func QueueDepth(ctx context.Context, tx pgx.Tx, entity, postID, query string) (id string, created bool, err error) {
+	if err := lockEvent(ctx, tx, entity, DepthAction); err != nil {
+		return "", false, err
+	}
+
+	if _, found, err := recentQuery(ctx, tx, entity, DepthAction, dedupeWindow); err != nil || found {
+		return "", false, err
+	}
+
+	if err = tx.QueryRow(ctx, `
+		INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ($1, $2, $3)
+		RETURNING id
+		`, entity, DepthAction, query).Scan(&id); err != nil {
+		return "", false, fmt.Errorf("err insert depth query: %w", err)
+	}
+
+	if err = linkQuery(ctx, tx, id, postID); err != nil {
+		return "", false, err
+	}
+
+	return id, true, nil
 }
 
 func linkQuery(ctx context.Context, tx pgx.Tx, queryID, postID string) error {

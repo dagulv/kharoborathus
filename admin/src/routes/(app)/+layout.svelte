@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import BoxIcon from '@lucide/svelte/icons/box';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import HouseIcon from '@lucide/svelte/icons/house';
 	import LogOutIcon from '@lucide/svelte/icons/log-out';
 	import RssIcon from '@lucide/svelte/icons/rss';
 	import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
+	import ShapesIcon from '@lucide/svelte/icons/shapes';
 	import TagIcon from '@lucide/svelte/icons/tag';
 	import { api } from '$lib/api.js';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
@@ -16,6 +18,8 @@
 		{ href: '/', label: 'Overview', icon: HouseIcon },
 		{ href: '/sources', label: 'Sources', icon: RssIcon },
 		{ href: '/tags', label: 'Tags', icon: TagIcon },
+		{ href: '/categories', label: 'Categories', icon: ShapesIcon },
+		{ href: '/entities', label: 'Entities', icon: BoxIcon },
 		{ href: '/posts', label: 'Posts', icon: FileTextIcon },
 		{ href: '/logs', label: 'Logs', icon: ScrollTextIcon }
 	];

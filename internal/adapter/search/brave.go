@@ -33,6 +33,8 @@ var errSearchUnreadable = errors.New("discovery: search unreadable")
 type Query struct {
 	Q    string
 	Lang string
+	// Defaults to a week.
+	Freshness string
 }
 
 type Searcher interface {
@@ -87,6 +89,10 @@ func (b brave) Search(ctx context.Context, l *slog.Logger, q Query) ([]SearchRes
 		"count":          {strconv.Itoa(braveCount)},
 		"result_filter":  {"web,news"},
 		"extra_snippets": {"true"},
+	}
+
+	if q.Freshness != "" {
+		params.Set("freshness", q.Freshness)
 	}
 
 	if q.Lang == "sv" || q.Lang == "en" {

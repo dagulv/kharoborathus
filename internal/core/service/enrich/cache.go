@@ -8,12 +8,14 @@ import (
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 )
 
-// Tags change only on promotion or admin edits, so a minute of staleness saves two queries per post.
+// Tags change only on promotion or admin edits, so a minute of staleness saves four queries per post.
 const tagCacheTTL = time.Minute
 
 type tagSet struct {
-	keys   []string
-	active []domain.Tag
+	keys         []string
+	classifiable []domain.Tag
+	categories   []domain.Category
+	entityKeys   []string
 }
 
 type cachedTags struct {

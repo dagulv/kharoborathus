@@ -55,7 +55,7 @@ func TestAllow(t *testing.T) {
 			t.Errorf("%s: headers %v", c.name, hdr)
 		}
 
-		if c.method == http.MethodOptions && (hdr.Get("Access-Control-Allow-Methods") != "GET, POST, PATCH" || hdr.Get("Access-Control-Allow-Headers") != "Content-Type" || hdr.Get("Access-Control-Max-Age") != "600") {
+		if c.method == http.MethodOptions && (hdr.Get("Access-Control-Allow-Methods") != "GET, POST, PATCH, PUT" || hdr.Get("Access-Control-Allow-Headers") != "Content-Type" || hdr.Get("Access-Control-Max-Age") != "600") {
 			t.Errorf("%s: preflight headers %v", c.name, hdr)
 		}
 	}

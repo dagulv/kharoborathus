@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
@@ -14,10 +15,12 @@ import (
 type Found struct {
 	Queries []string
 	Links   []string
+	// Events whose entity is none of the post's linked entities, so they were dropped.
+	Unmatched []Keyword
 }
 
 // Untrusted and old posts only join events a trusted, recent post already found.
-func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword) (f Found, err error) {
+func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword, linked []domain.LinkedEntity) (f Found, err error) {
 	trusted, baseURL, err := postSource(ctx, tx, post)
 	if err != nil {
 		return Found{}, err
@@ -34,7 +37,10 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 		return Found{}, err
 	}
 
-	type event struct{ entity, action, query string }
+	type event struct {
+		entity, action, query string
+		searchable            bool
+	}
 
 	var resolved []event
 
@@ -44,7 +50,18 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 			continue
 		}
 
-		resolved = append(resolved, event{entity: normalizedEntity(e.Entity), action: action, query: e.Query})
+		match, ok := matchEntity(e.Entity, linked)
+		if !ok {
+			f.Unmatched = append(f.Unmatched, e)
+			continue
+		}
+
+		resolved = append(resolved, event{
+			entity:     match.Key,
+			action:     action,
+			query:      e.Query,
+			searchable: match.Status == domain.StatusActive || match.Focus,
+		})
 	}
 
 	// Locking in key order keeps two posts with the same events from deadlocking.
@@ -70,7 +87,7 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 			continue
 		}
 
-		if !trusted || old(post) {
+		if !trusted || old(post) || !e.searchable {
 			continue
 		}
 
@@ -80,6 +97,24 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 		}
 
 		if err := linkQuery(ctx, tx, id, post.ID); err != nil {
+			return Found{}, err
+		}
+
+		if created {
+			f.Queries = append(f.Queries, id)
+		}
+	}
+
+	if !trusted {
+		return f, nil
+	}
+
+	focused := slices.DeleteFunc(slices.Clone(linked), func(l domain.LinkedEntity) bool { return !l.Focus })
+	slices.SortFunc(focused, func(a, b domain.LinkedEntity) int { return cmp.Compare(a.Key, b.Key) })
+
+	for _, l := range focused {
+		id, created, err := QueueDepth(ctx, tx, l.Key, post.ID, l.Term)
+		if err != nil {
 			return Found{}, err
 		}
 
@@ -109,6 +144,21 @@ func resolveAction(action string, quality map[string]bool, aliases map[string]st
 	return action, true
 }
 
-func normalizedEntity(entity string) string {
-	return TagKey(entity)
+func matchEntity(entity string, linked []domain.LinkedEntity) (domain.LinkedEntity, bool) {
+	key := TagKey(entity)
+	name := strings.ToLower(entity)
+
+	matches := []func(domain.LinkedEntity) bool{
+		func(l domain.LinkedEntity) bool { return l.Key == key },
+		func(l domain.LinkedEntity) bool { return slices.Contains(l.Aliases, key) },
+		func(l domain.LinkedEntity) bool { return slices.Contains(l.Names, name) },
+	}
+
+	for _, match := range matches {
+		if i := slices.IndexFunc(linked, match); i >= 0 {
+			return linked[i], true
+		}
+	}
+
+	return domain.LinkedEntity{}, false
 }

@@ -23,11 +23,13 @@ const (
 )
 
 type Service struct {
-	DB       *database.Database
-	RawPosts *postgres.RawPostStore
-	Posts    *postgres.PostStore
-	Tags     *postgres.TagStore
-	LLM      port.LLM
+	DB         *database.Database
+	RawPosts   *postgres.RawPostStore
+	Posts      *postgres.PostStore
+	Tags       *postgres.TagStore
+	Categories *postgres.CategoryStore
+	Entities   *postgres.EntityStore
+	LLM        port.LLM
 	// Nil when Jev is not configured. Posts then get proposed keys only.
 	Classifier port.Classifier
 	SearchIDs  chan<- string
@@ -40,9 +42,10 @@ type Service struct {
 }
 
 type answer struct {
-	Summary string              `json:"summary"`
-	Tags    []postgres.Proposal `json:"tags"`
-	Events  []discovery.Keyword `json:"events"`
+	Summary  string                     `json:"summary"`
+	Tags     []postgres.Proposal        `json:"tags"`
+	Events   []discovery.Keyword        `json:"events"`
+	Entities []postgres.ExtractedEntity `json:"entities"`
 }
 
 // A closed schedule or shutdown is not an attempt. Any other error fails the raw post and counts a retry.
@@ -122,26 +125,31 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		return domain.Post{}, discovery.Found{}, err
 	}
 
-	active := set.active
+	classifiable := set.classifiable
 
 	var tags []string
 
 	// Before DeepSeek, so a Jev outage never wastes a paid call.
 	if s.Classifier != nil {
-		if tags, err = jevTags(ctx, s.Classifier, calls, p.Title, p.Content, active); err != nil {
+		if tags, err = jevTags(ctx, s.Classifier, calls, p.Lang, p.Title, p.Content, set.categories, classifiable); err != nil {
 			return domain.Post{}, discovery.Found{}, err
 		}
 	}
 
 	var quality []string
 
-	for _, t := range active {
-		if t.Type == domain.TagTypeQuality {
+	for _, t := range classifiable {
+		if t.Type == domain.TagTypeQuality && t.Status == domain.StatusActive {
 			quality = append(quality, t.Key)
 		}
 	}
 
-	prompt, err := userPrompt(p.Lang, set.keys, quality, p.Content)
+	categoryKeys := make([]string, len(set.categories))
+	for i, c := range set.categories {
+		categoryKeys[i] = c.Key
+	}
+
+	prompt, err := userPrompt(p.Lang, p.Title, p.Authors, set.keys, quality, categoryKeys, p.Content, set.entityKeys)
 	if err != nil {
 		return domain.Post{}, discovery.Found{}, err
 	}
@@ -163,10 +171,19 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 
 	for _, t := range a.Tags {
 		t.Key = discovery.TagKey(t.Key)
-		if strings.Trim(t.Key, "_") == "" || len(proposals) == maxProposals {
+		if blankKey(t.Key) || len(proposals) == maxProposals {
 			continue
 		}
 
+		categories := make([]string, 0, len(t.Categories))
+
+		for _, c := range t.Categories {
+			if c = discovery.TagKey(c); !blankKey(c) {
+				categories = append(categories, c)
+			}
+		}
+
+		t.Categories = categories
 		proposals = append(proposals, t)
 	}
 
@@ -188,8 +205,11 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		Simhash:      p.Simhash,
 	}
 
-	var found discovery.Found
-	var inserted domain.Post
+	var (
+		found    discovery.Found
+		inserted domain.Post
+		promoted []string
+	)
 
 	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if trusted {
@@ -212,7 +232,16 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 			return err
 		}
 
-		found, err = discovery.Discover(ctx, tx, post, a.Events)
+		if promoted, err = s.Tags.PromoteTags(ctx, tx, post.Tags); err != nil {
+			return err
+		}
+
+		linked, err := s.Entities.LinkEntities(ctx, tx, post, trusted, p.Content, a.Entities)
+		if err != nil {
+			return err
+		}
+
+		found, err = discovery.Discover(ctx, tx, post, a.Events, linked)
 		inserted = post
 
 		return err
@@ -221,13 +250,26 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		return domain.Post{}, discovery.Found{}, fmt.Errorf("err save post: %w", err)
 	}
 
+	if len(promoted) > 0 {
+		l.Info("promoted tags", "keys", promoted)
+	}
+
+	for _, e := range found.Unmatched {
+		l.Info("dropped event without a linked entity", "entity", e.Entity, "action", e.Action)
+	}
+
 	return inserted, found, nil
 }
 
 func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
-	active, err := s.Tags.ActiveTags(ctx, lang)
+	classifiable, err := s.Tags.ClassifiableTags(ctx, lang)
 	if err != nil {
 		return tagSet{}, err
+	}
+
+	categories, err := s.Categories.EnabledCategories(ctx)
+	if err != nil {
+		return tagSet{}, fmt.Errorf("err load categories: %w", err)
 	}
 
 	keys, err := s.Tags.TagKeys(ctx)
@@ -235,5 +277,15 @@ func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
 		return tagSet{}, err
 	}
 
-	return tagSet{keys: keys, active: active}, nil
+	entityKeys, err := s.Entities.PromptKeys(ctx)
+	if err != nil {
+		return tagSet{}, fmt.Errorf("err load entity keys: %w", err)
+	}
+
+	return tagSet{keys: keys, classifiable: classifiable, categories: categories, entityKeys: entityKeys}, nil
+}
+
+// A key that normalizes to underscores only names nothing.
+func blankKey(key string) bool {
+	return strings.Trim(key, "_") == ""
 }

@@ -1,7 +1,7 @@
 # Search discovery
 
 **Status:** done
-**Related:** [discovered-ingest](discovered-ingest.md), [trust-model](trust-model.md)
+**Related:** [discovered-ingest](discovered-ingest.md), [trust-model](trust-model.md), [entities](entities.md)
 
 ## Summary
 
@@ -20,19 +20,21 @@ Searches the web with the Brave Search API for other sources on events found in 
 
 1. Trusted posts, from an enabled source with `status = 'active'`, queue their outbound markdown links in `discovery_posts` with no query id.
 2. Events are grounded: the entity must be in the article and in the query.
-3. Actions are normalized like tag keys and mapped through `tag_aliases`. Only active, enabled `quality` tags pass.
-4. `normalized_entity` is the entity as a tag key, like `volvo_cars`.
-5. A query with the same `normalized_entity` and `action` created within 7 days gets the post linked to it in `discovery_search_query_posts`. That link is the `same_event` record. No new search.
-6. Otherwise trusted posts insert a new query. A `query` text conflict links to the existing row and is not searched again. Untrusted posts never create queries.
-7. After commit, step 2 sends new query ids with `Enqueue` and new `discovery_posts` ids with `EnqueueLink`. A full channel drops the id and logs it.
+3. An event's entity must resolve to one of the post's linked entities, by key, then alias, then name or term. Otherwise the event is dropped.
+4. Actions are normalized like tag keys and mapped through `tag_aliases`. Only active, enabled `quality` tags pass.
+5. `normalized_entity` is the key of that linked entity, like `volvo_cars`.
+6. A query with the same `normalized_entity` and `action` created within 7 days gets the post linked to it in `discovery_search_query_posts`. That link is the `same_event` record. No new search. This holds for a proposed entity too.
+7. Otherwise a trusted post inserts a new query, but only when the entity is `active` or focused. A proposed entity that is not focused gets no new query. A `query` text conflict links to the existing row and is not searched again. Untrusted posts never create queries.
+8. A trusted post that links to a focused entity also queues a depth query, unless one for that entity was created within 7 days. Its action is `depth`, its text is the term the post names the entity by, and it links only to that post. Depth queries do not join the `same_event` links.
+9. After commit, step 2 sends new query ids with `Enqueue` and new `discovery_posts` ids with `EnqueueLink`. A full channel drops the id and logs it.
 
 **Step 4: RunSearch.** One query at a time, whenever an id arrives or the catch-up ticks.
 
 1. Skip queries that are done or rejected. A searched query without `kept` goes straight to the filter.
-2. Leave the query untouched while 200 or more discovered links are pending within 7 days, from searches or outbound links, or 322 searches were paid in the last day.
-3. Search Brave in the language of the query's earliest linked post.
+2. Leave the query untouched while 200 or more discovered links are pending within 7 days, from searches or outbound links, or 322 searches were paid in the last day. A depth query also waits while 50 depth searches were paid in the last day.
+3. Search Brave in the language of the query's earliest linked post. A depth query uses freshness `pm`.
 4. Save the raw results in `result.results`, even during shutdown, since Brave billed them.
-5. Ask Jev about each result in its own call, five at a time. A result scoring 0.8 or more is kept. Write the kept indexes to `result.kept` and queue the kept URLs in `discovery_posts` with the query id, skipping URLs already in `posts`. New rows go to discovered ingest with `EnqueueLink`.
+5. Ask Jev about each result in its own call, five at a time. A depth result gets its own question, whether it substantially covers the entity. A result scoring 0.8 or more is kept. Write the kept indexes to `result.kept` and queue the kept URLs in `discovery_posts` with the query id, skipping URLs already in `posts`. New rows go to discovered ingest with `EnqueueLink`.
 
 | `searched_at` | `result` | State | Paid |
 |---|---|---|---|
@@ -44,7 +46,11 @@ Searches the web with the Brave Search API for other sources on events found in 
 **Catch-up.** Every minute, in the same loop as the ids.
 
 1. Take up to 10 queries from the last 7 days with no `searched_at`, or with `results` and no `kept`. These are ids dropped by a full channel, held back by a limit, or failed in the search or the filter.
-2. Unfiltered paid results go first, then newest queries.
+2. Order:
+   1. Unfiltered paid results.
+   2. Event queries, focused entities first, then by entity strength.
+   3. Depth queries.
+   4. Newest within each.
 3. Skip queries whose linked posts are all gone.
 4. Stop at the first error.
 
@@ -69,7 +75,7 @@ x-subscription-token: <key>
 | `q`              | `discovery_search_queries.query`, max 400 characters |
 | `country`        | `SE`                                         |
 | `search_lang`    | Post language, `sv` or `en`                  |
-| `freshness`      | `pw`, last 7 days                            |
+| `freshness`      | `pw`, last 7 days. Depth queries use `pm`, last 31 days. |
 | `count`          | 20, the max                                  |
 | `result_filter`  | `web,news`                                   |
 | `extra_snippets` | `true`                                       |
@@ -87,6 +93,9 @@ Results are read from `web.results` and `news.results` and deduplicated by URL. 
 | Dedupe window                | 7 days             | Same as freshness.                                    |
 | Results per query            | 20 per result type | One call, filter cuts the rest.                       |
 | Freshness                    | `pw`               | Same event, not old coverage.                         |
+| Depth freshness              | `pm`               | A week between searches, a month of material.         |
+| Depth window                 | 7 days             | Same as the event dedupe.                             |
+| Depth searches a day         | 50                 | Inside the 322 cap, so events keep priority.          |
 | Monthly budget alert         | $50                | About 10k queries at $5 per 1k.                       |
 | Daily search cap             | 322                | $50 a month at $5 per 1k queries over a 31-day month. |
 | Pending links limit          | 200                | One day of ingest at its daily cap, which outbound links share. |

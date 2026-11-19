@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,8 +13,9 @@ import (
 )
 
 type Proposal struct {
-	Key  string `json:"key"`
-	Term string `json:"term"`
+	Key        string   `json:"key"`
+	Term       string   `json:"term"`
+	Categories []string `json:"categories"`
 }
 
 type TagStore struct {
@@ -26,8 +28,9 @@ func NewTagStore(db *database.Database) TagStore {
 	}
 }
 
+// Active keys come first so a cap on the prompt never cuts them for proposals.
 func (s *TagStore) TagKeys(ctx context.Context) ([]string, error) {
-	rows, err := s.db.Query(ctx, `SELECT key FROM tags ORDER BY key`)
+	rows, err := s.db.Query(ctx, `SELECT key FROM tags ORDER BY status <> 'active', key`)
 	if err != nil {
 		return nil, fmt.Errorf("err query tag keys: %w", err)
 	}
@@ -40,25 +43,32 @@ func (s *TagStore) TagKeys(ctx context.Context) ([]string, error) {
 	return keys, nil
 }
 
-func (s *TagStore) ActiveTags(ctx context.Context, lang string) ([]domain.Tag, error) {
+// Proposed tags are offered only while recent, so stale proposals drop out without a cleanup job.
+func (s *TagStore) ClassifiableTags(ctx context.Context, lang string) ([]domain.Tag, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT t.key, t.type, COALESCE(array_agg(tt.term ORDER BY tt.term) FILTER (WHERE tt.term IS NOT NULL), '{}')
+		SELECT t.key, t.status, t.type,
+			COALESCE((SELECT array_agg(tt.term ORDER BY tt.term) FROM tag_terms tt WHERE tt.key = t.key AND tt.lang = $1), '{}'),
+			COALESCE((SELECT array_agg(ct.category ORDER BY ct.category) FROM category_tags ct JOIN categories c ON c.key = ct.category WHERE ct.tag = t.key AND c.enabled), '{}')
 		FROM tags t
-		LEFT JOIN tag_terms tt ON tt.key = t.key AND tt.lang = $1
-		WHERE t.enabled AND t.status = 'active'
-		GROUP BY t.key, t.type
+		WHERE t.enabled AND (
+			t.status = 'active'
+			OR (t.status = 'proposed' AND (
+				t.created_at > now() - interval '30 days'
+				OR EXISTS (SELECT 1 FROM posts p WHERE p.tags @> ARRAY[t.key] AND p.created_at > now() - interval '30 days')
+			))
+		)
 		ORDER BY t.key
 		`, lang)
 	if err != nil {
-		return nil, fmt.Errorf("err query active tags: %w", err)
+		return nil, fmt.Errorf("err query classifiable tags: %w", err)
 	}
 
 	tags, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (t domain.Tag, err error) {
-		err = row.Scan(&t.Key, &t.Type, &t.Terms)
+		err = row.Scan(&t.Key, &t.Status, &t.Type, &t.Terms, &t.Categories)
 		return
 	})
 	if err != nil {
-		return nil, fmt.Errorf("err scan active tags: %w", err)
+		return nil, fmt.Errorf("err scan classifiable tags: %w", err)
 	}
 
 	return tags, nil
@@ -78,8 +88,22 @@ func (s *TagStore) SaveProposals(ctx context.Context, tx pgx.Tx, lang string, pr
 			return nil, fmt.Errorf("err resolve tag alias %s: %w", p.Key, err)
 		}
 
-		if _, err := tx.Exec(ctx, `INSERT INTO tags (key, status) VALUES ($1, 'proposed') ON CONFLICT (key) DO NOTHING`, key); err != nil {
+		// RETURNING yields a row only for the creating proposal, so later proposals never touch categories.
+		var created string
+
+		err := tx.QueryRow(ctx, `INSERT INTO tags (key, status) VALUES ($1, 'proposed') ON CONFLICT (key) DO NOTHING RETURNING key`, key).Scan(&created)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("err save proposed tag %s: %w", key, err)
+		}
+
+		if created != "" && len(p.Categories) > 0 {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO category_tags (category, tag)
+				SELECT c.key, $1 FROM categories c WHERE c.enabled AND c.key = ANY($2)
+				ON CONFLICT DO NOTHING
+				`, key, p.Categories); err != nil {
+				return nil, fmt.Errorf("err save categories of proposed tag %s: %w", key, err)
+			}
 		}
 
 		// A separate statement, so it sees a row a concurrent transaction committed while the insert waited.
@@ -124,7 +148,8 @@ func (s *TagStore) TagOverview(ctx context.Context) (o domain.TagOverview, err e
 		SELECT
 			t.key, t.enabled, t.status, t.type, t.created_at,
 			coalesce(array_agg(tt.lang || ': ' || tt.term ORDER BY tt.lang, tt.term) FILTER (WHERE tt.term IS NOT NULL), '{}'),
-			(SELECT count(*) FROM posts p WHERE p.tags @> ARRAY[t.key])
+			(SELECT count(*) FROM posts p WHERE p.tags @> ARRAY[t.key]),
+			COALESCE((SELECT array_agg(ct.category ORDER BY ct.category) FROM category_tags ct WHERE ct.tag = t.key), '{}')
 		FROM tags t
 		LEFT JOIN tag_terms tt ON tt.key = t.key
 		GROUP BY t.key
@@ -135,7 +160,7 @@ func (s *TagStore) TagOverview(ctx context.Context) (o domain.TagOverview, err e
 	}
 
 	o.Tags, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (t domain.TagSummary, err error) {
-		err = row.Scan(&t.Key, &t.Enabled, &t.Status, &t.Type, &t.CreatedAt, &t.Terms, &t.PostCount)
+		err = row.Scan(&t.Key, &t.Enabled, &t.Status, &t.Type, &t.CreatedAt, &t.Terms, &t.PostCount, &t.Categories)
 		return
 	})
 	if err != nil {
@@ -203,7 +228,7 @@ func (s *TagStore) SetTagEnabled(ctx context.Context, key string, enabled bool) 
 	return nil
 }
 
-// Moves from's terms, posts and aliases to to, and leaves from behind as an alias of to.
+// Moves from's terms, posts, categories, entities and aliases to to, and leaves from behind as an alias of to.
 func (s *TagStore) MergeTag(ctx context.Context, from, to string) error {
 	if from == to {
 		return domain.ErrMergeSelf
@@ -236,6 +261,22 @@ func (s *TagStore) MergeTag(ctx context.Context, from, to string) error {
 		return fmt.Errorf("err move post tags: %w", err)
 	}
 
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO category_tags (category, tag)
+		SELECT category, $2 FROM category_tags WHERE tag = $1
+		ON CONFLICT DO NOTHING
+		`, from, to); err != nil {
+		return fmt.Errorf("err move category tags: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO entity_tags (entity, tag)
+		SELECT entity, $2 FROM entity_tags WHERE tag = $1
+		ON CONFLICT DO NOTHING
+		`, from, to); err != nil {
+		return fmt.Errorf("err move entity tags: %w", err)
+	}
+
 	if _, err := tx.Exec(ctx, `UPDATE tag_aliases SET key = $2 WHERE key = $1`, from, to); err != nil {
 		return fmt.Errorf("err move aliases: %w", err)
 	}
@@ -256,4 +297,54 @@ func (s *TagStore) MergeTag(ctx context.Context, from, to string) error {
 	}
 
 	return nil
+}
+
+// Promotes in key order, so two posts promoting the same keys lock them in the same order.
+// The lock makes the count see the post a concurrent transaction committed first.
+func (s *TagStore) PromoteTags(ctx context.Context, tx pgx.Tx, keys []string) ([]string, error) {
+	var promoted []string
+
+	for _, key := range slices.Compact(slices.Sorted(slices.Values(keys))) {
+		var status string
+
+		err := tx.QueryRow(ctx, `SELECT status FROM tags WHERE key = $1`, key).Scan(&status)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("err get tag %s: %w", key, err)
+		}
+
+		if status != domain.StatusProposed {
+			continue
+		}
+
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('tag/' || $1))`, key); err != nil {
+			return nil, fmt.Errorf("err lock tag %s: %w", key, err)
+		}
+
+		var done string
+
+		err = tx.QueryRow(ctx, `
+			UPDATE tags SET status = 'active'
+			WHERE key = $1 AND status = 'proposed' AND EXISTS (
+				SELECT 1 FROM posts p JOIN sources s ON s.id = p.source_id
+				WHERE p.tags @> ARRAY[$1]::text[] AND s.enabled AND s.status = 'active' AND p.created_at > now() - interval '30 days'
+				HAVING count(*) >= 5 AND count(DISTINCT p.domain_id) >= 3
+			)
+			RETURNING key
+			`, key).Scan(&done)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("err promote tag %s: %w", key, err)
+		}
+
+		promoted = append(promoted, done)
+	}
+
+	return promoted, nil
 }
