@@ -357,6 +357,32 @@ func TestListPostsTagFilterUsesIndex(t *testing.T) {
 	}
 }
 
+func TestListPostsCategoryFilterUsesIndex(t *testing.T) {
+	db, _, _, _ := postsDB(t)
+	ctx := context.Background()
+
+	if _, err := db.Exec(ctx, `SET enable_seqscan = off`); err != nil {
+		t.Fatal(err)
+	}
+
+	var rows []string
+	r, err := db.Query(ctx, `EXPLAIN `+listPostsQuery+` WHERE `+categoryFilter(1)+` ORDER BY `+feedOrder+` LIMIT 30`, "deals")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for r.Next() {
+		var line string
+		if err := r.Scan(&line); err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, line)
+	}
+
+	if !slices.ContainsFunc(rows, func(l string) bool { return strings.Contains(l, "posts_tags_idx") }) {
+		t.Errorf("plan does not use posts_tags_idx:\n%s", strings.Join(rows, "\n"))
+	}
+}
+
 func TestFeedOrderUsesIndex(t *testing.T) {
 	db, _, _, _ := postsDB(t)
 	ctx := context.Background()
