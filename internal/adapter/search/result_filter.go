@@ -26,6 +26,16 @@ var resultQuestion = map[string]port.NoulQuestion{
 	},
 }
 
+var depthQuestion = map[string]port.NoulQuestion{
+	"result": {
+		Instructions: "Does this search result substantially cover the given entity?",
+		Criteria: &port.NoulCriteria{
+			True:  "Its main subject is this entity, as a news article, press release, company page or report from any site.",
+			False: "It mentions the entity only in passing, is a listing, search, tag or category page, a stock quote or a profile page, or its text does not show the entity.",
+		},
+	},
+}
+
 type SearchResult struct {
 	URL           string   `json:"url"`
 	Title         string   `json:"title"`
@@ -46,6 +56,11 @@ func NewResultFilter(c port.Classifier) *ResultFilter {
 // One Jev call per result, so no result is judged by another's text. A result Jev fails on is dropped,
 // so one bad result cannot block its query. An outage, or failing on every result, fails the filter.
 func (f *ResultFilter) Keep(ctx context.Context, l *slog.Logger, entity, action string, results []SearchResult) ([]int, error) {
+	question := resultQuestion
+	if action == DepthAction {
+		question = depthQuestion
+	}
+
 	scores := make([]float64, len(results))
 	errs := make([]error, len(results))
 
@@ -64,7 +79,7 @@ func (f *ResultFilter) Keep(ctx context.Context, l *slog.Logger, entity, action 
 				"hostname":       r.Hostname,
 			}
 
-			s, err := f.classifier.Noul(ctx, l, state, resultQuestion)
+			s, err := f.classifier.Noul(ctx, l, state, question)
 			if errors.Is(err, port.ErrUnavailable) {
 				return fmt.Errorf("err classify search result %d: %w", i, err)
 			}

@@ -102,6 +102,24 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 		}
 	}
 
+	if !trusted {
+		return f, nil
+	}
+
+	focused := slices.DeleteFunc(slices.Clone(linked), func(l domain.LinkedEntity) bool { return !l.Focus })
+	slices.SortFunc(focused, func(a, b domain.LinkedEntity) int { return cmp.Compare(a.Key, b.Key) })
+
+	for _, l := range focused {
+		id, created, err := QueueDepth(ctx, tx, l.Key, post.ID, l.Term)
+		if err != nil {
+			return Found{}, err
+		}
+
+		if created {
+			f.Queries = append(f.Queries, id)
+		}
+	}
+
 	return f, nil
 }
 

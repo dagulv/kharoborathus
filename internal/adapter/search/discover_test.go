@@ -237,11 +237,15 @@ func TestDiscoverProposedEntity(t *testing.T) {
 
 func TestDiscoverFocusedProposed(t *testing.T) {
 	db := discoverDB(t)
-	focused := []domain.LinkedEntity{{Key: "volvo_cars", Status: domain.StatusProposed, Focus: true, Names: []string{"volvo cars"}}}
+	focused := []domain.LinkedEntity{{Key: "volvo_cars", Status: domain.StatusProposed, Focus: true, Names: []string{"volvo cars"}, Term: "Volvo Cars"}}
 	post := seedPost(t, db, seed{Trusted: true, Content: volvoArticle})
 
-	if ids := discover(t, db, post, focused, volvoTakeover); len(ids) != 1 {
+	if ids := discover(t, db, post, focused, volvoTakeover); len(ids) != 2 {
 		t.Fatalf("got ids %v", ids)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries WHERE action = 'acquisition'`); n != 1 {
+		t.Errorf("event rows %d", n)
 	}
 }
 
@@ -465,5 +469,90 @@ func TestMatchEntityPriority(t *testing.T) {
 		if got, ok := matchEntity("Volvo Cars", c.linked); !ok || got.Key != c.want {
 			t.Errorf("%s: got %q, %v", name, got.Key, ok)
 		}
+	}
+}
+
+func focusedVolvo(term string) []domain.LinkedEntity {
+	return []domain.LinkedEntity{{Key: "volvo_cars", Status: domain.StatusActive, Focus: true, Names: []string{"volvo cars"}, Term: term}}
+}
+
+func TestDiscoverDepth(t *testing.T) {
+	db := discoverDB(t)
+	post := seedPost(t, db, seed{Trusted: true, Content: volvoArticle})
+
+	ids := discover(t, db, post, focusedVolvo("Volvo Cars"))
+	if len(ids) != 1 {
+		t.Fatalf("got ids %v", ids)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries WHERE id = $1 AND normalized_entity = 'volvo_cars' AND action = 'depth' AND query = 'Volvo Cars'`, ids[0]); n != 1 {
+		t.Errorf("query rows %d", n)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_query_posts WHERE query_id = $1 AND post_id = $2`, ids[0], post.ID); n != 1 {
+		t.Errorf("query links %d", n)
+	}
+
+	second := seedPost(t, db, seed{Trusted: true, Content: volvoArticle})
+
+	if got := discover(t, db, second, focusedVolvo("Volvo Cars")); len(got) != 0 {
+		t.Fatalf("second post got ids %v", got)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries WHERE action = 'depth'`); n != 1 {
+		t.Errorf("depth rows %d", n)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_query_posts WHERE post_id = $1`, second.ID); n != 0 {
+		t.Errorf("second post links %d", n)
+	}
+}
+
+func TestDiscoverDepthSkips(t *testing.T) {
+	db := discoverDB(t)
+
+	cases := map[string]struct {
+		post   seed
+		linked []domain.LinkedEntity
+	}{
+		"untrusted":   {seed{Content: volvoArticle}, focusedVolvo("Volvo Cars")},
+		"not focused": {seed{Trusted: true, Content: volvoArticle}, []domain.LinkedEntity{{Key: "volvo_cars", Status: domain.StatusActive, Term: "Volvo Cars"}}},
+	}
+
+	for name, c := range cases {
+		if ids := discover(t, db, seedPost(t, db, c.post), c.linked); len(ids) != 0 {
+			t.Errorf("%s: got ids %v", name, ids)
+		}
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries`); n != 0 {
+		t.Errorf("query rows %d", n)
+	}
+}
+
+func TestQueueDepthSameTextAsEvent(t *testing.T) {
+	db := discoverDB(t)
+	post := seedPost(t, db, seed{Trusted: true, Content: volvoArticle})
+	exec(t, db, `INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ('volvo_cars', 'acquisition', 'Volvo Cars')`)
+
+	var id string
+	var created bool
+	if err := pgx.BeginFunc(context.Background(), db, func(tx pgx.Tx) (err error) {
+		id, created, err = QueueDepth(context.Background(), tx, "volvo_cars", post.ID, "Volvo Cars")
+		return err
+	}); err != nil {
+		t.Fatalf("err queue depth: %v", err)
+	}
+
+	if !created {
+		t.Fatal("not created")
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries WHERE id = $1 AND action = 'depth' AND query = 'Volvo Cars'`, id); n != 1 {
+		t.Errorf("depth rows %d", n)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries WHERE query = 'Volvo Cars'`); n != 2 {
+		t.Errorf("rows %d", n)
 	}
 }
