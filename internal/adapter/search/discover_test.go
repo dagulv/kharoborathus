@@ -332,3 +332,44 @@ func TestDiscoverUndatedPost(t *testing.T) {
 		t.Fatalf("got ids %v", ids)
 	}
 }
+
+func TestDepthQueryTextNotUnique(t *testing.T) {
+	db := discoverDB(t)
+
+	for range 2 {
+		exec(t, db, `INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ('volvo_cars', 'depth', 'Volvo Cars')`)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries WHERE action = 'depth'`); n != 2 {
+		t.Errorf("depth rows %d", n)
+	}
+
+	exec(t, db, `INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ('volvo_cars', 'acquisition', 'Volvo Cars köper')`)
+
+	if _, err := db.Exec(context.Background(), `INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ('volvo_cars', 'acquisition', 'Volvo Cars köper')`); err == nil {
+		t.Error("duplicate acquisition query inserted")
+	}
+}
+
+func TestInsertQueryConflictSkipsDepth(t *testing.T) {
+	db := discoverDB(t)
+	exec(t, db, `INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ('volvo_cars', 'depth', 'Volvo Cars köper')`)
+
+	var want string
+	if err := db.QueryRow(context.Background(), `INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ('volvo_cars', 'acquisition', 'Volvo Cars köper') RETURNING id`).Scan(&want); err != nil {
+		t.Fatalf("err seed acquisition: %v", err)
+	}
+
+	var id string
+	var created bool
+	if err := pgx.BeginFunc(context.Background(), db, func(tx pgx.Tx) (err error) {
+		id, created, err = insertQuery(context.Background(), tx, "volvo_cars", "acquisition", "Volvo Cars köper")
+		return err
+	}); err != nil {
+		t.Fatalf("err insert query: %v", err)
+	}
+
+	if created || id != want {
+		t.Errorf("got %s created %v, want existing acquisition %s", id, created, want)
+	}
+}

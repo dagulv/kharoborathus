@@ -258,7 +258,7 @@ func recentQuery(ctx context.Context, tx pgx.Tx, entity, action string, windowDa
 func insertQuery(ctx context.Context, tx pgx.Tx, entity, action, query string) (id string, created bool, err error) {
 	err = tx.QueryRow(ctx, `
 		INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ($1, $2, $3)
-		ON CONFLICT (query) DO NOTHING
+		ON CONFLICT (query) WHERE action <> 'depth' DO NOTHING
 		RETURNING id
 		`, entity, action, query).Scan(&id)
 	if err == nil {
@@ -269,7 +269,7 @@ func insertQuery(ctx context.Context, tx pgx.Tx, entity, action, query string) (
 		return "", false, fmt.Errorf("err insert query: %w", err)
 	}
 
-	if err = tx.QueryRow(ctx, `SELECT id FROM discovery_search_queries WHERE query = $1`, query).Scan(&id); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT id FROM discovery_search_queries WHERE query = $1 AND action <> 'depth'`, query).Scan(&id); err != nil {
 		return "", false, fmt.Errorf("err get conflicting query: %w", err)
 	}
 

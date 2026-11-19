@@ -89,7 +89,7 @@ func New(t *testing.T) *database.Database {
 
 	db := Seeded(t)
 
-	if _, err := db.Exec(context.Background(), `TRUNCATE category_tags, category_terms, categories, tag_aliases, tag_terms, tags`); err != nil {
+	if _, err := db.Exec(context.Background(), `TRUNCATE entity_tags, category_tags, category_terms, categories, tag_aliases, tag_terms, tags`); err != nil {
 		t.Fatalf("err empty seed: %v", err)
 	}
 
