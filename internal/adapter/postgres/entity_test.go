@@ -1002,3 +1002,24 @@ func TestPatchEntityFocusDisabled(t *testing.T) {
 		t.Errorf("queued %d for disabled entities", n)
 	}
 }
+
+func TestMergeEntitiesPromotesTarget(t *testing.T) {
+	f := entityDB(t)
+
+	f.exec(`INSERT INTO entities (key, name, kind, status) VALUES ('to_proposed', 'To', 'company', 'proposed'), ('from_active', 'From', 'company', 'active'), ('lonely', 'Lonely', 'company', 'proposed')`)
+	f.linkKeys(f.post(0, "en"), "to_proposed")
+	f.linkKeys(f.post(1, "en"), "from_active")
+	f.linkKeys(f.post(2, "en"), "from_active")
+
+	if err := f.s.MergeEntities(context.Background(), "from_active", "to_proposed"); err != nil {
+		t.Fatal(err)
+	}
+
+	if f.count(`SELECT count(*) FROM entities WHERE key = 'to_proposed' AND status = 'active'`) != 1 {
+		t.Error("merged support did not promote the target")
+	}
+
+	if f.count(`SELECT count(*) FROM entities WHERE key = 'lonely' AND status = 'proposed'`) != 1 {
+		t.Error("unrelated entity promoted")
+	}
+}
