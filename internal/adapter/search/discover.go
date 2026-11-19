@@ -15,6 +15,8 @@ import (
 type Found struct {
 	Queries []string
 	Links   []string
+	// Events whose entity is none of the post's linked entities, so they were dropped.
+	Unmatched []Keyword
 }
 
 // Untrusted and old posts only join events a trusted, recent post already found.
@@ -50,6 +52,7 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 
 		match, ok := matchEntity(e.Entity, linked)
 		if !ok {
+			f.Unmatched = append(f.Unmatched, e)
 			continue
 		}
 

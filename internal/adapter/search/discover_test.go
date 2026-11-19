@@ -210,6 +210,21 @@ func TestDiscoverUnlinkedEntity(t *testing.T) {
 	}
 }
 
+func TestDiscoverReportsUnmatchedEvent(t *testing.T) {
+	db := discoverDB(t)
+	post := seedPost(t, db, seed{Trusted: true, Content: volvoArticle})
+
+	f := discoverAll(t, db, post, []domain.LinkedEntity{saabLinked}, volvoTakeover)
+	if len(f.Unmatched) != 1 || f.Unmatched[0] != volvoTakeover {
+		t.Errorf("unmatched %v", f.Unmatched)
+	}
+
+	f = discoverAll(t, db, post, []domain.LinkedEntity{volvoLinked}, volvoTakeover)
+	if len(f.Unmatched) != 0 {
+		t.Errorf("unmatched %v", f.Unmatched)
+	}
+}
+
 func TestDiscoverProposedEntity(t *testing.T) {
 	db := discoverDB(t)
 	proposed := []domain.LinkedEntity{linkedEntity("volvo_cars", domain.StatusProposed, "volvo cars")}
