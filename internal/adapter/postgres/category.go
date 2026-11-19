@@ -73,11 +73,6 @@ func (s *CategoryStore) ListAdminCategories(ctx context.Context) ([]domain.Admin
 		return nil, fmt.Errorf("err scan admin categories: %w", err)
 	}
 
-	// CollectRows returns nil for no rows, and the admin reads this as a JSON array.
-	if cats == nil {
-		cats = []domain.AdminCategory{}
-	}
-
 	return cats, nil
 }
 
