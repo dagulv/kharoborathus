@@ -271,6 +271,15 @@ func TestLinkEntitiesGrounding(t *testing.T) {
 	}
 }
 
+func TestLinkEntitiesGroundingWhitespace(t *testing.T) {
+	f := entityDB(t)
+
+	linked := f.link(f.post(0, "sv"), "Solid  state\u00a0batteri\n\tbyggs ut.", ExtractedEntity{Key: "solid_state_battery", Name: "Solid-state battery", Term: "solid state batteri", Kind: "technology"})
+	if !slices.Equal(linkedKeys(linked), []string{"solid_state_battery"}) {
+		t.Errorf("linked %+v", linked)
+	}
+}
+
 func TestLinkEntitiesShortTerm(t *testing.T) {
 	f := entityDB(t)
 	ai := ExtractedEntity{Key: "artificial_intelligence", Name: "Artificial intelligence", Term: "AI", Kind: "technology"}
