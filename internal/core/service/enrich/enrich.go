@@ -241,9 +241,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 			return err
 		}
 
-		_ = linked
-
-		found, err = discovery.Discover(ctx, tx, post, a.Events)
+		found, err = discovery.Discover(ctx, tx, post, a.Events, linked)
 		inserted = post
 
 		return err

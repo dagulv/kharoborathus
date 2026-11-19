@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
@@ -17,7 +18,7 @@ type Found struct {
 }
 
 // Untrusted and old posts only join events a trusted, recent post already found.
-func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword) (f Found, err error) {
+func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword, linked []domain.LinkedEntity) (f Found, err error) {
 	trusted, baseURL, err := postSource(ctx, tx, post)
 	if err != nil {
 		return Found{}, err
@@ -34,7 +35,10 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 		return Found{}, err
 	}
 
-	type event struct{ entity, action, query string }
+	type event struct {
+		entity, action, query string
+		searchable            bool
+	}
 
 	var resolved []event
 
@@ -44,7 +48,17 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 			continue
 		}
 
-		resolved = append(resolved, event{entity: normalizedEntity(e.Entity), action: action, query: e.Query})
+		match, ok := matchEntity(e.Entity, linked)
+		if !ok {
+			continue
+		}
+
+		resolved = append(resolved, event{
+			entity:     match.Key,
+			action:     action,
+			query:      e.Query,
+			searchable: match.Status == domain.StatusActive || match.Focus,
+		})
 	}
 
 	// Locking in key order keeps two posts with the same events from deadlocking.
@@ -70,7 +84,7 @@ func Discover(ctx context.Context, tx pgx.Tx, post domain.Post, events []Keyword
 			continue
 		}
 
-		if !trusted || old(post) {
+		if !trusted || old(post) || !e.searchable {
 			continue
 		}
 
@@ -109,6 +123,15 @@ func resolveAction(action string, quality map[string]bool, aliases map[string]st
 	return action, true
 }
 
-func normalizedEntity(entity string) string {
-	return TagKey(entity)
+func matchEntity(entity string, linked []domain.LinkedEntity) (domain.LinkedEntity, bool) {
+	key := TagKey(entity)
+	name := strings.ToLower(entity)
+
+	for _, l := range linked {
+		if l.Key == key || slices.Contains(l.Aliases, key) || slices.Contains(l.Names, name) {
+			return l, true
+		}
+	}
+
+	return domain.LinkedEntity{}, false
 }
