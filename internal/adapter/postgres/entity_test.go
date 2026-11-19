@@ -606,3 +606,26 @@ func TestGetPublicEntity(t *testing.T) {
 		}
 	}
 }
+
+// A resolution read before a merge committed still names the merged key. The insert must not bring it back.
+func TestLinkEntitiesAliasGuard(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+	f.seedVolvo()
+
+	p := f.post(0, "en")
+	c := entityCandidate{ExtractedEntity: ExtractedEntity{Name: "Volvo Car Corporation", Term: "Volvo Car Corporation", Kind: "company"}, target: "volvo_car_corporation"}
+
+	var ok bool
+
+	if err := pgx.BeginFunc(ctx, f.db, func(tx pgx.Tx) (err error) {
+		ok, _, err = f.s.linkEntity(ctx, tx, p, true, c)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if ok || f.count(`SELECT count(*) FROM entities WHERE key = 'volvo_car_corporation'`) != 0 || f.count(`SELECT count(*) FROM post_entities`) != 0 {
+		t.Errorf("merged key re-created: linked %v", ok)
+	}
+}

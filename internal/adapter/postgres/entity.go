@@ -182,9 +182,15 @@ func (s *EntityStore) LinkEntities(ctx context.Context, tx pgx.Tx, post domain.P
 func (s *EntityStore) linkEntity(ctx context.Context, tx pgx.Tx, post domain.Post, trusted bool, c entityCandidate) (bool, string, error) {
 	if trusted {
 		// RETURNING yields a row only when this post creates it, so tags are set only then.
+		// A merge that committed while this waited for the lock left the target as an alias. It stays one.
 		var created string
 
-		err := tx.QueryRow(ctx, `INSERT INTO entities (key, name, kind) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING RETURNING key`, c.target, c.Name, c.Kind).Scan(&created)
+		err := tx.QueryRow(ctx, `
+			INSERT INTO entities (key, name, kind)
+			SELECT $1::text, $2::text, $3::text WHERE NOT EXISTS (SELECT 1 FROM entity_aliases WHERE alias = $1)
+			ON CONFLICT (key) DO NOTHING
+			RETURNING key
+			`, c.target, c.Name, c.Kind).Scan(&created)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return false, "", fmt.Errorf("err create entity %s: %w", c.target, err)
 		}
