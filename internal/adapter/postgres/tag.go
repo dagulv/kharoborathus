@@ -227,7 +227,7 @@ func (s *TagStore) SetTagEnabled(ctx context.Context, key string, enabled bool) 
 	return nil
 }
 
-// Moves from's terms, posts and aliases to to, and leaves from behind as an alias of to.
+// Moves from's terms, posts, categories, entities and aliases to to, and leaves from behind as an alias of to.
 func (s *TagStore) MergeTag(ctx context.Context, from, to string) error {
 	if from == to {
 		return domain.ErrMergeSelf
@@ -258,6 +258,22 @@ func (s *TagStore) MergeTag(ctx context.Context, from, to string) error {
 		WHERE tags @> ARRAY[$1]::text[]
 		`, from, to); err != nil {
 		return fmt.Errorf("err move post tags: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO category_tags (category, tag)
+		SELECT category, $2 FROM category_tags WHERE tag = $1
+		ON CONFLICT DO NOTHING
+		`, from, to); err != nil {
+		return fmt.Errorf("err move category tags: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO entity_tags (entity, tag)
+		SELECT entity, $2 FROM entity_tags WHERE tag = $1
+		ON CONFLICT DO NOTHING
+		`, from, to); err != nil {
+		return fmt.Errorf("err move entity tags: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx, `UPDATE tag_aliases SET key = $2 WHERE key = $1`, from, to); err != nil {

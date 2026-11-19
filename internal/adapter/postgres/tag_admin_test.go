@@ -149,3 +149,43 @@ func TestMergeTag(t *testing.T) {
 		t.Errorf("tags %+v", got.Tags)
 	}
 }
+
+func TestMergeTagCategoriesAndEntities(t *testing.T) {
+	db := dbtest.New(t)
+	ctx := context.Background()
+
+	if _, err := db.Exec(ctx, `
+		INSERT INTO tags (key) VALUES ('from'), ('to');
+		INSERT INTO categories (key) VALUES ('energy'), ('deals');
+		INSERT INTO category_tags (category, tag) VALUES ('energy', 'from'), ('deals', 'from'), ('deals', 'to');
+		INSERT INTO entities (key, name, kind) VALUES ('volvo_cars', 'Volvo Cars', 'company'), ('northvolt', 'Northvolt', 'company');
+		INSERT INTO entity_tags (entity, tag) VALUES ('volvo_cars', 'from'), ('northvolt', 'from'), ('northvolt', 'to');
+		`); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewTagStore(db)
+
+	if err := s.MergeTag(ctx, "from", "to"); err != nil {
+		t.Fatal(err)
+	}
+
+	for q, want := range map[string][]string{
+		`SELECT category FROM category_tags WHERE tag = 'to' ORDER BY category`: {"deals", "energy"},
+		`SELECT entity FROM entity_tags WHERE tag = 'to' ORDER BY entity`:       {"northvolt", "volvo_cars"},
+	} {
+		rows, err := db.Query(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: got %v, want %v", q, got, want)
+		}
+	}
+}
