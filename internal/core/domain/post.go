@@ -69,7 +69,8 @@ var ErrInvalidFilter = errors.New("invalid filter")
 type PostFilter struct {
 	query.Filter
 
-	Tags []string `query:"tag"`
+	Tags       []string `query:"tag"`
+	Categories []string `query:"category"`
 	// A keyset cursor: the id of the last post already seen. Only valid with the default order.
 	After string `query:"after"`
 }

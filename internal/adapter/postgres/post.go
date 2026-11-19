@@ -98,6 +98,14 @@ func tagFilter(arg int) string {
 	return fmt.Sprintf(`p.tags @> $%[1]d::text[] AND v.tags @> $%[1]d::text[]`, arg)
 }
 
+// v.tags only holds public tags, so a post counts when one of them is in the enabled category.
+func categoryFilter(arg int) string {
+	return fmt.Sprintf(`v.tags && ARRAY(
+		SELECT ct.tag FROM category_tags ct JOIN categories c ON c.key = ct.category
+		WHERE c.key = $%d AND c.enabled
+	)`, arg)
+}
+
 // Newest publication first by default, with created_at for posts whose date is unknown.
 const feedOrder = `coalesce(p.posted_at, p.created_at) DESC, p.id DESC`
 
@@ -130,6 +138,11 @@ func (s *PostStore) ListPosts(ctx context.Context, filter domain.PostFilter) ite
 		if len(filter.Tags) > 0 {
 			args = append(args, filter.Tags)
 			conds = append(conds, tagFilter(len(args)))
+		}
+
+		for _, key := range filter.Categories {
+			args = append(args, key)
+			conds = append(conds, categoryFilter(len(args)))
 		}
 
 		if filter.Search != "" {

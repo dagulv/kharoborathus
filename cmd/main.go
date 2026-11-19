@@ -24,6 +24,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/core/service/admin"
 	"github.com/dagulv/kharoborathus/internal/core/service/auth"
+	"github.com/dagulv/kharoborathus/internal/core/service/categories"
 	"github.com/dagulv/kharoborathus/internal/core/service/enrich"
 	"github.com/dagulv/kharoborathus/internal/core/service/posts"
 	"github.com/dagulv/kharoborathus/internal/core/service/source"
@@ -192,6 +193,7 @@ func app(ctx context.Context) (err error) {
 
 	mux := http.NewServeMux()
 	posts.Routes(mux, &postStore, l.WithGroup("posts"))
+	categories.Routes(mux, &categoryStore, l.WithGroup("categories"))
 
 	// The port is public, so every admin route but login sits behind the session cookie.
 	protected := http.NewServeMux()

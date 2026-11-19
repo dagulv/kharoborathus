@@ -181,6 +181,91 @@ func TestListPosts(t *testing.T) {
 	}
 }
 
+func addPost(t *testing.T, db *database.Database, like domain.Post, url string, tags []string, age string) string {
+	t.Helper()
+
+	var id string
+	if err := db.QueryRow(context.Background(), `
+		INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content, tags, created_at)
+		VALUES ($1, $2, 'sv', $3, $2, 's', 'c', $4, now() - $5::interval)
+		RETURNING id
+		`, like.SourceID, url, like.DomainID, tags, age).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+
+	return id
+}
+
+func execAll(t *testing.T, db *database.Database, qs ...string) {
+	t.Helper()
+
+	for _, q := range qs {
+		if _, err := db.Exec(context.Background(), q); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestListPostsCategory(t *testing.T) {
+	db, s, volvo, ericsson := postsDB(t)
+
+	execAll(t, db,
+		`INSERT INTO tags (key) VALUES ('dividend'), ('layoffs')`,
+		`INSERT INTO categories (key) VALUES ('finance'), ('macro'), ('factory')`,
+		`INSERT INTO categories (key, enabled) VALUES ('off', false)`,
+		`INSERT INTO category_tags (category, tag) VALUES
+			('finance', 'acquisition'), ('finance', 'dividend'), ('macro', 'dividend'), ('macro', 'layoffs'),
+			('factory', 'new_factory'), ('off', 'acquisition')`,
+	)
+
+	payout := addPost(t, db, volvo, "https://a.example/payout", []string{"dividend"}, "30 minutes")
+	cuts := addPost(t, db, volvo, "https://a.example/cuts", []string{"layoffs"}, "10 minutes")
+
+	cases := map[string]struct {
+		categories []string
+		want       []string
+	}{
+		"one category":      {[]string{"finance"}, []string{payout, volvo.ID}},
+		"other category":    {[]string{"macro"}, []string{cuts, payout}},
+		"both categories":   {[]string{"finance", "macro"}, []string{payout}},
+		"disabled category": {[]string{"off"}, nil},
+		"unknown category":  {[]string{"nope"}, nil},
+		"proposed tag only": {[]string{"factory"}, nil},
+		"no category":       {nil, []string{cuts, payout, ericsson.ID, volvo.ID}},
+	}
+
+	for name, c := range cases {
+		if ids, _ := listIDs(t, s, domain.PostFilter{Categories: c.categories}); !slices.Equal(ids, c.want) {
+			t.Errorf("%s: got %v, want %v", name, ids, c.want)
+		}
+	}
+}
+
+func TestListPostsCategoryWithTagAndAfter(t *testing.T) {
+	db, s, volvo, ericsson := postsDB(t)
+
+	execAll(t, db,
+		`INSERT INTO tags (key) VALUES ('dividend')`,
+		`INSERT INTO tags (key, enabled) VALUES ('layoffs', false)`,
+		`INSERT INTO categories (key) VALUES ('income'), ('dead')`,
+		`INSERT INTO category_tags (category, tag) VALUES ('income', 'dividend'), ('dead', 'layoffs')`,
+	)
+
+	addPost(t, db, volvo, "https://a.example/newest", []string{"acquisition", "dividend"}, "30 minutes")
+	addPost(t, db, volvo, "https://a.example/dividend-only", []string{"dividend"}, "10 minutes")
+	oldest := addPost(t, db, volvo, "https://a.example/oldest", []string{"acquisition", "dividend"}, "3 hours")
+	addPost(t, db, volvo, "https://a.example/layoffs", []string{"layoffs"}, "20 minutes")
+
+	f := domain.PostFilter{Categories: []string{"income"}, Tags: []string{"acquisition"}, After: ericsson.ID}
+	if ids, _ := listIDs(t, s, f); !slices.Equal(ids, []string{oldest}) {
+		t.Errorf("combined: got %v, want %v", ids, []string{oldest})
+	}
+
+	if ids, _ := listIDs(t, s, domain.PostFilter{Categories: []string{"dead"}}); len(ids) != 0 {
+		t.Errorf("category with only a disabled tag: got %v", ids)
+	}
+}
+
 func TestGetPost(t *testing.T) {
 	_, s, volvo, _ := postsDB(t)
 	ctx := context.Background()
