@@ -18,6 +18,8 @@ type Stores struct {
 	Tags    *postgres.TagStore
 	Logs    *postgres.LogStore
 	Traces  *postgres.TraceStore
+
+	Categories *postgres.CategoryStore
 }
 
 // backfills is the queue source.Routes serves POST /admin/sources/{id}/backfill from.
@@ -33,6 +35,10 @@ func Routes(mux *http.ServeMux, backfills chan<- domain.Source, resyncs chan<- d
 	mux.HandleFunc("GET /admin/tags", getTags(s.Tags, l))
 	mux.HandleFunc("PATCH /admin/tags/{key}", setTagEnabled(s.Tags, l))
 	mux.HandleFunc("POST /admin/tags/merge", mergeTag(s.Tags, l))
+	mux.HandleFunc("PUT /admin/tags/{key}/categories", setTagCategories(s.Categories, l))
+	mux.HandleFunc("GET /admin/categories", listCategories(s.Categories, l))
+	mux.HandleFunc("POST /admin/categories", createCategory(s.Categories, l))
+	mux.HandleFunc("PATCH /admin/categories/{key}", setCategoryEnabled(s.Categories, l))
 	mux.HandleFunc("GET /admin/logs", listLogs(s.Logs, l))
 	mux.HandleFunc("GET /admin/logs/{id}", getLog(s.Logs, l))
 }

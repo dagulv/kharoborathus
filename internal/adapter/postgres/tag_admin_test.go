@@ -19,6 +19,9 @@ func TestTagOverview(t *testing.T) {
 		INSERT INTO tags (key, status, enabled) VALUES ('buyback', 'active', true), ('newtag', 'proposed', true), ('sleepy', 'proposed', false);
 		INSERT INTO tag_terms (key, lang, term) VALUES ('buyback', 'sv', 'återköp'), ('buyback', 'en', 'share buyback'), ('newtag', 'en', 'new thing');
 		INSERT INTO tag_aliases (alias, key) VALUES ('buy-back', 'buyback');
+		INSERT INTO categories (key) VALUES ('finance'), ('deals');
+		INSERT INTO categories (key, enabled) VALUES ('macro', false);
+		INSERT INTO category_tags (category, tag) VALUES ('finance', 'buyback'), ('macro', 'buyback');
 		`); err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +44,10 @@ func TestTagOverview(t *testing.T) {
 
 	if len(got.Tags[2].Terms) != 0 || got.Tags[2].Terms == nil {
 		t.Errorf("tag without terms: %+v", got.Tags[2])
+	}
+
+	if !slices.Equal(got.Tags[0].Categories, []string{"finance", "macro"}) || got.Tags[2].Categories == nil || len(got.Tags[2].Categories) != 0 {
+		t.Errorf("categories: %+v, %+v", got.Tags[0].Categories, got.Tags[2].Categories)
 	}
 
 	if len(got.Proposals) != 1 || got.Proposals[0].Key != "newtag" || got.Proposals[0].PostCount != 2 || got.Proposals[0].DomainCount != 2 || !slices.Equal(got.Proposals[0].Terms, []string{"en: new thing"}) {

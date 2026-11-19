@@ -473,6 +473,14 @@ func TestListAdminPosts(t *testing.T) {
 	seedPost(t, db, sourceA, domainA, "https://a.example/2", "sv", "Kvartalsrapport", []string{"report"}, "2 hours", "2 minutes")
 	oldest := seedPost(t, db, sourceB, domainB, "https://b.example/1", "en", "Weather today", nil, "3 hours", "3 minutes")
 
+	if _, err := db.Exec(ctx, `
+		INSERT INTO tags (key, status) VALUES ('buyback', 'active'), ('proposed-x', 'proposed');
+		INSERT INTO categories (key, enabled) VALUES ('finance', false), ('empty', true);
+		INSERT INTO category_tags (category, tag) VALUES ('finance', 'proposed-x');
+		`); err != nil {
+		t.Fatal(err)
+	}
+
 	s := NewPostStore(db)
 
 	all, err := s.ListAdminPosts(ctx, domain.AdminPostFilter{Page: 1})
@@ -494,13 +502,16 @@ func TestListAdminPosts(t *testing.T) {
 		filter domain.AdminPostFilter
 		want   int
 	}{
-		"source":        {domain.AdminPostFilter{SourceID: sourceB, Page: 1}, 1},
-		"active tag":    {domain.AdminPostFilter{Tag: "buyback", Page: 1}, 1},
-		"proposed tag":  {domain.AdminPostFilter{Tag: "proposed-x", Page: 1}, 1},
-		"search":        {domain.AdminPostFilter{Search: "shares", Page: 1}, 1},
-		"source+search": {domain.AdminPostFilter{SourceID: sourceB, Search: "shares", Page: 1}, 0},
-		"published":     {domain.AdminPostFilter{Status: "published", Page: 1}, 3},
-		"rejected":      {domain.AdminPostFilter{Status: "rejected", Page: 1}, 0},
+		"source":           {domain.AdminPostFilter{SourceID: sourceB, Page: 1}, 1},
+		"active tag":       {domain.AdminPostFilter{Tag: "buyback", Page: 1}, 1},
+		"proposed tag":     {domain.AdminPostFilter{Tag: "proposed-x", Page: 1}, 1},
+		"search":           {domain.AdminPostFilter{Search: "shares", Page: 1}, 1},
+		"source+search":    {domain.AdminPostFilter{SourceID: sourceB, Search: "shares", Page: 1}, 0},
+		"category":         {domain.AdminPostFilter{Category: "finance", Page: 1}, 1},
+		"empty category":   {domain.AdminPostFilter{Category: "empty", Page: 1}, 0},
+		"unknown category": {domain.AdminPostFilter{Category: "nope", Page: 1}, 0},
+		"published":        {domain.AdminPostFilter{Status: "published", Page: 1}, 3},
+		"rejected":         {domain.AdminPostFilter{Status: "rejected", Page: 1}, 0},
 	}
 
 	for name, c := range cases {

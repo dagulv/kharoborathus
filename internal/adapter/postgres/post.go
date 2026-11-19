@@ -300,6 +300,11 @@ func (s *PostStore) ListAdminPosts(ctx context.Context, f domain.AdminPostFilter
 		conds = append(conds, fmt.Sprintf(`p.tags @> ARRAY[$%d]::text[]`, len(args)))
 	}
 
+	if f.Category != "" {
+		args = append(args, f.Category)
+		conds = append(conds, fmt.Sprintf(`p.tags && ARRAY(SELECT tag FROM category_tags WHERE category = $%d)`, len(args)))
+	}
+
 	if f.Status != "" {
 		args = append(args, f.Status)
 		conds = append(conds, fmt.Sprintf(adminPostStatus+` = $%d`, len(args)))
