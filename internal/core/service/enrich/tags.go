@@ -126,7 +126,12 @@ func excerpt(markdown string) string {
 	text = strings.Join(strings.Fields(text), " ")
 
 	if r := []rune(text); len(r) > excerptLen {
-		text = string(r[:excerptLen])
+		text = string(r[:excerptLen+1])
+
+		// The extra rune shows whether the cut splits a word.
+		if i := strings.LastIndex(text, " "); i > 0 {
+			text = text[:i]
+		}
 	}
 
 	return text

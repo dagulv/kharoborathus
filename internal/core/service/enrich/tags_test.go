@@ -218,7 +218,11 @@ func TestExcerpt(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 
-	if got := excerpt(strings.Repeat("å ", 300)); len([]rune(got)) != 280 {
+	if got, want := excerpt(strings.Repeat("å", 278)+" öl är"), strings.Repeat("å", 278); got != want {
+		t.Errorf("runes %d", len([]rune(got)))
+	}
+
+	if got, want := excerpt(strings.Repeat("å", 277)+" öl är"), strings.Repeat("å", 277)+" öl"; got != want {
 		t.Errorf("runes %d", len([]rune(got)))
 	}
 }
