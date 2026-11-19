@@ -151,7 +151,7 @@ func TestKeepDepthQuestion(t *testing.T) {
 	c := &fakeClassifier{}
 	NewResultFilter(c).Keep(context.Background(), slog.New(slog.DiscardHandler), "Volvo Cars", DepthAction, searchResults[:1])
 
-	if got := c.questions[0]["result"].Criteria; got == nil || got.True != depthQuestion["result"].Criteria.True || got.False != depthQuestion["result"].Criteria.False {
+	if got := c.questions[0]["result"].Criteria; got == nil || got.True != "Its main subject is this entity, as a news article, press release, company page or report from any site." || got.False != "It mentions the entity only in passing, is a listing, search, tag or category page, a stock quote or a profile page, or its text does not show the entity." {
 		t.Errorf("criteria %+v", got)
 	}
 }
