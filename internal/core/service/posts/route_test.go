@@ -81,6 +81,35 @@ func TestListPosts(t *testing.T) {
 	}
 }
 
+func TestListPostsCategoriesDeduped(t *testing.T) {
+	s := &fakeStore{}
+
+	serve(s, "/posts?category=finance&category=macro&category=finance")
+
+	if !slices.Equal(s.filter.Categories, []string{"finance", "macro"}) {
+		t.Errorf("categories %v", s.filter.Categories)
+	}
+}
+
+func TestListPostsCategoryLimit(t *testing.T) {
+	query := func(n int) string {
+		target := "/posts?category=dup&category=dup"
+		for i := range n {
+			target += fmt.Sprintf("&category=c%d", i)
+		}
+
+		return target
+	}
+
+	if w := serve(&fakeStore{}, query(maxCategories)); w.Code != http.StatusBadRequest {
+		t.Errorf("%d distinct plus dup: status %d", maxCategories+1, w.Code)
+	}
+
+	if w := serve(&fakeStore{}, query(maxCategories-1)); w.Code != http.StatusOK {
+		t.Errorf("%d distinct: status %d", maxCategories, w.Code)
+	}
+}
+
 func TestListPostsEmpty(t *testing.T) {
 	if w := serve(&fakeStore{}, "/posts"); w.Code != http.StatusOK || w.Body.String() != "[]\n" {
 		t.Errorf("status %d, body %q", w.Code, w.Body)
