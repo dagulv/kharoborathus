@@ -277,7 +277,7 @@ func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
 
 	entityKeys, err := s.Entities.PromptKeys(ctx)
 	if err != nil {
-		return tagSet{}, err
+		return tagSet{}, fmt.Errorf("err load entity keys: %w", err)
 	}
 
 	return tagSet{keys: keys, classifiable: classifiable, categories: categories, entityKeys: entityKeys}, nil
