@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,8 +13,9 @@ import (
 )
 
 type Proposal struct {
-	Key  string `json:"key"`
-	Term string `json:"term"`
+	Key        string   `json:"key"`
+	Term       string   `json:"term"`
+	Categories []string `json:"categories"`
 }
 
 type TagStore struct {
@@ -85,8 +87,22 @@ func (s *TagStore) SaveProposals(ctx context.Context, tx pgx.Tx, lang string, pr
 			return nil, fmt.Errorf("err resolve tag alias %s: %w", p.Key, err)
 		}
 
-		if _, err := tx.Exec(ctx, `INSERT INTO tags (key, status) VALUES ($1, 'proposed') ON CONFLICT (key) DO NOTHING`, key); err != nil {
+		// RETURNING yields a row only for the creating proposal, so later proposals never touch categories.
+		var created string
+
+		err := tx.QueryRow(ctx, `INSERT INTO tags (key, status) VALUES ($1, 'proposed') ON CONFLICT (key) DO NOTHING RETURNING key`, key).Scan(&created)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("err save proposed tag %s: %w", key, err)
+		}
+
+		if created != "" && len(p.Categories) > 0 {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO category_tags (category, tag)
+				SELECT c.key, $1 FROM categories c WHERE c.enabled AND c.key = ANY($2)
+				ON CONFLICT DO NOTHING
+				`, key, p.Categories); err != nil {
+				return nil, fmt.Errorf("err save categories of proposed tag %s: %w", key, err)
+			}
 		}
 
 		// A separate statement, so it sees a row a concurrent transaction committed while the insert waited.
