@@ -92,16 +92,6 @@ func TestJevTagsError(t *testing.T) {
 	}
 }
 
-func asked(req map[string]port.NoulQuestion, key string) bool {
-	for _, q := range req {
-		if strings.Contains(q.Instructions, " "+key+" ") || strings.Contains(q.Instructions, " "+key+"?") {
-			return true
-		}
-	}
-
-	return false
-}
-
 func count(req map[string]port.NoulQuestion, key string) int {
 	n := 0
 
@@ -148,7 +138,7 @@ func TestJevTagsTwoStage(t *testing.T) {
 		t.Errorf("questions %v", c.requests[0])
 	}
 
-	if len(c.requests[1]) != 3 || !asked(c.requests[1], "oil") || !asked(c.requests[1], "batteries") || !asked(c.requests[1], "misc") || asked(c.requests[1], "dividend") {
+	if len(c.requests[1]) != 3 || count(c.requests[1], "oil") == 0 || count(c.requests[1], "batteries") == 0 || count(c.requests[1], "misc") == 0 || count(c.requests[1], "dividend") > 0 {
 		t.Errorf("stage 2 %v", c.requests[1])
 	}
 }
@@ -175,7 +165,7 @@ func TestJevTagsMissingCategoryScore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(c.requests) != 2 || asked(c.requests[1], "oil") || !asked(c.requests[1], "misc") || !slices.Equal(got, []string{"misc"}) {
+	if len(c.requests) != 2 || count(c.requests[1], "oil") > 0 || count(c.requests[1], "misc") == 0 || !slices.Equal(got, []string{"misc"}) {
 		t.Errorf("got %v, requests %v", got, c.requests)
 	}
 }

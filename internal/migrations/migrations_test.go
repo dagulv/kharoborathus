@@ -57,20 +57,14 @@ func TestSeed(t *testing.T) {
 		t.Errorf("tags without category = %d, want 0", n)
 	}
 
-	var batteries []string
 	rows, err := db.Query(ctx, `SELECT category FROM category_tags WHERE tag = 'batteries' ORDER BY category`)
 	if err != nil {
 		t.Fatalf("err query batteries: %v", err)
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
-			t.Fatalf("err scan batteries: %v", err)
-		}
-
-		batteries = append(batteries, s)
+	batteries, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("err scan batteries: %v", err)
 	}
 
 	if got := len(batteries); got != 3 || batteries[0] != "automotive" || batteries[1] != "energy" || batteries[2] != "industry" {
