@@ -43,7 +43,7 @@ Rules:
 
 | Parameter | Value | Why |
 |---|---|---|
-| Summary | 300 characters | Old summary prompt. |
+| Summary | 1 to 3 sentences, by article length | No hard cap. The feed shows it under the title. |
 | Excerpt fallback | 280 characters | Old excerpt. |
 | Tag proposals | 5 | Old tag generator. |
 | Jev tag threshold | 0.8 | Old tagger. |
