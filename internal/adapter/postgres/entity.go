@@ -97,7 +97,7 @@ func (s *EntityStore) LinkEntities(ctx context.Context, tx pgx.Tx, post domain.P
 			SELECT COALESCE(
 				(SELECT key FROM entities WHERE key = $1),
 				(SELECT key FROM entity_aliases WHERE alias = $1),
-				(SELECT key FROM entity_terms WHERE lower(term) = lower($2) ORDER BY key LIMIT 1),
+				(SELECT t.key FROM entity_terms t JOIN entities e ON e.key = t.key WHERE lower(t.term) = lower($2) ORDER BY e.enabled DESC, t.key LIMIT 1),
 				$1::text
 			)
 			`, e.Key, e.Term).Scan(&target); err != nil {

@@ -280,6 +280,20 @@ func TestLinkEntitiesGroundingWhitespace(t *testing.T) {
 	}
 }
 
+func TestLinkEntitiesTermPrefersEnabled(t *testing.T) {
+	f := entityDB(t)
+
+	f.exec(
+		`INSERT INTO entities (key, name, kind, status, enabled) VALUES ('a_old', 'Old', 'company', 'active', false), ('b_new', 'New', 'company', 'active', true)`,
+		`INSERT INTO entity_terms (key, lang, term) VALUES ('a_old', 'sv', 'Volvo'), ('b_new', 'sv', 'Volvo')`,
+	)
+
+	linked := f.link(f.post(0, "sv"), "Volvo ökar.", ExtractedEntity{Key: "volvo_group", Name: "Volvo", Term: "Volvo", Kind: "company"})
+	if !slices.Equal(linkedKeys(linked), []string{"b_new"}) {
+		t.Errorf("linked %+v", linked)
+	}
+}
+
 func TestLinkEntitiesShortTerm(t *testing.T) {
 	f := entityDB(t)
 	ai := ExtractedEntity{Key: "artificial_intelligence", Name: "Artificial intelligence", Term: "AI", Kind: "technology"}
