@@ -127,9 +127,15 @@ func matchEntity(entity string, linked []domain.LinkedEntity) (domain.LinkedEnti
 	key := TagKey(entity)
 	name := strings.ToLower(entity)
 
-	for _, l := range linked {
-		if l.Key == key || slices.Contains(l.Aliases, key) || slices.Contains(l.Names, name) {
-			return l, true
+	matches := []func(domain.LinkedEntity) bool{
+		func(l domain.LinkedEntity) bool { return l.Key == key },
+		func(l domain.LinkedEntity) bool { return slices.Contains(l.Aliases, key) },
+		func(l domain.LinkedEntity) bool { return slices.Contains(l.Names, name) },
+	}
+
+	for _, match := range matches {
+		if i := slices.IndexFunc(linked, match); i >= 0 {
+			return linked[i], true
 		}
 	}
 

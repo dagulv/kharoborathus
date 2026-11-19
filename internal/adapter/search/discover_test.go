@@ -445,3 +445,25 @@ func TestInsertQueryConflictSkipsDepth(t *testing.T) {
 		t.Errorf("got %s created %v, want existing acquisition %s", id, created, want)
 	}
 }
+
+func TestMatchEntityPriority(t *testing.T) {
+	byTerm := linkedEntity("volvo_group", domain.StatusActive, "volvo cars")
+	byKey := linkedEntity("volvo_cars", domain.StatusActive)
+	byAlias := domain.LinkedEntity{Key: "other", Aliases: []string{"volvo_cars"}}
+
+	cases := map[string]struct {
+		linked []domain.LinkedEntity
+		want   string
+	}{
+		"key beats earlier term":   {[]domain.LinkedEntity{byTerm, byKey}, "volvo_cars"},
+		"key beats earlier alias":  {[]domain.LinkedEntity{byAlias, byKey}, "volvo_cars"},
+		"alias beats earlier term": {[]domain.LinkedEntity{byTerm, byAlias}, "other"},
+		"term when alone":          {[]domain.LinkedEntity{byTerm}, "volvo_group"},
+	}
+
+	for name, c := range cases {
+		if got, ok := matchEntity("Volvo Cars", c.linked); !ok || got.Key != c.want {
+			t.Errorf("%s: got %q, %v", name, got.Key, ok)
+		}
+	}
+}
