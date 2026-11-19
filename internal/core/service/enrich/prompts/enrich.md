@@ -26,6 +26,8 @@ Rules for tags:
 - Existing tag keys: {{ if .Keys }}{{ join .Keys ", " }}{{ else }}none{{ end }}
 - Categories: {{ if .Categories }}{{ join .Categories ", " }}{{ else }}none{{ end }}
 {{ .Events }}
+- Title: {{ .Title }}
+- Authors: {{ if .Authors }}{{ join .Authors ", " }}{{ else }}unknown{{ end }}
 - Article (markdown): provided below:
 {{ .Article }}
 {{ end }}

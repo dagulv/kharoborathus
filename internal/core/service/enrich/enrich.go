@@ -147,7 +147,7 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		categoryKeys[i] = c.Key
 	}
 
-	prompt, err := userPrompt(p.Lang, set.keys, quality, categoryKeys, p.Content)
+	prompt, err := userPrompt(p.Lang, p.Title, p.Authors, set.keys, quality, categoryKeys, p.Content)
 	if err != nil {
 		return domain.Post{}, discovery.Found{}, err
 	}

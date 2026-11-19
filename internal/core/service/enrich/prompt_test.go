@@ -24,12 +24,12 @@ func TestUserPrompt(t *testing.T) {
 		keys[i] = fmt.Sprintf("k%d", i)
 	}
 
-	p, err := userPrompt("sv", keys, []string{"acquisition"}, []string{"energy", "finance"}, strings.Repeat("å", 25_000))
+	p, err := userPrompt("sv", "Volvo köper", []string{"TT", "Anna Berg"}, keys, []string{"acquisition"}, []string{"energy", "finance"}, strings.Repeat("å", 25_000))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, s := range []string{"Language: sv", "k299", "Quality tag keys: acquisition", "Categories: energy, finance"} {
+	for _, s := range []string{"Language: sv", "k299", "Quality tag keys: acquisition", "Categories: energy, finance", "Title: Volvo köper", "Authors: TT, Anna Berg"} {
 		if !strings.Contains(p, s) {
 			t.Errorf("user prompt misses %q", s)
 		}
@@ -41,12 +41,14 @@ func TestUserPrompt(t *testing.T) {
 }
 
 func TestUserPromptNoCategories(t *testing.T) {
-	p, err := userPrompt("sv", nil, nil, nil, "text")
+	p, err := userPrompt("sv", "", nil, nil, nil, nil, "text")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(p, "Categories: none") {
-		t.Errorf("user prompt misses %q", "Categories: none")
+	for _, s := range []string{"Categories: none", "Authors: unknown"} {
+		if !strings.Contains(p, s) {
+			t.Errorf("user prompt misses %q", s)
+		}
 	}
 }
