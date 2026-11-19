@@ -374,6 +374,7 @@ func TestListUnfinishedPriority(t *testing.T) {
 		('focused', 'F', 'company', true),
 		('strong', 'S', 'company', false),
 		('weak', 'W', 'company', false)`)
+	exec(t, db, `INSERT INTO entities (key, name, kind, focus, enabled) VALUES ('disabled', 'D', 'company', true, false)`)
 
 	// Inserted out of the wanted order, so created_at alone cannot satisfy the test.
 	queries := []struct {
@@ -387,6 +388,8 @@ func TestListUnfinishedPriority(t *testing.T) {
 		{"paid", "paid", "acquisition", 0, true},
 		{"unknown", "unknown", "acquisition", 0, false},
 		{"focused", "focused", "acquisition", 0, false},
+		{"disabled", "disabled", "acquisition", 0, false},
+		{"disabled depth", "disabled", "depth", 0, false},
 	}
 
 	ids := map[string]string{}

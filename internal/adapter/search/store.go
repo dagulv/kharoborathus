@@ -55,6 +55,7 @@ func (s *Store) GetQuery(ctx context.Context, id string) (i SearchItem, err erro
 }
 
 // Paid results waiting for the filter go first. A query whose posts are all gone cannot be searched.
+// A disabled entity is never searched. A query with no entity row still is.
 func (s *Store) ListUnfinished(ctx context.Context, windowDays, limit int) ([]string, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT q.id FROM discovery_search_queries q
@@ -62,6 +63,7 @@ func (s *Store) ListUnfinished(ctx context.Context, windowDays, limit int) ([]st
 		WHERE (q.searched_at IS NULL OR (q.result IS NOT NULL AND NOT q.result ? 'kept'))
 			AND q.created_at > now() - make_interval(days => $1)
 			AND EXISTS (SELECT 1 FROM discovery_search_query_posts qp WHERE qp.query_id = q.id)
+			AND COALESCE(e.enabled, true)
 		ORDER BY q.searched_at IS NULL,
 			q.action = 'depth',
 			COALESCE(e.focus, false) DESC,
