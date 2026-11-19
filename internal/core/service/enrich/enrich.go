@@ -142,7 +142,12 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		}
 	}
 
-	prompt, err := userPrompt(p.Lang, set.keys, quality, p.Content)
+	categoryKeys := make([]string, len(set.categories))
+	for i, c := range set.categories {
+		categoryKeys[i] = c.Key
+	}
+
+	prompt, err := userPrompt(p.Lang, set.keys, quality, categoryKeys, p.Content)
 	if err != nil {
 		return domain.Post{}, discovery.Found{}, err
 	}
@@ -168,6 +173,15 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 			continue
 		}
 
+		categories := make([]string, 0, len(t.Categories))
+
+		for _, c := range t.Categories {
+			if c = discovery.TagKey(c); strings.Trim(c, "_") != "" {
+				categories = append(categories, c)
+			}
+		}
+
+		t.Categories = categories
 		proposals = append(proposals, t)
 	}
 

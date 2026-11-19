@@ -18,6 +18,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/dbtest"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
+	"github.com/jackc/pgx/v5"
 )
 
 type fakeLLM struct {
@@ -545,5 +546,38 @@ func TestEnrichCallsCarryRawPostID(t *testing.T) {
 		if got.msg != "probe" || got.attrs["raw_post_id"] != raw.ID || got.attrs["step"] != domain.StepEnrich {
 			t.Errorf("%s: record %+v", name, got)
 		}
+	}
+}
+
+func TestEnrichProposalCategories(t *testing.T) {
+	f := setup(t)
+
+	if _, err := f.db.Exec(context.Background(), `INSERT INTO categories (key) VALUES ('energy'), ('real_estate')`); err != nil {
+		t.Fatal(err)
+	}
+
+	f.llm.answer = answer{Summary: "s", Tags: []postgres.Proposal{{Key: "solar_park", Term: "solpark", Categories: []string{"Energy ", "real estate", " - "}}}}
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := f.db.Query(context.Background(), `SELECT category FROM category_tags WHERE tag = 'solar_park' ORDER BY category`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{"energy", "real_estate"}; !slices.Equal(got, want) {
+		t.Errorf("categories %v", got)
+	}
+
+	if want := "Categories: deals, energy, real_estate"; !strings.Contains(f.llm.prompt, want) {
+		t.Errorf("prompt misses %q", want)
 	}
 }
