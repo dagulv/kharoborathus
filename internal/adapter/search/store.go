@@ -22,13 +22,15 @@ func NewStore(db *database.Database) Store {
 }
 
 // The earliest linked post sets the search language and the own host for kept URLs.
+// A disabled entity reads as done, so a queued id or a stale catch-up batch is never searched.
 func (s *Store) GetQuery(ctx context.Context, id string) (i SearchItem, err error) {
 	var results []byte
 
 	if err = s.db.QueryRow(ctx, `
 		SELECT q.id, q.normalized_entity, q.action, q.query, q.searched_at, p.lang, p.id, d.base_url,
-			q.result->'results', q.searched_at IS NOT NULL AND (q.result IS NULL OR q.result ? 'kept')
+			q.result->'results', NOT COALESCE(e.enabled, true) OR (q.searched_at IS NOT NULL AND (q.result IS NULL OR q.result ? 'kept'))
 		FROM discovery_search_queries q
+		LEFT JOIN entities e ON e.key = q.normalized_entity
 		CROSS JOIN LATERAL (
 			SELECT p.id, p.lang, p.domain_id
 			FROM discovery_search_query_posts qp
