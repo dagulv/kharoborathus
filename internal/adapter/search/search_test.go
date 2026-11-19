@@ -382,7 +382,7 @@ func TestListUnfinishedPriority(t *testing.T) {
 		paid                 bool
 	}{
 		{"weak", "weak", "acquisition", 1, false},
-		{"depth", "unknown", "depth", 0, false},
+		{"depth", "focused", "depth", 0, false},
 		{"strong", "strong", "acquisition", 5, false},
 		{"paid", "paid", "acquisition", 0, true},
 		{"unknown", "unknown", "acquisition", 0, false},
