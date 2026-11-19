@@ -15,8 +15,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Empty returns the conn string of an unmigrated database, dropped when the test ends.
 // Needs a postgres with the Swedish dictionary files, such as the infra/db image.
-func New(t *testing.T) *database.Database {
+func Empty(t *testing.T) string {
 	t.Helper()
 
 	conn := os.Getenv("TEST_POSTGRES_CONN")
@@ -38,25 +39,7 @@ func New(t *testing.T) *database.Database {
 		t.Fatalf("err create database: %v", err)
 	}
 
-	u, err := url.Parse(conn)
-	if err != nil {
-		t.Fatalf("err parse conn: %v", err)
-	}
-
-	u.Path = "/" + name
-
-	if err := migrations.Migrate(ctx, u.String(), slog.New(slog.DiscardHandler)); err != nil {
-		t.Fatalf("err migrate: %v", err)
-	}
-
-	db, err := database.NewDatabase(ctx, u.String())
-	if err != nil {
-		t.Fatalf("err open database: %v", err)
-	}
-
 	t.Cleanup(func() {
-		db.Close()
-
 		admin, err := pgx.Connect(ctx, conn)
 		if err != nil {
 			t.Errorf("err connect admin: %v", err)
@@ -68,6 +51,47 @@ func New(t *testing.T) *database.Database {
 			t.Errorf("err drop database: %v", err)
 		}
 	})
+
+	u, err := url.Parse(conn)
+	if err != nil {
+		t.Fatalf("err parse conn: %v", err)
+	}
+
+	u.Path = "/" + name
+
+	return u.String()
+}
+
+// Seeded is migrated with the category and tag seed kept.
+func Seeded(t *testing.T) *database.Database {
+	t.Helper()
+
+	connString := Empty(t)
+	ctx := context.Background()
+
+	if err := migrations.Migrate(ctx, connString, slog.New(slog.DiscardHandler)); err != nil {
+		t.Fatalf("err migrate: %v", err)
+	}
+
+	db, err := database.NewDatabase(ctx, connString)
+	if err != nil {
+		t.Fatalf("err open database: %v", err)
+	}
+
+	t.Cleanup(db.Close)
+
+	return db
+}
+
+// New is Seeded without the seed, so tests keep their own fixtures.
+func New(t *testing.T) *database.Database {
+	t.Helper()
+
+	db := Seeded(t)
+
+	if _, err := db.Exec(context.Background(), `TRUNCATE category_tags, category_terms, categories, tag_aliases, tag_terms, tags`); err != nil {
+		t.Fatalf("err empty seed: %v", err)
+	}
 
 	return db
 }
