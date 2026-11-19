@@ -27,6 +27,7 @@ Grow beyond hand-picked sources without losing quality. Scale slowly and prefer 
 | [Extraction](extraction.md)               | done   | One LLM-generated CSS rule per field: feed links, content, title, authors and postedAt.                |
 | [Enrich](enrich.md)                       | done   | Step 2: accepted raw posts become posts with a summary, tags and discovery, off peak.                  |
 | [Categories](categories.md)               | in progress | Groups of tags: two-stage Jev, categories for new tags, tag promotion and the public category filter.  |
+| [Entities](entities.md)                   | in progress | Specific topics posts are about: extraction, promotion, discovery gating, depth searches and the public API. |
 
 ## Flow
 
