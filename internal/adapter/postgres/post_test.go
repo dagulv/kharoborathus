@@ -477,7 +477,12 @@ func TestListAdminPosts(t *testing.T) {
 		INSERT INTO tags (key, status) VALUES ('buyback', 'active'), ('proposed-x', 'proposed');
 		INSERT INTO categories (key, enabled) VALUES ('finance', false), ('empty', true);
 		INSERT INTO category_tags (category, tag) VALUES ('finance', 'proposed-x');
+		INSERT INTO entities (key, name, kind) VALUES ('volvo_cars', 'Volvo Cars', 'company'), ('unlinked', 'Unlinked', 'company');
 		`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.Exec(ctx, `INSERT INTO post_entities (post_id, entity) VALUES ($1, 'volvo_cars')`, newest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -510,6 +515,9 @@ func TestListAdminPosts(t *testing.T) {
 		"category":         {domain.AdminPostFilter{Category: "finance", Page: 1}, 1},
 		"empty category":   {domain.AdminPostFilter{Category: "empty", Page: 1}, 0},
 		"unknown category": {domain.AdminPostFilter{Category: "nope", Page: 1}, 0},
+		"entity":           {domain.AdminPostFilter{Entity: "volvo_cars", Page: 1}, 1},
+		"unlinked entity":  {domain.AdminPostFilter{Entity: "unlinked", Page: 1}, 0},
+		"unknown entity":   {domain.AdminPostFilter{Entity: "nope", Page: 1}, 0},
 		"published":        {domain.AdminPostFilter{Status: "published", Page: 1}, 3},
 		"rejected":         {domain.AdminPostFilter{Status: "rejected", Page: 1}, 0},
 	}

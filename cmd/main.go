@@ -203,7 +203,7 @@ func app(ctx context.Context) (err error) {
 	protected := http.NewServeMux()
 	source.Routes(protected, &sourceStore, syncs, backfills, fetcher.NewProber(l.WithGroup("probe"), calls), l.WithGroup("source"))
 	traceStore := postgres.NewTraceStore(db)
-	admin.Routes(protected, backfills, resyncs, admin.Stores{Stats: &statsStore, Sources: &sourceStore, Posts: &postStore, Tags: &tagStore, Logs: &logStore, Traces: &traceStore, Categories: &categoryStore}, l.WithGroup("admin"))
+	admin.Routes(protected, backfills, resyncs, searchIDs, admin.Stores{Stats: &statsStore, Sources: &sourceStore, Posts: &postStore, Tags: &tagStore, Logs: &logStore, Traces: &traceStore, Categories: &categoryStore, Entities: &entityStore}, l.WithGroup("admin"))
 
 	adminMux := http.NewServeMux()
 	auth.Routes(adminMux, protected, &userStore, &sessionStore, l.WithGroup("auth"))

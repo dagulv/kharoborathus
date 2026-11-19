@@ -20,10 +20,11 @@ type Stores struct {
 	Traces  *postgres.TraceStore
 
 	Categories *postgres.CategoryStore
+	Entities   *postgres.EntityStore
 }
 
 // backfills is the queue source.Routes serves POST /admin/sources/{id}/backfill from.
-func Routes(mux *http.ServeMux, backfills chan<- domain.Source, resyncs chan<- domain.Resync, s Stores, l *slog.Logger) {
+func Routes(mux *http.ServeMux, backfills chan<- domain.Source, resyncs chan<- domain.Resync, searchIDs chan<- string, s Stores, l *slog.Logger) {
 	mux.HandleFunc("GET /admin/stats", getStats(s.Stats, l))
 	mux.HandleFunc("GET /admin/sources", listSources(s.Sources, l))
 	mux.HandleFunc("POST /admin/sources", createSource(s.Sources, backfills, l))
@@ -39,6 +40,11 @@ func Routes(mux *http.ServeMux, backfills chan<- domain.Source, resyncs chan<- d
 	mux.HandleFunc("GET /admin/categories", listCategories(s.Categories, l))
 	mux.HandleFunc("POST /admin/categories", createCategory(s.Categories, l))
 	mux.HandleFunc("PATCH /admin/categories/{key}", setCategoryEnabled(s.Categories, l))
+	mux.HandleFunc("GET /admin/entities", listEntities(s.Entities, l))
+	mux.HandleFunc("GET /admin/entities/{key}", getEntity(s.Entities, l))
+	mux.HandleFunc("PATCH /admin/entities/{key}", patchEntity(s.Entities, searchIDs, l))
+	mux.HandleFunc("PUT /admin/entities/{key}/tags", setEntityTags(s.Entities, l))
+	mux.HandleFunc("POST /admin/entities/merge", mergeEntities(s.Entities, l))
 	mux.HandleFunc("GET /admin/logs", listLogs(s.Logs, l))
 	mux.HandleFunc("GET /admin/logs/{id}", getLog(s.Logs, l))
 }

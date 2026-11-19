@@ -629,3 +629,351 @@ func TestLinkEntitiesAliasGuard(t *testing.T) {
 		t.Errorf("merged key re-created: linked %v", ok)
 	}
 }
+
+func adminKeys(es []domain.Entity) []string {
+	keys := make([]string, 0, len(es))
+
+	for _, e := range es {
+		keys = append(keys, e.Key)
+	}
+
+	return keys
+}
+
+func TestListAdminEntities(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+
+	f.exec(
+		`INSERT INTO entities (key, name, kind, status, focus) VALUES ('a_focus', 'Aye', 'company', 'active', true)`,
+		`INSERT INTO entities (key, name, kind, status) VALUES ('b_strong', 'Bee', 'technology', 'active'), ('c_proposed', 'Cee', 'company', 'proposed')`,
+		`INSERT INTO entities (key, name, kind, status, enabled) VALUES ('d_disabled', 'Dee Name', 'company', 'active', false)`,
+		`INSERT INTO entity_terms (key, lang, term) VALUES ('c_proposed', 'sv', 'Ceeterm')`,
+		`INSERT INTO entity_tags (entity, tag) VALUES ('b_strong', 'batteries'), ('b_strong', 'old_tech')`,
+	)
+
+	for i, key := range []string{"b_strong", "b_strong", "c_proposed"} {
+		f.linkKeys(f.post(i%3, "sv"), key)
+	}
+
+	yes, no := true, false
+
+	cases := map[string]struct {
+		filter domain.AdminEntityFilter
+		want   []string
+	}{
+		"focus then strength": {domain.AdminEntityFilter{}, []string{"a_focus", "b_strong", "c_proposed", "d_disabled"}},
+		"kind":                {domain.AdminEntityFilter{Kind: "technology"}, []string{"b_strong"}},
+		"status":              {domain.AdminEntityFilter{Status: "proposed"}, []string{"c_proposed"}},
+		"focused":             {domain.AdminEntityFilter{Focus: &yes}, []string{"a_focus"}},
+		"not focused":         {domain.AdminEntityFilter{Focus: &no}, []string{"b_strong", "c_proposed", "d_disabled"}},
+		"search key":          {domain.AdminEntityFilter{Search: "STRONG"}, []string{"b_strong"}},
+		"search name":         {domain.AdminEntityFilter{Search: "dee n"}, []string{"d_disabled"}},
+		"search term":         {domain.AdminEntityFilter{Search: "ceeterm"}, []string{"c_proposed"}},
+		"search none":         {domain.AdminEntityFilter{Search: "zzz"}, []string{}},
+		"kind and status":     {domain.AdminEntityFilter{Kind: "company", Status: "active"}, []string{"a_focus", "d_disabled"}},
+	}
+
+	for name, c := range cases {
+		c.filter.Page = 1
+
+		got, err := f.s.ListAdminEntities(ctx, c.filter)
+		if err != nil || got.Entities == nil || !slices.Equal(adminKeys(got.Entities), c.want) || got.Total != len(c.want) || got.Page != 1 || got.PageSize != 50 {
+			t.Errorf("%s: %+v, %v", name, got, err)
+		}
+	}
+
+	all, err := f.s.ListAdminEntities(ctx, domain.AdminEntityFilter{Page: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b := all.Entities[1]
+	if b.Strength != 2 || b.Status != "active" || !b.Enabled || b.Focus || b.Name != "Bee" || !slices.Equal(b.Tags, []string{"batteries", "old_tech"}) || b.CreatedAt.IsZero() {
+		t.Errorf("b_strong %+v", b)
+	}
+
+	if c := all.Entities[2]; !slices.Equal(c.Terms["sv"], []string{"Ceeterm"}) || c.Tags == nil {
+		t.Errorf("c_proposed %+v", c)
+	}
+
+	page2, err := f.s.ListAdminEntities(ctx, domain.AdminEntityFilter{Page: 2})
+	if err != nil || page2.Entities == nil || len(page2.Entities) != 0 || page2.Total != 4 {
+		t.Errorf("page 2: %+v, %v", page2, err)
+	}
+}
+
+func TestGetAdminEntity(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+	f.seedVolvo()
+
+	f.exec(
+		`INSERT INTO entity_aliases (alias, key) VALUES ('vcc', 'volvo_cars')`,
+		`INSERT INTO entity_tags (entity, tag) VALUES ('volvo_cars', 'batteries'), ('volvo_cars', 'old_tech')`,
+	)
+
+	f.linkKeys(f.post(0, "en"), "volvo_cars")
+	f.linkKeys(f.post(1, "en"), "volvo_cars")
+	f.linkKeys(f.post(-1, "en"), "volvo_cars")
+	old := f.post(2, "en")
+	f.linkKeys(old, "volvo_cars")
+	f.exec(fmt.Sprintf(`UPDATE post_entities SET created_at = now() - interval '31 days' WHERE post_id = '%s'`, old.ID))
+
+	for i := range 21 {
+		f.exec(fmt.Sprintf(`INSERT INTO discovery_search_queries (normalized_entity, action, query, created_at) VALUES ('volvo_cars', 'buyback', 'q%d', now() - interval '%d minutes')`, i, i))
+	}
+
+	f.exec(`INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ('other', 'buyback', 'other')`)
+
+	e, err := f.s.GetAdminEntity(ctx, "volvo_cars")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if e.Key != "volvo_cars" || e.Name != "Volvo Cars" || e.Kind != "company" || e.Status != "active" || e.Strength != 3 || e.Support != 2 {
+		t.Errorf("entity %+v", e)
+	}
+
+	if !slices.Equal(e.Aliases, []string{"vcc", "volvo_car_corporation"}) || !slices.Equal(e.Tags, []string{"batteries", "old_tech"}) || !slices.Equal(e.Terms["en"], []string{"Volvo Cars"}) {
+		t.Errorf("aliases %v, tags %v, terms %v", e.Aliases, e.Tags, e.Terms)
+	}
+
+	if len(e.Queries) != 20 || e.Queries[0].Query != "q0" || e.Queries[19].Query != "q19" || e.Queries[0].NormalizedEntity != "volvo_cars" || e.Queries[0].Result != nil {
+		t.Errorf("queries %d %+v", len(e.Queries), e.Queries)
+	}
+
+	for _, key := range []string{"nope", "volvo_car_corporation"} {
+		if _, err := f.s.GetAdminEntity(ctx, key); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("%s: err %v", key, err)
+		}
+	}
+
+	f.exec(`INSERT INTO entities (key, name, kind) VALUES ('bare', 'Bare', 'concept')`)
+
+	bare, err := f.s.GetAdminEntity(ctx, "bare")
+	if err != nil || bare.Aliases == nil || bare.Queries == nil || bare.Tags == nil || bare.Terms == nil || bare.Support != 0 {
+		t.Errorf("bare %+v, %v", bare, err)
+	}
+}
+
+func (f *entityFixture) linkAt(p domain.Post, key, ago string) {
+	f.t.Helper()
+
+	f.exec(fmt.Sprintf(`INSERT INTO post_entities (post_id, entity, created_at) VALUES ('%s', '%s', now() - interval '%s')`, p.ID, key, ago))
+}
+
+func TestPatchEntityFocus(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+	yes, no := true, false
+
+	f.exec(
+		`INSERT INTO entities (key, name, kind) VALUES ('volvo_cars', 'Volvo Cars', 'company'), ('northvolt', 'Northvolt', 'company'), ('lonely', 'Lonely', 'concept'), ('blank', '', 'concept')`,
+		`INSERT INTO entity_terms (key, lang, term) VALUES ('volvo_cars', 'sv', 'Volvo Personvagnar'), ('volvo_cars', 'sv', 'Volvo Cars Sverige'), ('volvo_cars', 'en', 'Volvo'), ('northvolt', 'en', 'Northvolt AB')`,
+	)
+
+	newest := f.post(0, "sv")
+	f.linkAt(f.post(1, "en"), "volvo_cars", "2 days")
+	f.linkAt(newest, "volvo_cars", "1 day")
+	f.linkAt(f.post(2, "sv"), "northvolt", "1 day")
+	f.linkAt(f.post(2, "sv"), "blank", "1 day")
+
+	id, err := f.s.PatchEntity(ctx, "volvo_cars", domain.EntityPatch{Focus: &yes})
+	if err != nil || id == "" {
+		t.Fatalf("focus on: %q, %v", id, err)
+	}
+
+	if n := f.count(`
+		SELECT count(*) FROM discovery_search_queries q JOIN discovery_search_query_posts qp ON qp.query_id = q.id
+		WHERE q.id = $1 AND q.action = 'depth' AND q.normalized_entity = 'volvo_cars' AND q.query = 'Volvo Cars Sverige' AND qp.post_id = $2
+		`, id, newest.ID); n != 1 || f.count(`SELECT count(*) FROM discovery_search_query_posts`) != 1 {
+		t.Errorf("depth query %d", n)
+	}
+
+	if f.count(`SELECT count(*) FROM entities WHERE key = 'volvo_cars' AND focus`) != 1 {
+		t.Error("focus not set")
+	}
+
+	if id, err := f.s.PatchEntity(ctx, "northvolt", domain.EntityPatch{Focus: &yes}); err != nil || f.count(`SELECT count(*) FROM discovery_search_queries WHERE id = $1 AND query = 'Northvolt'`, id) != 1 {
+		t.Errorf("name fallback: %q, %v", id, err)
+	}
+
+	for _, key := range []string{"lonely", "blank"} {
+		if id, err := f.s.PatchEntity(ctx, key, domain.EntityPatch{Focus: &yes}); err != nil || id != "" || f.count(`SELECT count(*) FROM entities WHERE key = $1 AND focus`, key) != 1 {
+			t.Errorf("%s: %q, %v", key, id, err)
+		}
+	}
+
+	if f.count(`SELECT count(*) FROM discovery_search_queries`) != 2 {
+		t.Error("queued without a post or text")
+	}
+
+	if id, err := f.s.PatchEntity(ctx, "volvo_cars", domain.EntityPatch{Focus: &no}); err != nil || id != "" || f.count(`SELECT count(*) FROM discovery_search_queries WHERE normalized_entity = 'volvo_cars' AND searched_at IS NULL`) != 1 {
+		t.Errorf("focus off: %q, %v", id, err)
+	}
+
+	if f.count(`SELECT count(*) FROM entities WHERE key = 'volvo_cars' AND NOT focus`) != 1 {
+		t.Error("focus not cleared")
+	}
+}
+
+func TestPatchEntityFocusTwice(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+	yes, no := true, false
+
+	f.seedVolvo()
+	f.linkKeys(f.post(0, "en"), "volvo_cars")
+
+	for i, focus := range []*bool{&yes, &no, &yes} {
+		id, err := f.s.PatchEntity(ctx, "volvo_cars", domain.EntityPatch{Focus: focus})
+		if err != nil || (id != "") != (i == 0) {
+			t.Errorf("patch %d: %q, %v", i, id, err)
+		}
+	}
+
+	if n := f.count(`SELECT count(*) FROM discovery_search_queries WHERE action = 'depth'`); n != 1 {
+		t.Errorf("depth queries %d", n)
+	}
+}
+
+func TestPatchEntity(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+	yes, no := true, false
+	str := func(s string) *string { return &s }
+
+	f.seedVolvo()
+
+	if _, err := f.s.PatchEntity(ctx, "volvo_cars", domain.EntityPatch{Enabled: &no, Kind: str(" Technology "), Name: str("  Volvo Car Group ")}); err != nil {
+		t.Fatal(err)
+	}
+
+	if f.count(`SELECT count(*) FROM entities WHERE key = 'volvo_cars' AND NOT enabled AND kind = 'technology' AND name = 'Volvo Car Group' AND NOT focus`) != 1 {
+		t.Error("patch not saved")
+	}
+
+	if _, err := f.s.PatchEntity(ctx, "volvo_cars", domain.EntityPatch{}); err != nil || f.count(`SELECT count(*) FROM entities WHERE key = 'volvo_cars' AND NOT enabled AND kind = 'technology'`) != 1 {
+		t.Errorf("empty patch: %v", err)
+	}
+
+	cases := map[string]struct {
+		patch domain.EntityPatch
+		want  error
+	}{
+		"kind":       {domain.EntityPatch{Focus: &yes, Kind: str("person")}, domain.ErrUnknownKind},
+		"empty name": {domain.EntityPatch{Focus: &yes, Name: str("  ")}, domain.ErrEntityName},
+		"long name":  {domain.EntityPatch{Focus: &yes, Name: str(strings.Repeat("å", 201))}, domain.ErrEntityName},
+	}
+
+	for name, c := range cases {
+		if _, err := f.s.PatchEntity(ctx, "volvo_cars", c.patch); !errors.Is(err, c.want) {
+			t.Errorf("%s: err %v", name, err)
+		}
+	}
+
+	if f.count(`SELECT count(*) FROM entities WHERE key = 'volvo_cars' AND NOT focus AND name = 'Volvo Car Group'`) != 1 {
+		t.Error("invalid patch saved")
+	}
+
+	if _, err := f.s.PatchEntity(ctx, "volvo_cars", domain.EntityPatch{Name: str(strings.Repeat("å", 200))}); err != nil {
+		t.Errorf("200 runes: %v", err)
+	}
+
+	if _, err := f.s.PatchEntity(ctx, "nope", domain.EntityPatch{Enabled: &yes}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("unknown: err %v", err)
+	}
+}
+
+func TestSetEntityTags(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+	f.seedVolvo()
+	f.exec(`INSERT INTO entity_tags (entity, tag) VALUES ('volvo_cars', 'batteries')`)
+
+	tags := func() []string {
+		rows, err := f.db.Query(ctx, `SELECT tag FROM entity_tags WHERE entity = 'volvo_cars' ORDER BY tag`)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return got
+	}
+
+	if err := f.s.SetEntityTags(ctx, "volvo_cars", []string{"old_tech", "new_tech", "old_tech"}); err != nil || !slices.Equal(tags(), []string{"new_tech", "old_tech"}) {
+		t.Errorf("replace: %v, %v", tags(), err)
+	}
+
+	if err := f.s.SetEntityTags(ctx, "volvo_cars", []string{"batteries", "nope"}); !errors.Is(err, domain.ErrUnknownTag) || !slices.Equal(tags(), []string{"new_tech", "old_tech"}) {
+		t.Errorf("unknown tag: %v, %v", tags(), err)
+	}
+
+	if err := f.s.SetEntityTags(ctx, "nope", []string{"batteries"}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("unknown entity: %v", err)
+	}
+
+	if err := f.s.SetEntityTags(ctx, "volvo_cars", []string{}); err != nil || len(tags()) != 0 {
+		t.Errorf("clear: %v, %v", tags(), err)
+	}
+}
+
+func TestMergeEntities(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+
+	f.exec(
+		`INSERT INTO entities (key, name, kind, focus) VALUES ('volvo_car_corp', 'Volvo Car Corp', 'company', true)`,
+		`INSERT INTO entities (key, name, kind, status) VALUES ('volvo_cars', 'Volvo Cars', 'company', 'active'), ('other', 'Other', 'company', 'active')`,
+		`INSERT INTO entity_aliases (alias, key) VALUES ('vcc', 'volvo_car_corp')`,
+		`INSERT INTO entity_terms (key, lang, term) VALUES ('volvo_car_corp', 'en', 'Volvo Car Corp'), ('volvo_car_corp', 'en', 'volvo cars'), ('volvo_cars', 'en', 'Volvo Cars')`,
+		`INSERT INTO entity_tags (entity, tag) VALUES ('volvo_car_corp', 'batteries'), ('volvo_car_corp', 'new_tech'), ('volvo_cars', 'batteries')`,
+		`INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ('volvo_car_corp', 'buyback', 'q1'), ('volvo_cars', 'buyback', 'q2'), ('other', 'buyback', 'q3')`,
+	)
+
+	both, only := f.post(0, "en"), f.post(1, "en")
+	f.linkKeys(both, "volvo_car_corp", "volvo_cars")
+	f.linkAt(only, "volvo_car_corp", "3 days")
+
+	if err := f.s.MergeEntities(ctx, "volvo_car_corp", "volvo_cars"); err != nil {
+		t.Fatal(err)
+	}
+
+	for q, want := range map[string]int{
+		`SELECT count(*) FROM entities WHERE key = 'volvo_car_corp'`:                                                0,
+		`SELECT count(*) FROM entities WHERE key = 'volvo_cars' AND focus AND status = 'active'`:                    1,
+		`SELECT count(*) FROM post_entities WHERE entity = 'volvo_cars'`:                                            2,
+		`SELECT count(*) FROM post_entities WHERE entity = 'volvo_cars' AND created_at < now() - interval '2 days'`: 1,
+		`SELECT count(*) FROM post_entities`:                                                                        2,
+		`SELECT count(*) FROM entity_terms WHERE key = 'volvo_cars'`:                                                2,
+		`SELECT count(*) FROM entity_terms WHERE key = 'volvo_cars' AND term = 'Volvo Car Corp'`:                    1,
+		`SELECT count(*) FROM entity_tags WHERE entity = 'volvo_cars'`:                                              2,
+		`SELECT count(*) FROM entity_aliases WHERE key = 'volvo_cars' AND alias IN ('vcc', 'volvo_car_corp')`:       2,
+		`SELECT count(*) FROM entity_aliases`:                                                                       2,
+		`SELECT count(*) FROM discovery_search_queries WHERE normalized_entity = 'volvo_cars'`:                      2,
+		`SELECT count(*) FROM discovery_search_queries WHERE normalized_entity = 'other'`:                           1,
+	} {
+		if got := f.count(q); got != want {
+			t.Errorf("%s: got %d, want %d", q, got, want)
+		}
+	}
+
+	if err := f.s.MergeEntities(ctx, "volvo_cars", "volvo_cars"); !errors.Is(err, domain.ErrMergeEntitySelf) {
+		t.Errorf("self: err %v", err)
+	}
+
+	for _, c := range [][2]string{{"other", "nope"}, {"nope", "other"}, {"other", "vcc"}} {
+		if err := f.s.MergeEntities(ctx, c[0], c[1]); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("%v: err %v", c, err)
+		}
+	}
+
+	if f.count(`SELECT count(*) FROM entities WHERE key = 'other'`) != 1 {
+		t.Error("failed merge deleted the source")
+	}
+}

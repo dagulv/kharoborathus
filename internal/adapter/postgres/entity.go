@@ -115,8 +115,8 @@ func (s *EntityStore) LinkEntities(ctx context.Context, tx pgx.Tx, post domain.P
 	}
 
 	for _, key := range slices.Compact(slices.Sorted(slices.Values(targets))) {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('entity/' || $1))`, key); err != nil {
-			return nil, fmt.Errorf("err lock entity %s: %w", key, err)
+		if err := lockEntity(ctx, tx, key); err != nil {
+			return nil, err
 		}
 	}
 
@@ -283,18 +283,24 @@ func isWordRune(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
-const publicEntityQuery = `
-	SELECT e.key, e.name, e.kind,
+const (
+	entityTermsColumn = `
 		COALESCE((
 			SELECT jsonb_object_agg(g.lang, g.terms)
 			FROM (SELECT t.lang, array_agg(t.term ORDER BY t.term) AS terms FROM entity_terms t WHERE t.key = e.key GROUP BY t.lang) g
-		), '{}'),
+		), '{}')`
+
+	entityStrengthColumn = `
+		(SELECT count(*) FROM post_entities pe WHERE pe.entity = e.key AND pe.created_at > now() - interval '30 days') AS strength`
+)
+
+const publicEntityQuery = `
+	SELECT e.key, e.name, e.kind,` + entityTermsColumn + `,
 		COALESCE((
 			SELECT array_agg(t.key ORDER BY t.key)
 			FROM entity_tags et JOIN tags t ON t.key = et.tag
 			WHERE et.entity = e.key AND t.enabled AND t.status = 'active'
-		), '{}'),
-		(SELECT count(*) FROM post_entities pe WHERE pe.entity = e.key AND pe.created_at > now() - interval '30 days') AS strength
+		), '{}'),` + entityStrengthColumn + `
 	FROM entities e
 	WHERE e.enabled AND e.status = 'active'`
 
@@ -349,4 +355,323 @@ func (s *EntityStore) GetPublic(ctx context.Context, key string) (domain.PublicE
 	}
 
 	return e, nil
+}
+
+const (
+	adminEntityColumns = `e.key, e.name, e.kind, e.status, e.enabled, e.focus,` + entityTermsColumn + `,
+		COALESCE((SELECT array_agg(et.tag ORDER BY et.tag) FROM entity_tags et WHERE et.entity = e.key), '{}'),` + entityStrengthColumn + `,
+		e.created_at`
+
+	adminEntityWhere = `
+		($1 = '' OR e.kind = $1)
+		AND ($2 = '' OR e.status = $2)
+		AND ($3::boolean IS NULL OR e.focus = $3)
+		AND ($4 = '' OR e.key ILIKE '%' || $4 || '%' OR e.name ILIKE '%' || $4 || '%'
+			OR EXISTS (SELECT 1 FROM entity_terms t WHERE t.key = e.key AND t.term ILIKE '%' || $4 || '%'))`
+)
+
+func scanAdminEntity(row pgx.CollectableRow) (e domain.Entity, err error) {
+	err = row.Scan(&e.Key, &e.Name, &e.Kind, &e.Status, &e.Enabled, &e.Focus, &e.Terms, &e.Tags, &e.Strength, &e.CreatedAt)
+
+	return
+}
+
+func (s *EntityStore) ListAdminEntities(ctx context.Context, f domain.AdminEntityFilter) (domain.EntityPage, error) {
+	page := domain.EntityPage{Page: f.Page, PageSize: adminPageSize}
+	args := []any{f.Kind, f.Status, f.Focus, f.Search}
+
+	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM entities e WHERE `+adminEntityWhere, args...).Scan(&page.Total); err != nil {
+		return page, fmt.Errorf("err count admin entities: %w", err)
+	}
+
+	rows, err := s.db.Query(ctx, `
+		SELECT `+adminEntityColumns+`
+		FROM entities e
+		WHERE `+adminEntityWhere+`
+		ORDER BY e.focus DESC, strength DESC, e.key
+		LIMIT $5 OFFSET $6
+		`, append(args, adminPageSize, (f.Page-1)*adminPageSize)...)
+	if err != nil {
+		return page, fmt.Errorf("err query admin entities: %w", err)
+	}
+
+	page.Entities, err = pgx.CollectRows(rows, scanAdminEntity)
+	if err != nil {
+		return page, fmt.Errorf("err scan admin entities: %w", err)
+	}
+
+	return page, nil
+}
+
+// An alias is no rows here, so an edit always names the entity itself.
+func (s *EntityStore) GetAdminEntity(ctx context.Context, key string) (domain.AdminEntity, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT `+adminEntityColumns+`,
+			ARRAY(SELECT a.alias FROM entity_aliases a WHERE a.key = e.key ORDER BY a.alias),
+			(
+				SELECT count(*) FROM post_entities pe
+				JOIN posts p ON p.id = pe.post_id
+				JOIN sources s ON s.id = p.source_id
+				WHERE pe.entity = e.key AND s.enabled AND s.status = 'active' AND pe.created_at > now() - interval '30 days'
+			)
+		FROM entities e
+		WHERE e.key = $1
+		`, key)
+	if err != nil {
+		return domain.AdminEntity{}, fmt.Errorf("err query admin entity %s: %w", key, err)
+	}
+
+	e, err := pgx.CollectExactlyOneRow(rows, func(row pgx.CollectableRow) (e domain.AdminEntity, err error) {
+		err = row.Scan(&e.Key, &e.Name, &e.Kind, &e.Status, &e.Enabled, &e.Focus, &e.Terms, &e.Tags, &e.Strength, &e.CreatedAt, &e.Aliases, &e.Support)
+
+		return
+	})
+	if err != nil {
+		return domain.AdminEntity{}, fmt.Errorf("err get admin entity %s: %w", key, err)
+	}
+
+	rows, err = s.db.Query(ctx, `
+		SELECT id, normalized_entity, action, query, searched_at, result, created_at
+		FROM discovery_search_queries
+		WHERE normalized_entity = $1
+		ORDER BY created_at DESC, id
+		LIMIT 20
+		`, key)
+	if err != nil {
+		return domain.AdminEntity{}, fmt.Errorf("err query queries of entity %s: %w", key, err)
+	}
+
+	e.Queries, err = pgx.CollectRows(rows, pgx.RowToStructByPos[domain.DiscoverySearchQuery])
+	if err != nil {
+		return domain.AdminEntity{}, fmt.Errorf("err scan queries of entity %s: %w", key, err)
+	}
+
+	return e, nil
+}
+
+func lockEntity(ctx context.Context, tx pgx.Tx, key string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('entity/' || $1))`, key); err != nil {
+		return fmt.Errorf("err lock entity %s: %w", key, err)
+	}
+
+	return nil
+}
+
+// Returns the id of the depth query that turning focus on created, if any.
+func (s *EntityStore) PatchEntity(ctx context.Context, key string, p domain.EntityPatch) (string, error) {
+	if p.Kind != nil {
+		kind := strings.ToLower(strings.TrimSpace(*p.Kind))
+		if !slices.Contains(domain.EntityKinds, kind) {
+			return "", domain.ErrUnknownKind
+		}
+
+		p.Kind = &kind
+	}
+
+	if p.Name != nil {
+		name := strings.Join(strings.Fields(*p.Name), " ")
+		if name == "" || utf8.RuneCountInString(name) > maxEntityName {
+			return "", domain.ErrEntityName
+		}
+
+		p.Name = &name
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("err begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := lockEntity(ctx, tx, key); err != nil {
+		return "", err
+	}
+
+	var focused bool
+	if err := tx.QueryRow(ctx, `SELECT focus FROM entities WHERE key = $1`, key).Scan(&focused); err != nil {
+		return "", fmt.Errorf("err get entity %s: %w", key, err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE entities
+		SET enabled = COALESCE($2, enabled), focus = COALESCE($3, focus), kind = COALESCE($4, kind), name = COALESCE($5, name)
+		WHERE key = $1
+		`, key, p.Enabled, p.Focus, p.Kind, p.Name); err != nil {
+		return "", fmt.Errorf("err patch entity %s: %w", key, err)
+	}
+
+	id := ""
+
+	// Turning focus off leaves a pending depth query to run.
+	if p.Focus != nil && *p.Focus && !focused {
+		if id, err = queueFocusDepth(ctx, tx, key); err != nil {
+			return "", err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("err commit entity %s: %w", key, err)
+	}
+
+	return id, nil
+}
+
+// Searches from the newest linked post. Without one, the entity's first trusted post queues the search.
+func queueFocusDepth(ctx context.Context, tx pgx.Tx, key string) (string, error) {
+	var postID, text string
+
+	err := tx.QueryRow(ctx, `
+		SELECT pe.post_id, COALESCE(
+			(SELECT t.term FROM entity_terms t WHERE t.key = e.key AND t.lang = p.lang AND btrim(t.term) <> '' ORDER BY t.term LIMIT 1),
+			e.name
+		)
+		FROM post_entities pe
+		JOIN posts p ON p.id = pe.post_id
+		JOIN entities e ON e.key = pe.entity
+		WHERE pe.entity = $1
+		ORDER BY pe.created_at DESC, pe.post_id
+		LIMIT 1
+		`, key).Scan(&postID, &text)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("err get newest post of entity %s: %w", key, err)
+	}
+
+	if strings.TrimSpace(text) == "" {
+		return "", nil
+	}
+
+	id, created, err := discovery.QueueDepth(ctx, tx, key, postID, text)
+	if err != nil {
+		return "", fmt.Errorf("err queue depth query of entity %s: %w", key, err)
+	}
+
+	if !created {
+		return "", nil
+	}
+
+	return id, nil
+}
+
+func (s *EntityStore) SetEntityTags(ctx context.Context, key string, tags []string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("err begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var one int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM entities WHERE key = $1`, key).Scan(&one); err != nil {
+		return fmt.Errorf("err find entity %s: %w", key, err)
+	}
+
+	keys := slices.Compact(slices.Sorted(slices.Values(tags)))
+
+	var known int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM tags WHERE key = ANY($1)`, keys).Scan(&known); err != nil {
+		return fmt.Errorf("err check tags: %w", err)
+	}
+
+	if known != len(keys) {
+		return domain.ErrUnknownTag
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM entity_tags WHERE entity = $1`, key); err != nil {
+		return fmt.Errorf("err clear tags of entity %s: %w", key, err)
+	}
+
+	if _, err := tx.Exec(ctx, `INSERT INTO entity_tags (entity, tag) SELECT $1, unnest($2::text[])`, key, keys); err != nil {
+		return fmt.Errorf("err set tags of entity %s: %w", key, err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("err commit tags of entity %s: %w", key, err)
+	}
+
+	return nil
+}
+
+func (s *EntityStore) MergeEntities(ctx context.Context, from, to string) error {
+	if from == to {
+		return domain.ErrMergeEntitySelf
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("err begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Sorted like LinkEntities, so a merge and a post naming both cannot deadlock.
+	for _, key := range slices.Sorted(slices.Values([]string{from, to})) {
+		if err := lockEntity(ctx, tx, key); err != nil {
+			return err
+		}
+	}
+
+	var one int
+
+	for _, key := range []string{to, from} {
+		if err := tx.QueryRow(ctx, `SELECT 1 FROM entities WHERE key = $1`, key).Scan(&one); err != nil {
+			return fmt.Errorf("err find entity %s: %w", key, err)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO post_entities (post_id, entity, created_at)
+		SELECT post_id, $2, created_at FROM post_entities WHERE entity = $1
+		ON CONFLICT DO NOTHING
+		`, from, to); err != nil {
+		return fmt.Errorf("err move posts: %w", err)
+	}
+
+	// Lowercase, as LinkEntities compares terms.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO entity_terms (key, lang, term)
+		SELECT $2, f.lang, f.term FROM entity_terms f
+		WHERE f.key = $1 AND NOT EXISTS (SELECT 1 FROM entity_terms t WHERE t.key = $2 AND t.lang = f.lang AND lower(t.term) = lower(f.term))
+		ON CONFLICT DO NOTHING
+		`, from, to); err != nil {
+		return fmt.Errorf("err move terms: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO entity_tags (entity, tag)
+		SELECT $2, tag FROM entity_tags WHERE entity = $1
+		ON CONFLICT DO NOTHING
+		`, from, to); err != nil {
+		return fmt.Errorf("err move tags: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE entity_aliases SET key = $2 WHERE key = $1`, from, to); err != nil {
+		return fmt.Errorf("err move aliases: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO entity_aliases (alias, key) VALUES ($1, $2)
+		ON CONFLICT (alias) DO UPDATE SET key = EXCLUDED.key
+		`, from, to); err != nil {
+		return fmt.Errorf("err add alias: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE discovery_search_queries SET normalized_entity = $2 WHERE normalized_entity = $1`, from, to); err != nil {
+		return fmt.Errorf("err move queries: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE entities SET focus = focus OR (SELECT focus FROM entities WHERE key = $1) WHERE key = $2`, from, to); err != nil {
+		return fmt.Errorf("err carry focus: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM entities WHERE key = $1`, from); err != nil {
+		return fmt.Errorf("err delete entity: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("err commit merge: %w", err)
+	}
+
+	return nil
 }

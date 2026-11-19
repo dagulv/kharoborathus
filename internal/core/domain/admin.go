@@ -38,6 +38,7 @@ type AdminPostFilter struct {
 	SourceID string
 	Tag      string
 	Category string
+	Entity   string
 	Search   string
 	Status   string // published, or a raw post status
 	Page     int
@@ -132,4 +133,43 @@ type LogPage struct {
 	Logs    []LogSummary `json:"logs"`
 	HasNext bool         `json:"hasNext"`
 	Page    int          `json:"page"`
+}
+
+var (
+	ErrMergeEntitySelf = errors.New("Cannot merge an entity into itself")
+	ErrUnknownKind     = errors.New("Unknown kind")
+	ErrUnknownTag      = errors.New("Unknown tag")
+	ErrEntityName      = errors.New("Name must be 1 to 200 characters")
+)
+
+type AdminEntityFilter struct {
+	Kind   string
+	Status string
+	Search string // ILIKE on key, name or terms
+	Focus  *bool
+	Page   int
+}
+
+type EntityPage struct {
+	Entities []Entity `json:"entities"`
+	Total    int      `json:"total"`
+	Page     int      `json:"page"`
+	PageSize int      `json:"pageSize"`
+}
+
+// Entity.Tags lists all of the entity's tags here, enabled or not.
+type AdminEntity struct {
+	Entity
+
+	Aliases []string               `json:"aliases"`
+	Support int                    `json:"support"` // Posts from trusted sources in the last 30 days
+	Queries []DiscoverySearchQuery `json:"queries"` // The last 20
+}
+
+// A nil field is left as it is.
+type EntityPatch struct {
+	Enabled *bool   `json:"enabled"`
+	Focus   *bool   `json:"focus"`
+	Kind    *string `json:"kind"`
+	Name    *string `json:"name"`
 }
