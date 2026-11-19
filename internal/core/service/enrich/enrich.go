@@ -233,7 +233,7 @@ func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
 
 	categories, err := s.Categories.EnabledCategories(ctx)
 	if err != nil {
-		return tagSet{}, err
+		return tagSet{}, fmt.Errorf("err load categories: %w", err)
 	}
 
 	keys, err := s.Tags.TagKeys(ctx)
