@@ -1,6 +1,6 @@
 # Categories
 
-**Status:** done
+**Status:** in progress
 **Related:** [tag-lifecycle](tag-lifecycle.md), [enrich](enrich.md), [classifier-gate](classifier-gate.md)
 
 ## Summary
@@ -37,7 +37,7 @@ A tag is never hidden from Jev by categories. A tag with no categories, or only 
 3. Only the proposal that creates a tag sets its categories. Later proposals never touch them, so clearing categories in the admin sticks.
 4. Untrusted posts propose nothing.
 
-**Tag promotion.** After a post is inserted, each proposed key on it becomes active once 5 posts carry it, from enabled and active sources, on 3 distinct domains, created within 30 days. A promoted tag keeps its categories and terms.
+**Tag promotion.** After a post is inserted, each proposed key on it becomes active once 5 posts carry it, from enabled and active sources, on 3 distinct domains, created within 30 days. A promoted tag keeps its categories and terms. This inline promotion replaces the promotion job described in [tag-lifecycle](tag-lifecycle.md).
 
 **Public API.**
 

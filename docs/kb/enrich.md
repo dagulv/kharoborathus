@@ -1,7 +1,7 @@
 # Enrich
 
 **Status:** done
-**Related:** [quality-gate](quality-gate.md), [search-discovery](search-discovery.md), [tag-lifecycle](tag-lifecycle.md), [trust-model](trust-model.md)
+**Related:** [categories](categories.md), [quality-gate](quality-gate.md), [search-discovery](search-discovery.md), [tag-lifecycle](tag-lifecycle.md), [trust-model](trust-model.md)
 
 ## Summary
 
@@ -12,7 +12,7 @@ Step 2 of the event chain. Turns each accepted raw post into a post with a summa
 - [enrich.go](../../internal/core/service/enrich/enrich.go): `Enrich` handles one raw post id.
 - [run.go](../../internal/core/service/enrich/run.go): 5 workers read accepted ids from step 1, and a catch-up job ticks through DeepSeek's schedule.
 - [prompts/enrich.md](../../internal/core/service/enrich/prompts/enrich.md): one DeepSeek prompt for the summary, tag proposals and events.
-- [tags.go](../../internal/core/service/enrich/tags.go): Jev scores active tags.
+- [tags.go](../../internal/core/service/enrich/tags.go): two-stage Jev scores categories, then classifiable tags.
 - Stores: [raw_post.go](../../internal/adapter/postgres/raw_post.go), [post.go](../../internal/adapter/postgres/post.go), [tag.go](../../internal/adapter/postgres/tag.go).
 
 ## Design
@@ -20,7 +20,7 @@ Step 2 of the event chain. Turns each accepted raw post into a post with a summa
 1. Step 1 stores `raw_posts.content` as JSON with `content`, `title`, `authors` and `posted_at`, and `lang` as its primary subtag.
 2. Step 1's last stage sends each accepted id to step 2 without blocking. A full queue drops it for the catch-up job.
 3. `Enrich` skips a raw post unless no post has its url and it is `accepted`, or `failed` with fewer than 10 retries. Outside the off-peak window it leaves the post alone.
-4. Jev scores every enabled, active tag in batches of 50. A score of 0.8 or more tags the post. Without Jev, posts get proposed keys only.
+4. Jev runs in two stages, see [categories](categories.md). Categories score first, and 0.5 or more matches. Then classifiable tags score in batches of 50, and 0.8 or more tags the post. A classifiable tag is enabled and active, or proposed and recent. Without Jev, posts get proposed keys only.
 5. One DeepSeek call returns the summary, up to 5 tag proposals and up to 5 events.
 6. One transaction:
    - Trusted posts save their proposals: new keys become `proposed` tags, and proposed keys get their term and go on the post.
@@ -46,6 +46,7 @@ Rules:
 | Summary | 1 to 3 sentences, by article length | No hard cap. The feed shows it under the title. |
 | Excerpt fallback | 280 characters | Old excerpt. |
 | Tag proposals | 5 | Old tag generator. |
+| Jev category threshold | 0.5 | Recall over precision. |
 | Jev tag threshold | 0.8 | Old tagger. |
 | Catch-up | 20 a minute, 5-minute gap | Old worker batch. |
 | Workers | 5 | Same as the source pipeline. |
