@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
@@ -359,6 +360,54 @@ func TestLinkEntitiesPromotes(t *testing.T) {
 
 	if n := f.count(`SELECT count(*) FROM entities WHERE key = 'sodium_ion' AND status = 'active'`); n != 1 {
 		t.Errorf("stored status not active")
+	}
+}
+
+func TestLinkEntitiesPromotionRules(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+
+	f.exec(
+		`INSERT INTO entities (key, name, kind) VALUES ('one_domain', 'One domain', 'concept'), ('flagged_source', 'Flagged source', 'concept')`,
+		`INSERT INTO sources (domain_id, adapter, url, enabled, status) SELECT id, 'rss', base_url || '/flagged', true, 'flagged' FROM domains WHERE base_url = 'https://d2.example'`,
+	)
+
+	support := func(p domain.Post, key string) {
+		t.Helper()
+
+		if _, err := f.db.Exec(ctx, `INSERT INTO post_entities (post_id, entity) VALUES ($1, $2)`, p.ID, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	status := func(key string) string {
+		t.Helper()
+
+		linked := f.link(f.post(1, "en"), "One domain and flagged source.", ExtractedEntity{Key: key, Name: key, Term: strings.ReplaceAll(key, "_", " "), Kind: "concept"})
+		if len(linked) != 1 || linked[0].Key != key {
+			t.Fatalf("linked %+v", linked)
+		}
+
+		return linked[0].Status
+	}
+
+	support(f.post(1, "en"), "one_domain")
+	support(f.post(1, "en"), "one_domain")
+
+	if s := status("one_domain"); s != domain.StatusProposed {
+		t.Errorf("3 trusted posts on one domain: %s", s)
+	}
+
+	flagged := f.post(2, "en")
+	if _, err := f.db.Exec(ctx, `UPDATE posts SET source_id = (SELECT id FROM sources WHERE status = 'flagged') WHERE id = $1`, flagged.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	support(f.post(0, "en"), "flagged_source")
+	support(flagged, "flagged_source")
+
+	if s := status("flagged_source"); s != domain.StatusProposed {
+		t.Errorf("post from an enabled, flagged source counted: %s", s)
 	}
 }
 
