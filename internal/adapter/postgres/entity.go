@@ -572,6 +572,10 @@ func (s *EntityStore) SetEntityTags(ctx context.Context, key string, tags []stri
 	}
 	defer tx.Rollback(ctx)
 
+	if err := lockEntity(ctx, tx, key); err != nil {
+		return err
+	}
+
 	var one int
 	if err := tx.QueryRow(ctx, `SELECT 1 FROM entities WHERE key = $1`, key).Scan(&one); err != nil {
 		return fmt.Errorf("err find entity %s: %w", key, err)

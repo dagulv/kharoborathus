@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
@@ -1021,5 +1022,39 @@ func TestMergeEntitiesPromotesTarget(t *testing.T) {
 
 	if f.count(`SELECT count(*) FROM entities WHERE key = 'lonely' AND status = 'proposed'`) != 1 {
 		t.Error("unrelated entity promoted")
+	}
+}
+
+func TestSetEntityTagsWaitsForMerge(t *testing.T) {
+	f := entityDB(t)
+	ctx := context.Background()
+
+	f.exec(`INSERT INTO entities (key, name, kind) VALUES ('gone', 'Gone', 'company')`)
+
+	tx, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := lockEntity(ctx, tx, "gone"); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- f.s.SetEntityTags(ctx, "gone", []string{"batteries"}) }()
+
+	time.Sleep(200 * time.Millisecond)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM entities WHERE key = 'gone'`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := <-done; !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("err %v, want no rows", err)
 	}
 }
