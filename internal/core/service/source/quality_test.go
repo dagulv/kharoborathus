@@ -23,10 +23,12 @@ type fakeClassifier struct {
 	calls     int
 	state     map[string]string
 	questions map[string]port.NoulQuestion
+	l         *slog.Logger
 }
 
-func (f *fakeClassifier) Noul(_ context.Context, _ *slog.Logger, state any, questions map[string]port.NoulQuestion) (map[string]float64, error) {
+func (f *fakeClassifier) Noul(_ context.Context, l *slog.Logger, state any, questions map[string]port.NoulQuestion) (map[string]float64, error) {
 	f.calls++
+	f.l = l
 	f.state = state.(map[string]string)
 	f.questions = questions
 
@@ -34,13 +36,11 @@ func (f *fakeClassifier) Noul(_ context.Context, _ *slog.Logger, state any, ques
 }
 
 func TestIsArticle(t *testing.T) {
-	cases := map[float64]bool{0.8: true, 0.95: true, 0.79: false, 0: false}
-
-	for score, want := range cases {
+	for _, score := range []float64{0.8, 0.95, 0.79, 0} {
 		c := &fakeClassifier{score: score}
 
 		got, err := isArticle(context.Background(), c, slog.New(slog.DiscardHandler), "Volvo köper Northvolt", "text")
-		if err != nil || got != want {
+		if err != nil || got != score {
 			t.Errorf("%v: got %v, %v", score, got, err)
 		}
 	}
@@ -92,7 +92,7 @@ func qualityServiceDB(t *testing.T, c port.Classifier) (*Service, domain.RawPost
 	sources := postgres.NewSourceStore(db)
 	domains := postgres.NewStore(db)
 	rawPosts := postgres.NewRawPostStore(db)
-	s := NewService(&sources, &domains, &rawPosts, nil, c, make(chan string, 10), schedule.Always, nil)
+	s := NewService(&sources, &domains, &rawPosts, nil, c, nil, make(chan string, 10), schedule.Always, nil, slog.New(slog.DiscardHandler))
 
 	p.Lang = "sv"
 	p.Title = "Volvo köper Northvolt"
@@ -110,9 +110,13 @@ func insertAndCheck(t *testing.T, s *Service, p domain.RawPost, url string) (dom
 	p.URL = url
 	p, _ = SetSimhash(ctx, l, p)
 
-	p, err := s.insert(ctx, l, p)
+	p, err := s.claim(ctx, l, p)
 	if err != nil {
-		t.Fatalf("err insert: %v", err)
+		t.Fatalf("err claim: %v", err)
+	}
+
+	if p, err = s.saveContent(ctx, l, p); err != nil {
+		t.Fatalf("err save content: %v", err)
 	}
 
 	return s.checkQuality(ctx, l, p)
@@ -157,18 +161,18 @@ func TestCheckQualityNoClassifier(t *testing.T) {
 	}
 }
 
-func TestInsertExisting(t *testing.T) {
+func TestClaimExisting(t *testing.T) {
 	s, base := qualityService(t, nil)
 	ctx := context.Background()
 	l := slog.New(slog.DiscardHandler)
 
 	base.URL = "https://a.example/1"
 
-	if _, err := s.insert(ctx, l, base); err != nil {
+	if _, err := s.claim(ctx, l, base); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := s.insert(ctx, l, base); !errors.Is(err, pipeline.ErrSkip) {
+	if _, err := s.claim(ctx, l, base); !errors.Is(err, pipeline.ErrSkip) {
 		t.Errorf("err %v", err)
 	}
 }
@@ -183,7 +187,7 @@ func TestSaveStatusSendsAccepted(t *testing.T) {
 	for _, c := range []struct{ url, status string }{{"https://a.example/1", domain.StatusAccepted}, {"https://a.example/2", domain.StatusRejected}} {
 		base.URL = c.url
 
-		p, err := s.insert(ctx, l, base)
+		p, err := s.claim(ctx, l, base)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -210,7 +214,7 @@ func TestSaveStatusQueueFull(t *testing.T) {
 
 	base.URL = "https://a.example/1"
 
-	p, err := s.insert(ctx, l, base)
+	p, err := s.claim(ctx, l, base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,5 +227,90 @@ func TestSaveStatusQueueFull(t *testing.T) {
 
 	if !strings.Contains(logged.String(), "level=WARN") || !strings.Contains(logged.String(), "enrich queue full") {
 		t.Errorf("log %q", logged.String())
+	}
+}
+
+func TestQualitySteps(t *testing.T) {
+	cases := []struct {
+		name       string
+		classifier *fakeClassifier
+		status     string
+		outcome    string
+		reason     string
+	}{
+		{"rejected", &fakeClassifier{score: 0.12}, domain.StatusRejected, domain.OutcomeStopped, "score 0.12, needs 0.80"},
+		{"accepted", &fakeClassifier{score: 0.9}, domain.StatusAccepted, domain.OutcomePassed, ""},
+		{"jev down", &fakeClassifier{err: port.ErrUnavailable}, domain.StatusPending, domain.OutcomeError, ""},
+		{"no classifier", nil, domain.StatusAccepted, domain.OutcomePassed, "quality check off"},
+	}
+
+	for _, c := range cases {
+		var classifier port.Classifier
+		if c.classifier != nil {
+			classifier = c.classifier
+		}
+
+		s, base := qualityService(t, classifier)
+		rec := newCapture()
+		s.Calls = slog.New(rec)
+
+		p, _ := insertAndCheck(t, s, base, "https://a.example/1")
+
+		if p.Status != c.status {
+			t.Errorf("%s: status %q", c.name, p.Status)
+		}
+
+		if got, want := rec.stepLine(p.ID), "duplicate_check:passed quality_check:"+c.outcome; got != want {
+			t.Errorf("%s: steps %q, want %q", c.name, got, want)
+		}
+
+		last := rec.last(p.ID)
+
+		if c.reason != "" && last.attrs["reason"] != c.reason {
+			t.Errorf("%s: reason %q", c.name, last.attrs["reason"])
+		}
+
+		if c.outcome == domain.OutcomeError && last.attrs["reason"] == "" {
+			t.Errorf("%s: error step without a reason", c.name)
+		}
+	}
+}
+
+func TestQualityStepsDuplicate(t *testing.T) {
+	s, base := qualityService(t, &fakeClassifier{score: 0.9})
+	rec := newCapture()
+	s.Calls = slog.New(rec)
+
+	insertAndCheck(t, s, base, "https://a.example/1")
+	p, _ := insertAndCheck(t, s, base, "https://a.example/copy")
+
+	if p.Status != domain.StatusDuplicate || rec.stepLine(p.ID) != "duplicate_check:stopped" {
+		t.Errorf("status %q, steps %q", p.Status, rec.stepLine(p.ID))
+	}
+}
+
+func TestQualityCallsCarryRawPostID(t *testing.T) {
+	c := &fakeClassifier{score: 0.9}
+	s, base := qualityService(t, c)
+	rec := newCapture()
+	s.Calls = slog.New(rec)
+
+	p, _ := insertAndCheck(t, s, base, "https://a.example/1")
+
+	c.l.Info("probe")
+
+	got := (*rec.records)[len(*rec.records)-1]
+
+	if got.msg != "probe" || got.attrs["raw_post_id"] != p.ID || got.attrs["step"] != domain.StepQualityCheck {
+		t.Errorf("record %+v", got)
+	}
+}
+
+func TestStepWriteFailureKeepsOutcome(t *testing.T) {
+	s, base := qualityService(t, &fakeClassifier{score: 0.9})
+	s.Calls = slog.New(failing{})
+
+	if p, err := insertAndCheck(t, s, base, "https://a.example/1"); err != nil || p.Status != domain.StatusAccepted {
+		t.Errorf("status %q, %v", p.Status, err)
 	}
 }

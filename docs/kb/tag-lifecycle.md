@@ -10,7 +10,7 @@ New tags are proposed by the LLM, but only go live after enough independent trus
 ## Current state
 
 - `tags` holds the key plus `enabled`, `status`, `gate`, `match_rate`, `last_matched_at` and `created_at`.
-- `tag_terms (key, lang, term, matcher)` holds one term per language. `matcher` is a stemmed `phraseto_tsquery` used by cross-language search in [feed/store.go](../../internal/service/feed/store.go) and admin `admin.remote.ts`.
+- `tag_terms (key, lang, term, matcher)` holds one term per language. `matcher` is a stemmed `phraseto_tsquery` used by cross-language search in [feed/store.go](../../internal/service/feed/store.go) and the admin's `ListAdminPosts` in [post.go](../../internal/adapter/postgres/post.go).
 - `posts.tags TEXT[]` holds keys with no foreign key.
 - [tagged.go](../../internal/service/tagging/tagged.go) runs `TagGenerator` on trusted posts only. [route.go](../../internal/service/tagging/route.go) sends new terms for live tags to `AddTags`, reactivates dormant ones and writes unknown keys to `tag_proposals`.
 - [promote.go](../../internal/service/tagging/promote.go) promotes proposals hourly. [maintain.go](../../internal/service/tagging/maintain.go) recomputes rates, sets `gate` and marks dormancy daily.

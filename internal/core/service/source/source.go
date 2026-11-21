@@ -21,22 +21,28 @@ type Service struct {
 	Extractor    port.Extractor
 	// Nil accepts every post that is not a duplicate, for when only the mocked classifier is available.
 	Classifier port.Classifier
+	// Fetches each claimed article.
+	Pages port.PageFetcher
 	// Accepted raw post ids for step 2, enrich.
 	Enriched chan<- string
 	Schedule schedule.Schedule
 	resyncs  <-chan domain.Source
+	// Third-party requests and pipeline steps, one row each in the logs table.
+	Calls *slog.Logger
 }
 
-func NewService(store *postgres.SourceStore, domains *postgres.Store, rawPosts *postgres.RawPostStore, extractor port.Extractor, classifier port.Classifier, enriched chan<- string, schedule schedule.Schedule, resyncs <-chan domain.Source) Service {
+func NewService(store *postgres.SourceStore, domains *postgres.Store, rawPosts *postgres.RawPostStore, extractor port.Extractor, classifier port.Classifier, pages port.PageFetcher, enriched chan<- string, schedule schedule.Schedule, resyncs <-chan domain.Source, calls *slog.Logger) Service {
 	return Service{
 		SourceStore:  store,
 		DomainStore:  domains,
 		RawPostStore: rawPosts,
 		Extractor:    extractor,
 		Classifier:   classifier,
+		Pages:        pages,
 		Enriched:     enriched,
 		Schedule:     schedule,
 		resyncs:      resyncs,
+		Calls:        calls,
 	}
 }
 

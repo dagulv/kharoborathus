@@ -16,6 +16,7 @@ This comes before entities. Entities will later hang off the same structure.
 - Many-to-many mapping between categories and tags.
 - Two-stage Jev in enrich: categories first, then the tags of matched categories plus every tag without an enabled category.
 - New proposed tags get categories from the same DeepSeek call that proposes them.
+- Jev asks about recent proposed tags too, and a proposed tag becomes active once enough posts carry it.
 - The public feed filters by category.
 - The admin lists, creates and switches categories, and edits a tag's categories.
 
@@ -26,7 +27,6 @@ This comes before entities. Entities will later hang off the same structure.
 - The system proposing categories, or any category lifecycle.
 - Deleting or renaming categories. Disabling is enough.
 - Category browsing in the public web app. It is rebuilt later in a separate project. This design gives it the API.
-- Tag promotion. It is still missing from the reworked code.
 - Fixing that topic tags are `quality` and can therefore be discovery actions. That is true of proposals today too.
 
 ## Anti-goals
@@ -35,6 +35,7 @@ This comes before entities. Entities will later hang off the same structure.
 - The system must never create or enable a category.
 - The seed must never overwrite your `enabled` switch on an existing tag.
 - A merged tag must never lose its categories.
+- A stale proposed tag must not cost Jev questions forever.
 
 ## Approaches
 
@@ -269,15 +270,27 @@ Swedish terms are in base form: singular, indefinite, lowercase, as the enrich p
 Replaces the single `jevTags` pass in step 3 of `Enrich`. Same state: title and markdown cut at 60,000 runes.
 
 1. **Categories.** One request with a question per enabled category, in the existing form: `Is this news article about <key> (<term in the post's language>)?`. A post in another language, or a category with no term in it, gets the question without the term. A score of at least 0.5 matches the category.
-2. **Tags.** The candidate tags are every enabled, active tag that is mapped to a matched category, plus every enabled, active tag with no enabled category. Asked in batches of 50 as today. A score of at least 0.8 adds the key.
+2. **Tags.** The candidate tags are the classifiable tags mapped to a matched category, plus the classifiable tags with no enabled category. Asked in batches of 50 as today. A score of at least 0.8 adds the key.
 
-If no category is enabled, stage 1 is skipped and every active tag is a candidate. That is today's behaviour.
+A classifiable tag is enabled and either `active`, or `proposed` and recent. Recent means created within 30 days, or carried by a post created within 30 days. A stale proposal stops costing Jev questions, and comes back when DeepSeek proposes it again, since that puts it on a new post.
+
+Event actions still come from active quality tags only.
+
+If no category is enabled, stage 1 is skipped and every classifiable tag is a candidate.
 
 The examples in the enrich system prompt's tags section change to seed keys, such as `quarterly_report` instead of `earnings_report`, so DeepSeek reuses them.
 
 The tag cache in `cache.go` also holds the enabled categories with their term per language and the tag to category map, under the same one-minute TTL.
 
-Jev still runs before DeepSeek. Proposed tags are still never sent to Jev.
+Jev still runs before DeepSeek. This replaces the enrich design's rule that proposed tags are never sent to Jev.
+
+### Tag promotion
+
+In the enrich transaction, after the post is inserted, each proposed key on the post is checked. That covers keys from Jev and keys from this post's own proposals. A key is promoted to `active` when posts carrying it reach the rule: at least 5 posts from enabled, active sources, on at least 3 distinct domains, created within 30 days. Keys are checked in key order, so concurrent posts cannot deadlock.
+
+- Only support is checked. Duplicates of existing tags are merged by you in the admin.
+- A promoted tag keeps its categories and terms.
+- Its posts show it publicly from then on, by the existing feed rule.
 
 ### Categories for proposed tags
 
@@ -328,6 +341,8 @@ Built on the admin SPA from `2026-11-14-admin-spa-design.md`, so it lands after 
 - Stage 1 threshold is 0.5. A missed category hides all its tags, a wrong match only costs extra questions.
 - A tag with no enabled category is always a stage 2 candidate.
 - Only the proposal that creates a tag sets its categories.
+- Proposed tags are asked by Jev while recent: created, or carried by a post, within 30 days.
+- Tag promotion needs 5 trusted posts on 3 distinct domains within 30 days, checked inline, with no duplicate or broadness checks.
 - A seed alias's target is made active.
 - The admin counts and filters categories on all tags, the public API on public tags.
 - Seed tags are `quality`, the default type.
@@ -361,3 +376,5 @@ Built on the admin SPA from `2026-11-14-admin-spa-design.md`, so it lands after 
 | Category key | 1 to 40 characters | Same as tag keys. |
 | Category term | at most 100 characters | Room for multi-word labels. |
 | Cache TTL | 1 minute | Same as tags. |
+| Proposed tag recency | 30 days | Stale proposals stop costing Jev. |
+| Tag promotion | 5 trusted posts, 3 domains, 30 days | Tags are broader than entities, so they need wider support. |

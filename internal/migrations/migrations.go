@@ -17,6 +17,15 @@ import (
 var files embed.FS
 
 func Migrate(ctx context.Context, connString string, l *slog.Logger) error {
+	return migrateTo(ctx, connString, l, nil)
+}
+
+// MigrateTo stops at version, so a test can seed data into an older schema.
+func MigrateTo(ctx context.Context, connString string, l *slog.Logger, version int32) error {
+	return migrateTo(ctx, connString, l, &version)
+}
+
+func migrateTo(ctx context.Context, connString string, l *slog.Logger, target *int32) error {
 	conn, err := pgx.Connect(ctx, connString)
 	if err != nil {
 		return fmt.Errorf("err connect: %w", err)
@@ -36,7 +45,12 @@ func Migrate(ctx context.Context, connString string, l *slog.Logger) error {
 		l.Info("migrating", "sequence", sequence, "name", name, "direction", direction)
 	}
 
-	if err = m.Migrate(ctx); err != nil {
+	run := m.Migrate
+	if target != nil {
+		run = func(ctx context.Context) error { return m.MigrateTo(ctx, *target) }
+	}
+
+	if err = run(ctx); err != nil {
 		return fmt.Errorf("err migrate: %w", err)
 	}
 

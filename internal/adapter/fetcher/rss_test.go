@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ func rssServer(t *testing.T) *httptest.Server {
 <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>T</title>
 <item><title>Excerpt</title><link>` + srv.URL + `/excerpt</link><description>Short… Continue reading</description></item>
 <item><title>Full</title><link>` + srv.URL + `/full</link><description>Short</description><content:encoded><![CDATA[<p>whole article</p>]]></content:encoded></item>
+<item><title>Gone</title><link>` + srv.URL + `/gone</link><content:encoded><![CDATA[<p>feed only</p>]]></content:encoded></item>
 </channel></rss>`))
 	})
 
@@ -32,8 +34,11 @@ func rssServer(t *testing.T) *httptest.Server {
 	})
 
 	mux.HandleFunc("/full", func(w http.ResponseWriter, r *http.Request) {
-		t.Error("fetched an article the feed carried in full")
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body><article>full page</article></body></html>`))
 	})
+
+	mux.HandleFunc("/gone", http.NotFound)
 
 	srv = httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -41,37 +46,39 @@ func rssServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
-func TestRSSFetchesArticleOfExcerptItem(t *testing.T) {
+func TestRSSSendsFeedItems(t *testing.T) {
 	srv := rssServer(t)
-	l := slog.New(slog.DiscardHandler)
-	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond), l: l}
 
-	docs, err := r.FetchFeed(context.Background(), l, srv.URL+"/feed")
+	var requests atomic.Int32
+	counted := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		srv.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(counted.Close)
+
+	l := slog.New(slog.DiscardHandler)
+	r := rss{client: counted.Client(), pacer: pace.New(time.Millisecond)}
+
+	posts, err := r.Fetch(context.Background(), l, counted.URL+"/feed")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pages := make(map[string]string)
+	contents := make(map[string]string)
 
-	for doc := range docs {
-		doc, err := r.FetchPost(context.Background(), l, doc)
-		if err != nil {
-			t.Fatalf("fetch content %s: %v", doc.Title, err)
+	for p := range posts {
+		if p.RawContent != "" {
+			t.Errorf("%s: raw content %q, the pipeline fetches articles", p.Title, p.RawContent)
 		}
 
-		f, err := r.ProcessFeed(context.Background(), doc)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		pages[f.Title] = f.RawContent
+		contents[p.Title] = p.Content
 	}
 
-	if want := `<html><body><article>whole article</article></body></html>`; pages["Excerpt"] != want {
-		t.Errorf("excerpt item page %q, want %q", pages["Excerpt"], want)
+	if len(contents) != 3 || contents["Full"] != "<p>whole article</p>" || contents["Gone"] != "<p>feed only</p>" || contents["Excerpt"] != "Short… Continue reading" {
+		t.Errorf("contents %v", contents)
 	}
 
-	if pages["Full"] != "" {
-		t.Errorf("full item page %q, want none", pages["Full"])
+	if n := requests.Load(); n != 1 {
+		t.Errorf("%d requests, want only the feed", n)
 	}
 }

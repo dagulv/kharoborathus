@@ -1,0 +1,175 @@
+package domain
+
+import (
+	"encoding/json"
+	"errors"
+	"time"
+)
+
+var ErrSourceExists = errors.New("source exists")
+
+type Stats struct {
+	Sources        int            `json:"sources"`
+	EnabledSources int            `json:"enabledSources"`
+	FlaggedSources int            `json:"flaggedSources"`
+	Posts          int            `json:"posts"`
+	PostsToday     int            `json:"postsToday"`
+	SearchesToday  int            `json:"searchesToday"`
+	Links          map[string]int `json:"links"` // discovery_posts by status
+}
+
+type AdminSource struct {
+	Source
+
+	DomainURL    string     `json:"domainUrl"`
+	PostCount    int        `json:"postCount"`
+	LastPostedAt *time.Time `json:"lastPostedAt"`
+}
+
+type NewSource struct {
+	URL        string `json:"url"`
+	Adapter    string `json:"adapter"`
+	ListingURL string `json:"listingUrl"`
+	Rate       int    `json:"rate"`
+	Lang       string `json:"lang"`
+}
+
+type AdminPostFilter struct {
+	SourceID string
+	Tag      string
+	Category string
+	Entity   string
+	Search   string
+	Status   string // published, or a raw post status
+	Page     int
+}
+
+// AdminPostStatuses are the values AdminPostFilter.Status takes.
+var AdminPostStatuses = []string{"published", StatusAccepted, StatusPending, StatusRejected, StatusDuplicate, StatusMissing, StatusFailed}
+
+// A raw post with the post it became, if any.
+type AdminPost struct {
+	ID           string     `json:"id"` // raw post id
+	PostID       *string    `json:"postId"`
+	SourceID     *string    `json:"sourceId"`
+	DomainURL    string     `json:"domainUrl"`
+	URL          string     `json:"url"`
+	Lang         string     `json:"lang"`
+	Title        string     `json:"title"`
+	ShortContent string     `json:"shortContent"`
+	Tags         []string   `json:"tags"`
+	Authors      []string   `json:"authors"`
+	PostedAt     *time.Time `json:"postedAt"`
+	Status       string     `json:"status"` // published when a post with the same url exists, unless a resync is running
+	CreatedAt    time.Time  `json:"createdAt"`
+	Content      string     `json:"content,omitempty"`
+	SourceURL    string     `json:"sourceUrl,omitempty"`
+}
+
+type AdminPostPage struct {
+	Posts    []AdminPost `json:"posts"`
+	Total    int         `json:"total"`
+	Page     int         `json:"page"`
+	PageSize int         `json:"pageSize"`
+}
+
+var ErrMergeSelf = errors.New("merge tag into itself")
+
+// Tag.Categories lists all of the tag's categories here, enabled or not.
+type TagSummary struct {
+	Tag
+
+	PostCount int `json:"postCount"`
+}
+
+type TagProposal struct {
+	Key            string    `json:"key"`
+	Terms          []string  `json:"terms"`
+	PostCount      int       `json:"postCount"`
+	DomainCount    int       `json:"domainCount"`
+	LastProposedAt time.Time `json:"lastProposedAt"`
+}
+
+type TagAlias struct {
+	Alias string `json:"alias"`
+	Key   string `json:"key"`
+}
+
+type TagOverview struct {
+	Tags      []TagSummary  `json:"tags"`
+	Proposals []TagProposal `json:"proposals"`
+	Aliases   []TagAlias    `json:"aliases"`
+}
+
+type LogSummary struct {
+	ID         int64          `json:"id"`
+	Type       string         `json:"type"`
+	Level      string         `json:"level"`
+	Method     *string        `json:"method"`
+	URL        *string        `json:"url"`
+	Status     *int           `json:"status"`
+	DurationMs int64          `json:"durationMs"`
+	Error      *string        `json:"error"`
+	Metadata   map[string]any `json:"metadata"`
+	CreatedAt  time.Time      `json:"createdAt"`
+}
+
+type LogDetail struct {
+	LogSummary
+
+	Request  json.RawMessage `json:"request"`
+	Response json.RawMessage `json:"response"`
+}
+
+type LogFilter struct {
+	Type      string
+	Level     string
+	MetaKey   string
+	MetaValue string
+	Page      int
+}
+
+type LogPage struct {
+	Logs    []LogSummary `json:"logs"`
+	HasNext bool         `json:"hasNext"`
+	Page    int          `json:"page"`
+}
+
+var (
+	ErrMergeEntitySelf = errors.New("Cannot merge an entity into itself")
+	ErrUnknownKind     = errors.New("Unknown kind")
+	ErrUnknownTag      = errors.New("Unknown tag")
+	ErrEntityName      = errors.New("Name must be 1 to 200 characters")
+)
+
+type AdminEntityFilter struct {
+	Kind   string
+	Status string
+	Search string // ILIKE on key, name or terms
+	Focus  *bool
+	Page   int
+}
+
+type EntityPage struct {
+	Entities []Entity `json:"entities"`
+	Total    int      `json:"total"`
+	Page     int      `json:"page"`
+	PageSize int      `json:"pageSize"`
+}
+
+// Entity.Tags lists all of the entity's tags here, enabled or not.
+type AdminEntity struct {
+	Entity
+
+	Aliases []string               `json:"aliases"`
+	Support int                    `json:"support"` // Posts from trusted sources in the last 30 days
+	Queries []DiscoverySearchQuery `json:"queries"` // The last 20
+}
+
+// A nil field is left as it is.
+type EntityPatch struct {
+	Enabled *bool   `json:"enabled"`
+	Focus   *bool   `json:"focus"`
+	Kind    *string `json:"kind"`
+	Name    *string `json:"name"`
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
 	"net/http"
@@ -25,9 +26,27 @@ func Routes(mux *http.ServeMux, s Store, l *slog.Logger) {
 	mux.HandleFunc("GET /posts/{id}", getPost(s, l))
 }
 
+// Each category and each entity adds a subquery to the feed query.
+const (
+	maxCategories = 10
+	maxEntities   = 10
+)
+
 func listPosts(s Store, l *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
+
+		categories := unique(q["category"])
+		if len(categories) > maxCategories {
+			http.Error(w, fmt.Sprintf("at most %d categories: %v", maxCategories, domain.ErrInvalidFilter), http.StatusBadRequest)
+			return
+		}
+
+		entities := unique(q["entity"])
+		if len(entities) > maxEntities {
+			http.Error(w, fmt.Sprintf("at most %d entities: %v", maxEntities, domain.ErrInvalidFilter), http.StatusBadRequest)
+			return
+		}
 
 		filter := domain.PostFilter{
 			Filter: query.Filter{
@@ -37,8 +56,10 @@ func listPosts(s Store, l *slog.Logger) http.HandlerFunc {
 				OrderBy: q.Get("orderBy"),
 				Search:  q.Get("search"),
 			},
-			Tags:  q["tag"],
-			After: q.Get("after"),
+			Tags:       q["tag"],
+			Categories: categories,
+			Entities:   entities,
+			After:      q.Get("after"),
 		}
 
 		// Collected first, so a failure mid-list is a 500 and never a truncated 200.
@@ -60,6 +81,22 @@ func listPosts(s Store, l *slog.Logger) http.HandlerFunc {
 
 		writeJSON(w, l, posts)
 	}
+}
+
+func unique(keys []string) []string {
+	seen := make(map[string]bool, len(keys))
+	var out []string
+
+	for _, k := range keys {
+		if seen[k] {
+			continue
+		}
+
+		seen[k] = true
+		out = append(out, k)
+	}
+
+	return out
 }
 
 func getPost(s Store, l *slog.Logger) http.HandlerFunc {

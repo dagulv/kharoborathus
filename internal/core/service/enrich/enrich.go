@@ -23,29 +23,34 @@ const (
 )
 
 type Service struct {
-	DB       *database.Database
-	RawPosts *postgres.RawPostStore
-	Posts    *postgres.PostStore
-	Tags     *postgres.TagStore
-	LLM      port.LLM
+	DB         *database.Database
+	RawPosts   *postgres.RawPostStore
+	Posts      *postgres.PostStore
+	Tags       *postgres.TagStore
+	Categories *postgres.CategoryStore
+	Entities   *postgres.EntityStore
+	LLM        port.LLM
 	// Nil when Jev is not configured. Posts then get proposed keys only.
 	Classifier port.Classifier
 	SearchIDs  chan<- string
 	// New discovery_posts ids, for discovered ingest.
 	DiscoveredIDs chan<- string
+	// Third-party requests and pipeline steps, one row each in the logs table.
+	Calls *slog.Logger
 
 	tags tagCache
 }
 
 type answer struct {
-	Summary string              `json:"summary"`
-	Tags    []postgres.Proposal `json:"tags"`
-	Events  []discovery.Keyword `json:"events"`
+	Summary  string                     `json:"summary"`
+	Tags     []postgres.Proposal        `json:"tags"`
+	Events   []discovery.Keyword        `json:"events"`
+	Entities []postgres.ExtractedEntity `json:"entities"`
 }
 
 // A closed schedule or shutdown is not an attempt. Any other error fails the raw post and counts a retry.
 func (s *Service) Enrich(ctx context.Context, l *slog.Logger, rawPostID string) error {
-	found, err := s.enrich(ctx, l, rawPostID)
+	post, found, err := s.enrich(ctx, l, rawPostID)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -56,11 +61,25 @@ func (s *Service) Enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 	}
 
 	if err != nil {
+		domain.LogStep(ctx, s.callsFor(rawPostID, domain.StepEnrich), domain.OutcomeError, err.Error(), nil, nil)
+
 		if ferr := s.RawPosts.FailEnrich(context.WithoutCancel(ctx), rawPostID); ferr != nil {
 			return fmt.Errorf("%w, and %w", err, ferr)
 		}
 
 		return err
+	}
+
+	if post.ID != "" {
+		domain.LogStep(ctx, s.callsFor(rawPostID, domain.StepEnrich), domain.OutcomePassed, "", nil, map[string]any{
+			"postId":  post.ID,
+			"tags":    post.Tags,
+			"summary": post.ShortContent,
+		})
+		domain.LogStep(ctx, s.callsFor(rawPostID, domain.StepDiscover), domain.OutcomePassed, "", nil, map[string]any{
+			"queries": found.Queries,
+			"links":   len(found.Links),
+		})
 	}
 
 	for _, id := range found.Queries {
@@ -74,77 +93,97 @@ func (s *Service) Enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 	return nil
 }
 
-func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) (discovery.Found, error) {
+func (s *Service) callsFor(rawPostID, step string) *slog.Logger {
+	return s.Calls.With("raw_post_id", rawPostID, "step", step)
+}
+
+// post has no id when enrich skipped the raw post.
+func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) (domain.Post, discovery.Found, error) {
 	p, err := s.RawPosts.GetRawPost(ctx, rawPostID)
 	if err != nil {
-		return discovery.Found{}, err
+		return domain.Post{}, discovery.Found{}, err
 	}
 
 	if p.Status != domain.StatusAccepted && (p.Status != domain.StatusFailed || p.RetryCount >= maxRetries) {
-		return discovery.Found{}, nil
+		return domain.Post{}, discovery.Found{}, nil
 	}
 
-	exists, err := s.Posts.PostExists(ctx, p.URL)
-	if err != nil || exists {
-		return discovery.Found{}, err
+	current, err := s.Posts.PostCurrent(ctx, p.URL, p.CreatedAt)
+	if err != nil || current {
+		return domain.Post{}, discovery.Found{}, err
 	}
 
 	if !s.LLM.Schedule().Active(time.Now()) {
-		return discovery.Found{}, nil
+		return domain.Post{}, discovery.Found{}, nil
 	}
 
 	l = l.With("raw_post_id", p.ID, "url", p.URL)
+	calls := s.callsFor(p.ID, domain.StepEnrich)
 
 	set, err := s.tags.get(ctx, p.Lang, s.loadTags)
 	if err != nil {
-		return discovery.Found{}, err
+		return domain.Post{}, discovery.Found{}, err
 	}
 
-	active := set.active
+	classifiable := set.classifiable
 
 	var tags []string
 
 	// Before DeepSeek, so a Jev outage never wastes a paid call.
 	if s.Classifier != nil {
-		if tags, err = jevTags(ctx, s.Classifier, l, p.Title, p.Content, active); err != nil {
-			return discovery.Found{}, err
+		if tags, err = jevTags(ctx, s.Classifier, calls, p.Lang, p.Title, p.Content, set.categories, classifiable); err != nil {
+			return domain.Post{}, discovery.Found{}, err
 		}
 	}
 
 	var quality []string
 
-	for _, t := range active {
-		if t.Type == domain.TagTypeQuality {
+	for _, t := range classifiable {
+		if t.Type == domain.TagTypeQuality && t.Status == domain.StatusActive {
 			quality = append(quality, t.Key)
 		}
 	}
 
-	prompt, err := userPrompt(p.Lang, set.keys, quality, p.Content)
+	categoryKeys := make([]string, len(set.categories))
+	for i, c := range set.categories {
+		categoryKeys[i] = c.Key
+	}
+
+	prompt, err := userPrompt(p.Lang, p.Title, p.Authors, set.keys, quality, categoryKeys, p.Content, set.entityKeys)
 	if err != nil {
-		return discovery.Found{}, err
+		return domain.Post{}, discovery.Found{}, err
 	}
 
 	temp := 0.2
 
 	var a answer
 
-	if err := s.LLM.Unmarshal(ctx, l, port.Request{System: systemPrompt, Prompt: prompt, Temperature: &temp}, &a); err != nil {
-		return discovery.Found{}, fmt.Errorf("err enrich answer: %w", err)
+	if err := s.LLM.Unmarshal(ctx, calls, port.Request{System: systemPrompt, Prompt: prompt, Temperature: &temp}, &a); err != nil {
+		return domain.Post{}, discovery.Found{}, fmt.Errorf("err enrich answer: %w", err)
 	}
 
 	trusted, err := s.Posts.Trusted(ctx, p.SourceID)
 	if err != nil {
-		return discovery.Found{}, err
+		return domain.Post{}, discovery.Found{}, err
 	}
 
 	proposals := make([]postgres.Proposal, 0, maxProposals)
 
 	for _, t := range a.Tags {
 		t.Key = discovery.TagKey(t.Key)
-		if strings.Trim(t.Key, "_") == "" || len(proposals) == maxProposals {
+		if blankKey(t.Key) || len(proposals) == maxProposals {
 			continue
 		}
 
+		categories := make([]string, 0, len(t.Categories))
+
+		for _, c := range t.Categories {
+			if c = discovery.TagKey(c); !blankKey(c) {
+				categories = append(categories, c)
+			}
+		}
+
+		t.Categories = categories
 		proposals = append(proposals, t)
 	}
 
@@ -166,7 +205,11 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 		Simhash:      p.Simhash,
 	}
 
-	var found discovery.Found
+	var (
+		found    discovery.Found
+		inserted domain.Post
+		promoted []string
+	)
 
 	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if trusted {
@@ -184,25 +227,49 @@ func (s *Service) enrich(ctx context.Context, l *slog.Logger, rawPostID string) 
 
 		post.Tags = tags
 
-		post, inserted, err := s.Posts.InsertPost(ctx, tx, post)
-		if err != nil || !inserted {
+		post, ok, err := s.Posts.SavePost(ctx, tx, post, p.CreatedAt)
+		if err != nil || !ok {
 			return err
 		}
 
-		found, err = discovery.Discover(ctx, tx, post, a.Events)
+		if promoted, err = s.Tags.PromoteTags(ctx, tx, post.Tags); err != nil {
+			return err
+		}
+
+		linked, err := s.Entities.LinkEntities(ctx, tx, post, trusted, p.Content, a.Entities)
+		if err != nil {
+			return err
+		}
+
+		found, err = discovery.Discover(ctx, tx, post, a.Events, linked)
+		inserted = post
+
 		return err
 	})
 	if err != nil {
-		return discovery.Found{}, fmt.Errorf("err save post: %w", err)
+		return domain.Post{}, discovery.Found{}, fmt.Errorf("err save post: %w", err)
 	}
 
-	return found, nil
+	if len(promoted) > 0 {
+		l.Info("promoted tags", "keys", promoted)
+	}
+
+	for _, e := range found.Unmatched {
+		l.Info("dropped event without a linked entity", "entity", e.Entity, "action", e.Action)
+	}
+
+	return inserted, found, nil
 }
 
 func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
-	active, err := s.Tags.ActiveTags(ctx, lang)
+	classifiable, err := s.Tags.ClassifiableTags(ctx, lang)
 	if err != nil {
 		return tagSet{}, err
+	}
+
+	categories, err := s.Categories.EnabledCategories(ctx)
+	if err != nil {
+		return tagSet{}, fmt.Errorf("err load categories: %w", err)
 	}
 
 	keys, err := s.Tags.TagKeys(ctx)
@@ -210,5 +277,15 @@ func (s *Service) loadTags(ctx context.Context, lang string) (tagSet, error) {
 		return tagSet{}, err
 	}
 
-	return tagSet{keys: keys, active: active}, nil
+	entityKeys, err := s.Entities.PromptKeys(ctx)
+	if err != nil {
+		return tagSet{}, fmt.Errorf("err load entity keys: %w", err)
+	}
+
+	return tagSet{keys: keys, classifiable: classifiable, categories: categories, entityKeys: entityKeys}, nil
+}
+
+// A key that normalizes to underscores only names nothing.
+func blankKey(key string) bool {
+	return strings.Trim(key, "_") == ""
 }

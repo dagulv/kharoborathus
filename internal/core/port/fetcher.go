@@ -2,14 +2,31 @@ package port
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 )
 
-type Fetcher[T any] interface {
-	FetchFeed(ctx context.Context, l *slog.Logger, url string) (<-chan T, error)
-	Filter(ctx context.Context, data T) (bool, error)
-	FetchPost(ctx context.Context, l *slog.Logger, data T) (T, error)
-	ProcessFeed(ctx context.Context, data T) (domain.RawPost, error)
+// A source adapter. It sends one post per item found. The pipeline claims and fetches each one.
+// l takes the third-party request logs.
+type Fetcher interface {
+	Fetch(ctx context.Context, l *slog.Logger, url string) (<-chan domain.RawPost, error)
+}
+
+var ErrNoArchive = errors.New("no archive")
+
+// A Fetcher that can also read a source's history. ErrNoArchive when it finds none.
+type Backfiller interface {
+	Fetcher
+	Backfill(ctx context.Context, l *slog.Logger, url string) (<-chan domain.RawPost, error)
+}
+
+type Prober interface {
+	Probe(ctx context.Context, url string) (domain.Listing, error)
+}
+
+// PageFetcher fetches one html page through the host's pacer. finalURL is the url after redirects.
+type PageFetcher interface {
+	Page(ctx context.Context, l *slog.Logger, url string) (page []byte, finalURL string, err error)
 }

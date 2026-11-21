@@ -23,15 +23,17 @@ type fakeClassifier struct {
 	fail   map[string]error
 	err    error
 
-	mu     sync.Mutex
-	states []map[string]string
+	mu        sync.Mutex
+	states    []map[string]string
+	questions []map[string]port.NoulQuestion
 }
 
-func (f *fakeClassifier) Noul(_ context.Context, _ *slog.Logger, state any, _ map[string]port.NoulQuestion) (map[string]float64, error) {
+func (f *fakeClassifier) Noul(_ context.Context, _ *slog.Logger, state any, q map[string]port.NoulQuestion) (map[string]float64, error) {
 	s := state.(map[string]string)
 
 	f.mu.Lock()
 	f.states = append(f.states, s)
+	f.questions = append(f.questions, q)
 	f.mu.Unlock()
 
 	if err := f.fail[s["title"]]; err != nil {
@@ -125,5 +127,31 @@ func TestKeepDropsFailed(t *testing.T) {
 
 	if got, err := NewResultFilter(c).Keep(context.Background(), slog.New(slog.DiscardHandler), "Volvo", "acquisition", searchResults); err == nil || got != nil {
 		t.Errorf("every result failed: got %v, %v", got, err)
+	}
+}
+
+func TestKeepDepthQuestion(t *testing.T) {
+	cases := map[string]string{
+		DepthAction:   "Does this search result substantially cover the given entity?",
+		"acquisition": "Does this search result report the given action by the given entity?",
+	}
+
+	for action, want := range cases {
+		c := &fakeClassifier{}
+
+		if _, err := NewResultFilter(c).Keep(context.Background(), slog.New(slog.DiscardHandler), "Volvo Cars", action, searchResults[:1]); err != nil {
+			t.Fatal(err)
+		}
+
+		if c.calls() != 1 || c.questions[0]["result"].Instructions != want {
+			t.Errorf("%s: questions %v", action, c.questions)
+		}
+	}
+
+	c := &fakeClassifier{}
+	NewResultFilter(c).Keep(context.Background(), slog.New(slog.DiscardHandler), "Volvo Cars", DepthAction, searchResults[:1])
+
+	if got := c.questions[0]["result"].Criteria; got == nil || got.True != "Its main subject is this entity, as a news article, press release, company page or report from any site." || got.False != "It mentions the entity only in passing, is a listing, search, tag or category page, a stock quote or a profile page, or its text does not show the entity." {
+		t.Errorf("criteria %+v", got)
 	}
 }

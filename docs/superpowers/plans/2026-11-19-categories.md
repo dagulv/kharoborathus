@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Seeded categories that group tags, two-stage Jev tagging, categories for proposed tags, a category feed filter, and admin management.
+**Goal:** Seeded categories that group tags, two-stage Jev tagging that includes recent proposed tags, inline tag promotion, categories for proposed tags, a category feed filter, and admin management.
 
 **Architecture:** Migration `002_categories.sql` adds `categories`, `category_terms` and `category_tags` and seeds 18 categories and 137 tags. Enrich asks Jev about categories first, then only the tags of matched categories plus uncategorized ones. A post's categories derive from its tags. Admin routes and pages build on the admin SPA.
 
@@ -15,19 +15,20 @@
 - `001_init.sql` is never edited. All schema and seed changes go in `internal/migrations/002_categories.sql`. No `{{` in SQL.
 - Seed values are copied verbatim from the spec's Categories and Tags tables.
 - Category threshold 0.5. Tag threshold 0.8. 50 questions per Jev request. Cache TTL 1 minute.
+- Proposed tag recency 30 days. Tag promotion: 5 posts from enabled, active sources, 3 distinct domains, 30 days.
 - Category keys: 1 to 40 characters, normalized with `discovery.TagKey`. Category terms: required for `sv` and `en`, at most 100 characters.
 - The system never creates or enables a category. Seeding never changes an existing tag's `enabled`.
 - Go style per `~/.claude/CLAUDE.md`: `any`, wrapped errors `fmt.Errorf("err <what>: %w", err)` in leaf calls, guard clauses, default assignment.
 - Go DB tests need `TEST_POSTGRES_CONN`, for example `postgresql://postgres:<pw>@localhost:5432/postgres?sslmode=disable` with the dev compose db up. Without it they skip, so run them with it set.
-- Tasks 1 to 6 run now. Tasks 7 and 8 need the admin SPA plan, `docs/superpowers/plans/2026-11-14-admin-spa.md`, executed first. Stop after Task 6 if `internal/core/service/admin` does not exist.
+- Tasks 1 to 7 run now. Tasks 8 and 9 need the admin SPA plan, `docs/superpowers/plans/2026-11-14-admin-spa.md`, executed first. Stop after Task 7 if `internal/core/service/admin` does not exist.
 
 ## Review Focus
 
 1. Jev answers without a score for a category question. Expect a score of 0: the category does not match, uncategorized tags are still asked. Task 4.
 2. A tag in two matched categories. Expect it asked once, not twice. Task 4.
-3. DeepSeek returns category keys like `"Energy "` or `"real estate"`. Expect them normalized with `TagKey` and kept. Task 5.
-4. `?category=` combined with `?tag=` and `after`, and a category whose only tags are disabled. Expect all filters to apply together, and an empty list for the latter. Task 6.
-5. Admin creates category `"Real Estate"`. Expect it normalized to `real_estate` and a 409 against the seed. Task 7.
+3. DeepSeek returns category keys like `"Energy "` or `"real estate"`. Expect them normalized with `TagKey` and kept. Task 6.
+4. `?category=` combined with `?tag=` and `after`, and a category whose only tags are disabled. Expect all filters to apply together, and an empty list for the latter. Task 7.
+5. Admin creates category `"Real Estate"`. Expect it normalized to `real_estate` and a 409 against the seed. Task 8.
 
 ---
 
@@ -89,20 +90,23 @@
 - Produces in `postgres`:
   - `CategoryStore`, built with `NewCategoryStore(db)`.
   - `CategoryStore.EnabledCategories(ctx) ([]domain.Category, error)`. Enabled categories, ordered by key, with all terms. `Tags` holds the mapped tag keys that are enabled and active, ordered by key and never nil.
-  - `TagStore.ActiveTags` fills `Categories` with the tag's enabled category keys, ordered, never nil.
+  - `TagStore.ClassifiableTags(ctx, lang string) ([]domain.Tag, error)` replaces `ActiveTags`. It returns enabled tags that are `active`, or `proposed` and recent: created within 30 days, or carried by a post created within 30 days. It fills `Status`, `Type`, `Terms` in `lang`, and `Categories` with the tag's enabled category keys, ordered and never nil.
+  - `ActiveTags` is removed, and its caller in enrich moves to `ClassifiableTags`. Enrich builds its quality keys from tags with `Status == active` only.
 
 - [ ] **Step 1: Write failing tests**
   - `TestEnabledCategories`:
     - Seed categories `finance` and `energy`, plus a disabled `macro`. `finance` has terms sv and en.
     - Map `finance` to an active tag, a proposed tag and a disabled tag.
     - Expect `[energy, finance]`. `finance.Terms` is `{"sv": …, "en": …}` and `finance.Tags` is only the active tag. `energy.Tags` is `[]`.
-  - Extend `TestActiveTags`:
-    - Map `acquisition` to an enabled category and a disabled one.
-    - Expect `Categories` to be only the enabled one. `contract.Categories` is `[]`.
-- [ ] **Step 2: Run** `go test ./internal/adapter/postgres/ -run 'TestEnabledCategories|TestActiveTags' -v`. Expect FAIL.
-- [ ] **Step 3: Implement** both queries with `array_agg … FILTER`, as `ActiveTags` already does.
+  - `TestClassifiableTags` replaces `TestActiveTags` and keeps its assertions. In addition:
+    - Map `acquisition` to an enabled category and a disabled one. Expect `Categories` to be only the enabled one. `contract.Categories` is `[]`.
+    - `new_factory`, proposed and created now, is included with `Status` `proposed`.
+    - A proposed tag created 40 days ago with no post is left out. The same tag on a post created today is included.
+    - Proposed but disabled `ipo` is left out.
+- [ ] **Step 2: Run** `go test ./internal/adapter/postgres/ -run 'TestEnabledCategories|TestClassifiableTags' -v`. Expect FAIL.
+- [ ] **Step 3: Implement** both queries with `array_agg … FILTER`, as `ActiveTags` does today. Update `loadTags` in `internal/core/service/enrich/enrich.go` to call `ClassifiableTags` and to build quality keys from active tags only.
 - [ ] **Step 4: Run** `go test ./internal/adapter/postgres/`. Expect PASS.
-- [ ] **Step 5: Commit** `Read enabled categories and each tag's categories`
+- [ ] **Step 5: Commit** `Read enabled categories and classifiable tags with their categories`
 
 ### Task 3: Categories on new proposed tags
 
@@ -134,7 +138,7 @@
 - Modify: `cmd/main.go`
 
 **Interfaces:**
-- Consumes: `CategoryStore.EnabledCategories`, and `Tag.Categories` from Task 2.
+- Consumes: `CategoryStore.EnabledCategories`, and `ClassifiableTags` with `Tag.Categories` from Task 2.
 - Changes:
   - `jevTags(ctx context.Context, c port.Classifier, l *slog.Logger, lang, title, markdown string, categories []domain.Category, tags []domain.Tag) ([]string, error)`.
   - `tagSet` gains `categories []domain.Category`. `loadTags` reads it. The cache key stays per language.
@@ -157,6 +161,7 @@
   - **Review Focus 1:** `TestJevTagsMissingCategoryScore`: the fake answers no score for `energy`. Expect `oil` not asked and `misc` asked.
   - **Review Focus 2:** `TestJevTagsTagInTwoCategories`: both categories score 0.9. Expect `batteries` to appear once in the stage 2 request and once in the result.
   - `TestJevTagsCategoryError`: a stage 1 error wraps `port.ErrUnavailable` and makes no stage 2 request.
+  - `TestJevTagsProposed`: a tag with `Status` `proposed` in a matched category is asked and returned at 0.8, like an active one.
   - Existing `TestJevTags*` tests pass `nil` categories.
   - `enrich_test.go`: `setup` seeds category `deals` and maps `acquisition` to it. The fake scores `deals` 0.9. `TestEnrich` still expects `acquisition` on the post.
   - New `TestEnrichCategoryMiss`: `deals` scores 0. Expect the post without `acquisition`.
@@ -165,7 +170,35 @@
 - [ ] **Step 4: Run** `go test ./... && go vet ./...`. Expect PASS.
 - [ ] **Step 5: Commit** `Ask Jev about categories before tags`
 
-### Task 5: Categories in the enrich prompt
+### Task 5: Inline tag promotion
+
+**Files:**
+- Modify: `internal/adapter/postgres/tag.go`, `internal/adapter/postgres/tag_test.go`
+- Modify: `internal/core/service/enrich/enrich.go`, `internal/core/service/enrich/enrich_test.go`
+
+**Interfaces:**
+- Produces: `TagStore.PromoteTags(ctx context.Context, tx pgx.Tx, keys []string) ([]string, error)`. For each key in sorted order that is `proposed`, it takes `pg_advisory_xact_lock(hashtext('tag/' || key))`, then sets `status = 'active'` when posts with the key in `tags` reach the rule. Returns the promoted keys.
+- Rule: at least 5 posts from sources with `enabled` and `status = 'active'`, on at least 3 distinct `domain_id`, with `created_at` within 30 days.
+- Enrich calls it inside the transaction, after `InsertPost` inserted a row, with `post.Tags`, before `Discover`.
+
+- [ ] **Step 1: Write failing tests**
+  - `TestPromoteTags`:
+    - A proposed tag on 5 trusted posts from 3 domains becomes active.
+    - On 5 posts from 2 domains, it stays proposed.
+    - On 4 posts from 3 domains, it stays proposed.
+    - A post from a disabled source does not count.
+    - A post created 31 days ago does not count.
+    - An active key and an unknown key are ignored.
+  - `TestEnrichPromotes`:
+    - Seed a proposed tag on 4 trusted posts from 3 domains.
+    - Jev scores it 0.9 on a fifth trusted post.
+    - Expect it active after `Enrich`.
+- [ ] **Step 2: Run** `go test ./internal/adapter/postgres/ ./internal/core/service/enrich/ -run 'Promote' -v`. Expect FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `go test ./...`. Expect PASS.
+- [ ] **Step 5: Commit** `Promote proposed tags once enough posts carry them`
+
+### Task 6: Categories in the enrich prompt
 
 **Files:**
 - Modify: `internal/core/service/enrich/prompts/enrich.md`
@@ -192,7 +225,7 @@
 - [ ] **Step 4: Run** `go test ./...`. Expect PASS.
 - [ ] **Step 5: Commit** `Let enrich put proposed tags into categories`
 
-### Task 6: Public category filter, categories route, merge and docs
+### Task 7: Public category filter, categories route, merge and docs
 
 **Files:**
 - Modify: `internal/core/domain/post.go`
@@ -235,7 +268,7 @@
   - Add a row to `docs/kb/index.md`.
 - [ ] **Step 6: Commit** `Filter the feed by category and list categories`
 
-### Task 7: Admin category routes
+### Task 8: Admin category routes
 
 Requires admin SPA plan Tasks 3 to 6.
 
@@ -259,7 +292,7 @@ Requires admin SPA plan Tasks 3 to 6.
   - `CategoryStore.SetCategoryEnabled(ctx, key string, enabled bool) error`. Wraps `pgx.ErrNoRows` for an unknown key.
   - `CategoryStore.SetTagCategories(ctx, tag string, categories []string) error`. Replaces the rows in one transaction. Wraps `pgx.ErrNoRows` for an unknown tag, and returns `ErrUnknownCategory` when any key is not a category, before writing.
   - `ListAdminPosts` with `Category` matches `p.tags && ARRAY(SELECT tag FROM category_tags WHERE category = $n)`.
-  - Go `MergeTag` copies `category_tags` as in Task 6.
+  - Go `MergeTag` copies `category_tags` as in Task 7.
 - Produces in `admin`, with `Stores.Categories *postgres.CategoryStore`, routes per the spec's admin table.
   - Validation: `key` is normalized with `TagKey` and must be 1 to 40 characters. `sv` and `en` are trimmed, required, and at most 100 characters.
   - `PUT /admin/tags/{key}/categories` normalizes each key the same way.
@@ -289,7 +322,7 @@ Requires admin SPA plan Tasks 3 to 6.
 - [ ] **Step 4: Run** `go test ./... && go vet ./...`. Expect PASS.
 - [ ] **Step 5: Commit** `Add admin category routes`
 
-### Task 8: Admin SPA categories
+### Task 9: Admin SPA categories
 
 Requires admin SPA plan Tasks 8, 10 and 11. Use the `svelte:svelte-file-editor` agent for `.svelte` files.
 
@@ -298,7 +331,7 @@ Requires admin SPA plan Tasks 8, 10 and 11. Use the `svelte:svelte-file-editor` 
 - Modify: `admin/src/routes/(app)/tags/+page.svelte`, `tags/+page.ts`, `admin/src/routes/(app)/posts/+page.ts`, `posts/+page.svelte`, and the sidebar nav in the app layout
 
 **Interfaces:**
-- Consumes: Task 7 routes, and the SPA's API helpers.
+- Consumes: Task 8 routes, and the SPA's API helpers.
 
 Behavior:
 - **Categories page:**

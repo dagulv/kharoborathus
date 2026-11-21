@@ -16,7 +16,11 @@ const (
 	dedupeWindow = 7
 	// $50 a month at $5 per 1k queries, spread over a 31-day month.
 	dailySearchBudget = 322
-	// One day of ingest at its daily cap. More would age out before it is fetched.
+	// Inside dailySearchBudget, so depth searches cannot crowd out events.
+	dailyDepthBudget = 50
+	DepthAction      = "depth"
+	depthFreshness   = "pm"
+	// More would age out before discovered ingest gets to them.
 	maxPendingResults = 200
 	catchUpBatch      = 10
 )
@@ -26,6 +30,7 @@ type searchStore interface {
 	ListUnfinished(ctx context.Context, windowDays, limit int) ([]string, error)
 	PendingResults(ctx context.Context, windowDays int) (int, error)
 	SearchesLastDay(ctx context.Context) (int, error)
+	DepthSearchesLastDay(ctx context.Context) (int, error)
 	MarkRejected(ctx context.Context, id string) error
 	SaveResults(ctx context.Context, id string, results []SearchResult) error
 	SaveKept(ctx context.Context, item SearchItem, kept []int, urls []string) ([]string, error)
@@ -156,7 +161,23 @@ func search(ctx context.Context, s searchStore, item SearchItem, se Searcher, l,
 		return nil, false, nil
 	}
 
-	results, err := se.Search(ctx, il, Query{Q: item.Query, Lang: item.Lang})
+	q := Query{Q: item.Query, Lang: item.Lang}
+
+	if item.Action == DepthAction {
+		depthUsed, err := s.DepthSearchesLastDay(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if depthUsed >= dailyDepthBudget {
+			l.Info("search held back", "query", item.ID, "reason", "daily depth budget", "used", depthUsed)
+			return nil, false, nil
+		}
+
+		q.Freshness = depthFreshness
+	}
+
+	results, err := se.Search(ctx, il, q)
 	if errors.Is(err, errSearchRejected) {
 		l.Warn("search rejected", "query", item.ID, "err", err)
 

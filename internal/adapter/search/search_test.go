@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/jackc/pgx/v5"
 )
@@ -20,6 +22,7 @@ type fakeStore struct {
 	listed     int
 	pending    int
 	used       int
+	depthUsed  int
 	rejected   []string
 	saved      [][]SearchResult
 	kept       [][]int
@@ -37,6 +40,8 @@ func (s *fakeStore) ListUnfinished(_ context.Context, _, limit int) ([]string, e
 func (s *fakeStore) PendingResults(context.Context, int) (int, error) { return s.pending, nil }
 
 func (s *fakeStore) SearchesLastDay(context.Context) (int, error) { return s.used, nil }
+
+func (s *fakeStore) DepthSearchesLastDay(context.Context) (int, error) { return s.depthUsed, nil }
 
 func (s *fakeStore) MarkRejected(_ context.Context, id string) error {
 	s.rejected = append(s.rejected, id)
@@ -61,11 +66,13 @@ type fakeSearcher struct {
 	results []SearchResult
 	err     error
 	calls   int
+	queries []Query
 	cancel  context.CancelFunc
 }
 
-func (f *fakeSearcher) Search(context.Context, *slog.Logger, Query) ([]SearchResult, error) {
+func (f *fakeSearcher) Search(_ context.Context, _ *slog.Logger, q Query) ([]SearchResult, error) {
 	f.calls++
+	f.queries = append(f.queries, q)
 
 	if f.cancel != nil {
 		f.cancel()
@@ -266,9 +273,9 @@ func TestEnqueueFull(t *testing.T) {
 func TestStoreSearch(t *testing.T) {
 	db := discoverDB(t)
 	early := seedPost(t, db, seed{Trusted: true, Content: volvoArticle, Lang: "sv", Age: time.Hour})
-	ids := discover(t, db, early, volvoTakeover)
+	ids := discover(t, db, early, []domain.LinkedEntity{volvoLinked}, volvoTakeover)
 	late := seedPost(t, db, seed{Trusted: true, Content: volvoArticle, Lang: "en"})
-	discover(t, db, late, volvoTakeover)
+	discover(t, db, late, []domain.LinkedEntity{volvoLinked}, volvoTakeover)
 
 	ctx := context.Background()
 	s := NewStore(db)
@@ -343,6 +350,88 @@ func TestStoreSearch(t *testing.T) {
 	if n, err := s.SearchesLastDay(ctx); err != nil || n != 1 {
 		t.Errorf("searches after reject %d, %v", n, err)
 	}
+
+	if n, err := s.DepthSearchesLastDay(ctx); err != nil || n != 0 {
+		t.Errorf("depth searches before %d, %v", n, err)
+	}
+
+	exec(t, db, `INSERT INTO discovery_search_queries (normalized_entity, action, query, searched_at, result) VALUES
+		('volvo_cars', 'depth', 'Volvo Cars', now(), '{"results": []}'),
+		('saab', 'depth', 'Saab', now(), NULL),
+		('scania', 'depth', 'Scania', now() - interval '2 days', '{"results": []}'),
+		('man', 'depth', 'MAN', NULL, NULL)`)
+
+	if n, err := s.DepthSearchesLastDay(ctx); err != nil || n != 1 {
+		t.Errorf("depth searches %d, %v", n, err)
+	}
+}
+
+func TestListUnfinishedPriority(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	exec(t, db, `INSERT INTO entities (key, name, kind, focus) VALUES
+		('focused', 'F', 'company', true),
+		('strong', 'S', 'company', false),
+		('weak', 'W', 'company', false)`)
+	exec(t, db, `INSERT INTO entities (key, name, kind, focus, enabled) VALUES ('disabled', 'D', 'company', true, false)`)
+
+	// Inserted out of the wanted order, so created_at alone cannot satisfy the test.
+	queries := []struct {
+		name, entity, action string
+		posts                int
+		paid                 bool
+	}{
+		{"weak", "weak", "acquisition", 1, false},
+		{"depth", "focused", "depth", 0, false},
+		{"strong", "strong", "acquisition", 5, false},
+		{"paid", "paid", "acquisition", 0, true},
+		{"unknown", "unknown", "acquisition", 0, false},
+		{"focused", "focused", "acquisition", 0, false},
+		{"disabled", "disabled", "acquisition", 0, false},
+		{"disabled depth", "disabled", "depth", 0, false},
+	}
+
+	ids := map[string]string{}
+	for _, q := range queries {
+		post := seedPost(t, db, seed{Trusted: true})
+		for range q.posts {
+			linked := seedPost(t, db, seed{Trusted: true})
+			exec(t, db, `INSERT INTO post_entities (post_id, entity) VALUES ($1, $2)`, linked.ID, q.entity)
+		}
+
+		searchedAt := "NULL"
+		if q.paid {
+			searchedAt = "now()"
+		}
+
+		var id string
+		if err := db.QueryRow(ctx, `
+			INSERT INTO discovery_search_queries (normalized_entity, action, query, searched_at, result)
+			VALUES ($1, $2, $3, `+searchedAt+`, CASE WHEN $4 THEN '{"results": []}'::jsonb END)
+			RETURNING id
+			`, q.entity, q.action, fmt.Sprintf("%s %s", q.entity, q.action), q.paid).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+
+		exec(t, db, `INSERT INTO discovery_search_query_posts (query_id, post_id) VALUES ($1, $2)`, id, post.ID)
+		ids[q.name] = id
+	}
+
+	store := NewStore(db)
+	got, err := store.ListUnfinished(ctx, dedupeWindow, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var want []string
+	for _, name := range []string{"paid", "focused", "strong", "weak", "unknown", "depth"} {
+		want = append(want, ids[name])
+	}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
 }
 
 func TestSearchHeldBackLogged(t *testing.T) {
@@ -362,5 +451,88 @@ func TestSearchHeldBackLogged(t *testing.T) {
 		if !strings.Contains(buf.String(), "search held back") || !strings.Contains(buf.String(), reason) {
 			t.Errorf("%s: log %q", reason, buf.String())
 		}
+	}
+}
+
+func depthItem() SearchItem {
+	i := testItem()
+	i.Action = DepthAction
+	i.Query = "Volvo Cars"
+
+	return i
+}
+
+func TestSearchDepthFreshness(t *testing.T) {
+	cases := map[string]struct {
+		item SearchItem
+		want string
+	}{
+		"depth": {depthItem(), "pm"},
+		"event": {testItem(), ""},
+	}
+
+	for name, c := range cases {
+		se := &fakeSearcher{}
+
+		if err := runSearch(context.Background(), &fakeStore{item: c.item}, se, &fakeClassifier{}); err != nil {
+			t.Fatal(err)
+		}
+
+		if len(se.queries) != 1 || se.queries[0].Freshness != c.want {
+			t.Errorf("%s: queries %+v", name, se.queries)
+		}
+	}
+}
+
+func TestSearchDepthBudget(t *testing.T) {
+	var buf bytes.Buffer
+	l := slog.New(slog.NewTextHandler(&buf, nil))
+	s := &fakeStore{item: depthItem(), depthUsed: 50}
+	se := &fakeSearcher{}
+
+	if err := searchQuery(context.Background(), s, "q", nil, se, NewResultFilter(&fakeClassifier{}), l, l); err != nil || se.calls != 0 || s.writes() != 0 {
+		t.Errorf("err %v, calls %d, writes %d", err, se.calls, s.writes())
+	}
+
+	if !strings.Contains(buf.String(), "daily depth budget") {
+		t.Errorf("log %q", buf.String())
+	}
+
+	s = &fakeStore{item: testItem(), depthUsed: 50}
+	se = &fakeSearcher{}
+
+	if err := runSearch(context.Background(), s, se, &fakeClassifier{}); err != nil || se.calls != 1 {
+		t.Errorf("event: err %v, calls %d", err, se.calls)
+	}
+}
+
+func TestSearchSkipsDisabledEntity(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	exec(t, db, `INSERT INTO entities (key, name, kind, enabled) VALUES ('disabled', 'D', 'company', false)`)
+
+	post := seedPost(t, db, seed{Trusted: true})
+
+	var id string
+	if err := db.QueryRow(ctx, `
+		INSERT INTO discovery_search_queries (normalized_entity, action, query) VALUES ('disabled', 'acquisition', 'D köper X')
+		RETURNING id
+		`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+
+	exec(t, db, `INSERT INTO discovery_search_query_posts (query_id, post_id) VALUES ($1, $2)`, id, post.ID)
+
+	s := NewStore(db)
+	se := &fakeSearcher{results: searchResults}
+	l := slog.New(slog.DiscardHandler)
+
+	if err := searchQuery(ctx, &s, id, make(chan string, 10), se, NewResultFilter(&fakeClassifier{}), l, l); err != nil || se.calls != 0 {
+		t.Errorf("err %v, calls %d", err, se.calls)
+	}
+
+	if n := count(t, db, `SELECT count(*) FROM discovery_search_queries WHERE id = $1 AND searched_at IS NULL`, id); n != 1 {
+		t.Errorf("disabled query was marked searched")
 	}
 }

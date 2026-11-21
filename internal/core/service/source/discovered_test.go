@@ -2,25 +2,54 @@ package source
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/adapter/postgres"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
-	"github.com/dagulv/kharoborathus/internal/lib/pace"
 )
+
+// Plain requests, since the safe client refuses the test server's loopback address.
+type plainPages struct{}
+
+func (plainPages) Page(ctx context.Context, _ *slog.Logger, url string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("status %s", res.Status)
+	}
+
+	page, err := io.ReadAll(res.Body)
+
+	return page, res.Request.URL.String(), err
+}
 
 type discoveredExtractor struct {
 	fakeExtractor
 	postedAt time.Time
+	empty    bool
 }
 
 func (f *discoveredExtractor) Content(context.Context, *slog.Logger, domain.Domain, string, []byte) (string, error) {
+	if f.empty {
+		return "", nil
+	}
+
 	return "<p>" + article + "</p>", nil
 }
 
@@ -34,6 +63,7 @@ type discoveredFixture struct {
 	ex       *discoveredExtractor
 	enriched chan string
 	fromPost string
+	rec      capture
 }
 
 func discoveredSetup(t *testing.T) discoveredFixture {
@@ -43,7 +73,11 @@ func discoveredSetup(t *testing.T) discoveredFixture {
 	enriched := make(chan string, 10)
 	s.Enriched = enriched
 
-	f := discoveredFixture{db: db, ex: ex, enriched: enriched}
+	rec := newCapture()
+	s.Calls = slog.New(rec)
+	s.Pages = plainPages{}
+
+	f := discoveredFixture{db: db, ex: ex, enriched: enriched, rec: rec}
 
 	if err := db.QueryRow(context.Background(), `
 		INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content)
@@ -53,7 +87,7 @@ func discoveredSetup(t *testing.T) discoveredFixture {
 	}
 
 	store := postgres.NewDiscoveredStore(db)
-	f.d = Discovered{Service: s, Store: &store, Client: &http.Client{}, Pacer: pace.New(0), Calls: slog.New(slog.DiscardHandler)}
+	f.d = Discovered{Service: s, Store: &store}
 
 	return f
 }
@@ -175,8 +209,8 @@ func TestIngestRedirectToBlocked(t *testing.T) {
 		t.Errorf("status %q", s)
 	}
 
-	if n := f.count(t, `SELECT count(*) FROM raw_posts WHERE url = $1`, target.URL+"/final"); n != 0 {
-		t.Errorf("raw posts %d", n)
+	if n := f.count(t, `SELECT count(*) FROM raw_posts WHERE url = $1 AND status = 'failed'`, target.URL+"/final"); n != 1 {
+		t.Errorf("failed raw posts %d", n)
 	}
 }
 
@@ -207,26 +241,25 @@ func TestIngestFinalStatuses(t *testing.T) {
 	}
 }
 
-func TestIngestDailyCap(t *testing.T) {
+func TestIngestNoDailyCap(t *testing.T) {
 	f := discoveredSetup(t)
 	ctx := context.Background()
 
 	if _, err := f.db.Exec(ctx, `
 		INSERT INTO discovery_posts (url, from_post_id, status, checked_at)
-		SELECT 'https://b.example/' || i, $1, 'rejected', now() FROM generate_series(1, $2) AS i
-		`, f.fromPost, dailyFetchCap); err != nil {
+		SELECT 'https://b.example/' || i, $1, 'rejected', now() FROM generate_series(1, 200) AS i
+		`, f.fromPost); err != nil {
 		t.Fatal(err)
 	}
 
-	var logged strings.Builder
 	id := f.queue(t, pageServer(t).URL+"/a")
 
-	if err := f.d.ingest(ctx, slog.New(slog.NewTextHandler(&logged, nil)), id); err != nil {
+	if err := f.d.ingest(ctx, slog.New(slog.DiscardHandler), id); err != nil {
 		t.Fatal(err)
 	}
 
-	if s := f.status(t, id); s != domain.StatusPending || !strings.Contains(logged.String(), "ingest held back") {
-		t.Errorf("status %q, log %q", s, logged.String())
+	if s := f.status(t, id); s != domain.StatusAccepted {
+		t.Errorf("status %q", s)
 	}
 }
 
@@ -252,5 +285,147 @@ func TestIngestCatchUp(t *testing.T) {
 
 	if s := f.status(t, old); s != domain.StatusPending {
 		t.Errorf("old %q", s)
+	}
+}
+
+func (f discoveredFixture) rawPostID(t *testing.T, url string) string {
+	t.Helper()
+
+	var id string
+	if err := f.db.QueryRow(context.Background(), `SELECT id FROM raw_posts WHERE url = $1`, url).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+
+	return id
+}
+
+func TestIngestSteps(t *testing.T) {
+	cases := []struct {
+		name      string
+		path      string
+		setup     func(t *testing.T, f discoveredFixture, url string)
+		raw       string
+		discovery string
+		steps     string
+	}{
+		{
+			name: "blocked domain",
+			path: "/a",
+			setup: func(t *testing.T, f discoveredFixture, url string) {
+				d, err := f.d.Service.DomainStore.GetOrCreateDomain(context.Background(), url)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if _, err := f.db.Exec(context.Background(), `INSERT INTO sources (domain_id, adapter, url, enabled) VALUES ($1, 'rss', $2, false)`, d.ID, url+"/feed"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			raw: domain.StatusFailed, discovery: domain.StatusFailed,
+			steps: "found_by:passed domain_check:stopped",
+		},
+		{
+			name: "fetch error", path: "/missing",
+			raw: domain.StatusFailed, discovery: domain.StatusFailed,
+			steps: "found_by:passed domain_check:passed fetch:stopped",
+		},
+		{
+			name: "empty page", path: "/a",
+			setup: func(_ *testing.T, f discoveredFixture, _ string) { f.ex.empty = true },
+			raw:   domain.StatusMissing, discovery: domain.StatusRejected,
+			steps: "found_by:passed domain_check:passed fetch:passed extract:stopped",
+		},
+		{
+			name: "stale", path: "/a",
+			setup: func(_ *testing.T, f discoveredFixture, _ string) { f.ex.postedAt = time.Now().AddDate(0, 0, -30) },
+			raw:   domain.StatusRejected, discovery: domain.StatusRejected,
+			steps: "found_by:passed domain_check:passed fetch:passed extract:passed date_window:stopped",
+		},
+		{
+			name: "accepted", path: "/a",
+			raw: domain.StatusAccepted, discovery: domain.StatusAccepted,
+			steps: "found_by:passed domain_check:passed fetch:passed extract:passed date_window:passed source_match:passed duplicate_check:passed quality_check:passed",
+		},
+	}
+
+	for _, c := range cases {
+		f := discoveredSetup(t)
+		srv := pageServer(t)
+		url := srv.URL + c.path
+
+		if c.setup != nil {
+			c.setup(t, f, srv.URL)
+		}
+
+		id := f.queue(t, url)
+
+		if err := f.d.ingest(context.Background(), slog.New(slog.DiscardHandler), id); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+
+		rawID := f.rawPostID(t, url)
+
+		if got, err := f.d.Service.RawPostStore.GetRawPost(context.Background(), rawID); err != nil || got.Status != c.raw || got.DiscoveryPostID != id {
+			t.Errorf("%s: raw %q, discovery post %q, %v", c.name, got.Status, got.DiscoveryPostID, err)
+		}
+
+		if s := f.status(t, id); s != c.discovery {
+			t.Errorf("%s: discovery status %q", c.name, s)
+		}
+
+		if got := f.rec.stepLine(rawID); got != c.steps {
+			t.Errorf("%s: steps %q, want %q", c.name, got, c.steps)
+		}
+	}
+}
+
+func TestIngestAlreadyStored(t *testing.T) {
+	f := discoveredSetup(t)
+	url := pageServer(t).URL + "/a"
+
+	if _, err := f.db.Exec(context.Background(), `INSERT INTO raw_posts (url, domain_id, status, content) SELECT $1, id, 'accepted', '{}' FROM domains LIMIT 1`, url); err != nil {
+		t.Fatal(err)
+	}
+
+	id := f.queue(t, url)
+
+	if err := f.d.ingest(context.Background(), slog.New(slog.DiscardHandler), id); err != nil {
+		t.Fatal(err)
+	}
+
+	if s := f.status(t, id); s != domain.StatusDuplicate {
+		t.Errorf("status %q", s)
+	}
+
+	if n := len(*f.rec.records); n != 0 {
+		t.Errorf("%d records, want none", n)
+	}
+}
+
+func TestIngestRedirectToStored(t *testing.T) {
+	f := discoveredSetup(t)
+	target := pageServer(t)
+	srv := httptest.NewServer(http.RedirectHandler(target.URL+"/final", http.StatusFound))
+	t.Cleanup(srv.Close)
+
+	ctx := context.Background()
+
+	if _, err := f.db.Exec(ctx, `INSERT INTO raw_posts (url, domain_id, status, content) SELECT $1, id, 'accepted', '{}' FROM domains LIMIT 1`, target.URL+"/final"); err != nil {
+		t.Fatal(err)
+	}
+
+	id := f.queue(t, srv.URL+"/short")
+
+	if err := f.d.ingest(ctx, slog.New(slog.DiscardHandler), id); err != nil {
+		t.Fatal(err)
+	}
+
+	if s := f.status(t, id); s != domain.StatusDuplicate {
+		t.Errorf("status %q", s)
+	}
+
+	rawID := f.rawPostID(t, srv.URL+"/short")
+	if got := f.rec.stepLine(rawID); got != "found_by:passed domain_check:passed fetch:passed duplicate_check:stopped" {
+		t.Errorf("steps %q", got)
 	}
 }

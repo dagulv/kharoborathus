@@ -15,7 +15,7 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-var _ port.Fetcher[rssDocument] = rss{}
+var _ port.Backfiller = rss{}
 
 type rssDocument struct {
 	URL      string
@@ -25,28 +25,62 @@ type rssDocument struct {
 	Authors  []string
 	Tags     []string
 	PostedAt time.Time
-	Page     []byte
-
-	excerpt bool // the item had no full content, only its description
 }
 
 type rss struct {
 	client *http.Client
 	pacer  *pace.Pacer
-	posts  PostStore
-	l      *slog.Logger
 }
 
-func NewRSS(posts PostStore, pacer *pace.Pacer, l *slog.Logger) port.Fetcher[rssDocument] {
+func NewRSS(pacer *pace.Pacer) port.Backfiller {
 	return rss{
 		client: safehttp.NewClient(time.Second * 20),
 		pacer:  pacer,
-		posts:  posts,
-		l:      l,
 	}
 }
 
-func (r rss) FetchFeed(ctx context.Context, l *slog.Logger, url string) (<-chan rssDocument, error) {
+func (r rss) Fetch(ctx context.Context, l *slog.Logger, url string) (<-chan domain.RawPost, error) {
+	items, err := r.feed(ctx, l, url)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.posts(ctx, items), nil
+}
+
+func (r rss) Backfill(ctx context.Context, l *slog.Logger, url string) (<-chan domain.RawPost, error) {
+	items, ok, err := r.wordpress(ctx, l, url)
+	if err != nil {
+		return nil, err
+	}
+
+	if !ok {
+		return nil, port.ErrNoArchive
+	}
+
+	return r.posts(ctx, items), nil
+}
+
+// The pipeline claims and fetches each article, since a feed's content may be cut short.
+func (r rss) posts(ctx context.Context, items <-chan rssDocument) <-chan domain.RawPost {
+	out := make(chan domain.RawPost)
+
+	go func() {
+		defer close(out)
+
+		for item := range items {
+			select {
+			case out <- item.rawPost():
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return out
+}
+
+func (r rss) feed(ctx context.Context, l *slog.Logger, url string) (<-chan rssDocument, error) {
 	// A parser per call, since its client logs to this call's logger.
 	fp := gofeed.NewParser()
 	fp.Client = logs.Client(r.client, l, "rss")
@@ -77,7 +111,6 @@ func (r rss) FetchFeed(ctx context.Context, l *slog.Logger, url string) (<-chan 
 
 			if doc.Content == "" {
 				doc.Content = item.Description
-				doc.excerpt = true
 			}
 
 			if item.PublishedParsed != nil {
@@ -103,48 +136,18 @@ func (r rss) FetchFeed(ctx context.Context, l *slog.Logger, url string) (<-chan 
 	return out, nil
 }
 
-func (r rss) Filter(ctx context.Context, data rssDocument) (bool, error) {
-	exists, err := r.posts.RawPostExists(ctx, data.URL)
-	if err != nil {
-		return false, fmt.Errorf("err raw post exists: %w", err)
-	}
-
-	return !exists, nil
-}
-
-// An excerpt item gets its article fetched for trim, which falls back to the excerpt when extraction fails.
-func (r rss) FetchPost(ctx context.Context, l *slog.Logger, data rssDocument) (rssDocument, error) {
-	if !data.excerpt {
-		return data, nil
-	}
-
-	if err := r.pacer.Wait(ctx, data.URL); err != nil {
-		return data, err
-	}
-
-	page, err := FetchHTML(ctx, logs.Client(r.client, l, "page"), data.URL)
-	if err != nil {
-		return data, fmt.Errorf("err fetch article: %w", err)
-	}
-
-	data.Page = page
-
-	return data, nil
-}
-
-func (r rss) ProcessFeed(ctx context.Context, data rssDocument) (domain.RawPost, error) {
+func (data rssDocument) rawPost() domain.RawPost {
 	out := domain.RawPost{
-		URL:        data.URL,
-		Lang:       data.Lang,
-		Title:      data.Title,
-		Content:    data.Content,
-		Authors:    data.Authors,
-		RawContent: string(data.Page),
+		URL:     data.URL,
+		Lang:    data.Lang,
+		Title:   data.Title,
+		Content: data.Content,
+		Authors: data.Authors,
 	}
 
 	if !data.PostedAt.IsZero() {
 		out.PostedAt = &data.PostedAt
 	}
 
-	return out, nil
+	return out
 }

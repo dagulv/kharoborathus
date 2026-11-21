@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -36,10 +37,20 @@ func rawPostDB(t *testing.T) (*database.Database, RawPostStore, domain.RawPost) 
 func create(t *testing.T, s RawPostStore, p domain.RawPost, url string, hash int64) domain.RawPost {
 	t.Helper()
 
-	p.URL = url
-	p.Simhash = &hash
+	ctx := context.Background()
 
-	out, err := s.CreateRawPost(context.Background(), p)
+	out, _, err := s.ClaimRawPost(ctx, Claim{URL: url, Lang: p.Lang, SourceID: p.SourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out.Lang, out.Content, out.Simhash = p.Lang, p.Content, &hash
+
+	if _, err := s.SaveContent(ctx, out); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err = s.GetRawPost(ctx, out.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,36 +128,6 @@ func TestSetStatus(t *testing.T) {
 	}
 }
 
-func TestCreateRawPostExists(t *testing.T) {
-	_, s, base := rawPostDB(t)
-	create(t, s, base, "https://a.example/1", 1)
-
-	base.URL = "https://a.example/1"
-	if _, err := s.CreateRawPost(context.Background(), base); !errors.Is(err, pgx.ErrNoRows) {
-		t.Errorf("err %v", err)
-	}
-}
-
-func TestRawPostContentRoundTrip(t *testing.T) {
-	_, s, base := rawPostDB(t)
-	posted := time.Date(2026, 11, 8, 8, 0, 0, 0, time.UTC)
-
-	base.URL = "https://a.example/1"
-	base.Content = "# Rubrik\n\nText"
-	base.Title = "Rubrik"
-	base.Authors = []string{"A", "B"}
-	base.PostedAt = &posted
-
-	out, err := s.CreateRawPost(context.Background(), domain.RawPost{SourceID: base.SourceID, DomainID: base.DomainID, Lang: "sv", URL: base.URL, Content: base.Content, Title: base.Title, Authors: base.Authors, PostedAt: base.PostedAt})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if out.Content != base.Content || out.Title != "Rubrik" || len(out.Authors) != 2 || out.PostedAt == nil || !out.PostedAt.Equal(posted) || out.RetryCount != 0 {
-		t.Errorf("got %+v", out)
-	}
-}
-
 func TestGetRawPost(t *testing.T) {
 	_, s, base := rawPostDB(t)
 	p := create(t, s, base, "https://a.example/1", 1)
@@ -208,12 +189,15 @@ func TestListUnenriched(t *testing.T) {
 	mk("https://a.example/fresh", domain.StatusAccepted, 0, "1 minute")
 	mk("https://a.example/rejected", domain.StatusRejected, 0, "1 hour")
 	posted := mk("https://a.example/posted", domain.StatusAccepted, 0, "1 hour")
+	resynced := mk("https://a.example/resynced", domain.StatusAccepted, 0, "90 minutes")
 
-	if _, err := db.Exec(ctx, `
-		INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content)
-		SELECT source_id, url, lang, domain_id, 't', 's', 'c' FROM raw_posts WHERE id = $1
-		`, posted); err != nil {
-		t.Fatal(err)
+	for id, updated := range map[string]string{posted: "0 minutes", resynced: "2 hours"} {
+		if _, err := db.Exec(ctx, `
+			INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content, updated_at)
+			SELECT source_id, url, lang, domain_id, 't', 's', 'c', now() - $2::interval FROM raw_posts WHERE id = $1
+			`, id, updated); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	ids, err := s.ListUnenriched(ctx, 20, 5*time.Minute, 10)
@@ -221,7 +205,7 @@ func TestListUnenriched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if want := []string{older, accepted, retried}; !slices.Equal(ids, want) {
+	if want := []string{older, resynced, accepted, retried}; !slices.Equal(ids, want) {
 		t.Errorf("got %v, want %v", ids, want)
 	}
 }
@@ -237,6 +221,49 @@ func TestListUnenrichedRetryCap(t *testing.T) {
 
 	if ids, err := s.ListUnenriched(ctx, 20, 5*time.Minute, 10); err != nil || len(ids) != 0 {
 		t.Errorf("got %v, %v", ids, err)
+	}
+}
+
+func TestReclaim(t *testing.T) {
+	db, s, base := rawPostDB(t)
+	ctx := context.Background()
+	p := create(t, s, base, "https://a.example/1", 1)
+
+	if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = 'rejected', retry_count = 2, created_at = now() - interval '1 day' WHERE id = $1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := s.Reclaim(ctx, p.ID)
+	if err != nil || !ok || got.Content != "c" || got.Status != domain.StatusPending {
+		t.Fatalf("reclaim ok %v, content %q, status %q, %v", ok, got.Content, got.Status, err)
+	}
+
+	var cleared, fresh bool
+	var retries int
+
+	if err := db.QueryRow(ctx, `
+		SELECT content IS NULL AND raw_content IS NULL AND simhash IS NULL, created_at > now() - interval '1 minute', retry_count
+		FROM raw_posts WHERE id = $1
+		`, p.ID).Scan(&cleared, &fresh, &retries); err != nil || !cleared || !fresh || retries != 0 {
+		t.Errorf("cleared %v, fresh %v, retries %d, %v", cleared, fresh, retries, err)
+	}
+
+	if _, ok, err := s.Reclaim(ctx, p.ID); err != nil || ok {
+		t.Errorf("reclaim in flight: ok %v, %v", ok, err)
+	}
+
+	if _, err := db.Exec(ctx, `UPDATE raw_posts SET created_at = now() - interval '10 minutes' WHERE id = $1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := s.Reclaim(ctx, p.ID); err != nil || !ok {
+		t.Errorf("reclaim stuck: ok %v, %v", ok, err)
+	}
+
+	for _, id := range []string{"00000000-0000-0000-0000-000000000000", "nope"} {
+		if _, ok, err := s.Reclaim(ctx, id); err != nil || ok {
+			t.Errorf("%s: ok %v, %v", id, ok, err)
+		}
 	}
 }
 
@@ -265,5 +292,239 @@ func TestGetSourceInvalidID(t *testing.T) {
 		if _, err := s.GetSource(context.Background(), id); !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("%s: err %v", id, err)
 		}
+	}
+}
+
+func TestClaimRawPost(t *testing.T) {
+	db, s, base := rawPostDB(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name    string
+		status  string
+		content bool
+		age     string
+		want    bool
+	}{
+		{"failed fetch", domain.StatusFailed, false, "1 hour", true},
+		{"missing content", domain.StatusMissing, false, "1 hour", true},
+		{"failed enrich", domain.StatusFailed, true, "1 hour", false},
+		{"accepted", domain.StatusAccepted, true, "1 hour", false},
+		{"rejected", domain.StatusRejected, true, "1 hour", false},
+		{"fresh pending", domain.StatusPending, false, "1 minute", false},
+		{"stale pending", domain.StatusPending, false, "10 minutes", true},
+	}
+
+	for i, c := range cases {
+		url := fmt.Sprintf("https://a.example/%d", i)
+
+		first, ok, err := s.ClaimRawPost(ctx, Claim{URL: url, Lang: "sv", SourceID: base.SourceID})
+		if err != nil || !ok {
+			t.Fatalf("%s: first claim %v, %v", c.name, ok, err)
+		}
+
+		content := any(nil)
+		if c.content {
+			content = `{"content":"c"}`
+		}
+
+		if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = $2, content = $3::jsonb, created_at = now() - $4::interval WHERE id = $1`, first.ID, c.status, content, c.age); err != nil {
+			t.Fatal(err)
+		}
+
+		again, ok, err := s.ClaimRawPost(ctx, Claim{URL: url, Lang: "sv", SourceID: base.SourceID})
+		if err != nil || ok != c.want {
+			t.Errorf("%s: claimed %v, %v", c.name, ok, err)
+			continue
+		}
+
+		if c.want && (again.ID != first.ID || again.Status != domain.StatusPending) {
+			t.Errorf("%s: reclaimed %+v", c.name, again)
+		}
+	}
+}
+
+func TestClaimRawPostNew(t *testing.T) {
+	_, s, base := rawPostDB(t)
+	ctx := context.Background()
+
+	p, ok, err := s.ClaimRawPost(ctx, Claim{URL: "https://b.example/new"})
+	if err != nil || !ok {
+		t.Fatalf("claim %v, %v", ok, err)
+	}
+
+	if p.Status != domain.StatusPending || p.DomainID == "" || p.DomainID == base.DomainID || p.SourceID != "" || p.DiscoveryPostID != "" {
+		t.Errorf("got %+v", p)
+	}
+
+	got, err := s.GetRawPost(ctx, p.ID)
+	if err != nil || got.SourceID != "" || got.Content != "" {
+		t.Errorf("get %+v, %v", got, err)
+	}
+}
+
+func TestClaimRawPostOnce(t *testing.T) {
+	_, s, base := rawPostDB(t)
+	ctx := context.Background()
+	c := Claim{URL: "https://a.example/once", SourceID: base.SourceID}
+
+	if _, ok, err := s.ClaimRawPost(ctx, c); err != nil || !ok {
+		t.Fatalf("first %v, %v", ok, err)
+	}
+
+	if _, ok, err := s.ClaimRawPost(ctx, c); err != nil || ok {
+		t.Errorf("second %v, %v", ok, err)
+	}
+}
+
+func TestSaveContent(t *testing.T) {
+	_, s, base := rawPostDB(t)
+	ctx := context.Background()
+	posted := time.Date(2026, 11, 8, 8, 0, 0, 0, time.UTC)
+	hash := int64(7)
+
+	p, _, err := s.ClaimRawPost(ctx, Claim{URL: "https://a.example/save"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p.SourceID = base.SourceID
+	p.Lang = "en"
+	p.RawContent = "<p>x</p>"
+	p.Content = "x"
+	p.Title = "T"
+	p.Authors = []string{"A"}
+	p.PostedAt = &posted
+	p.Simhash = &hash
+
+	if _, err := s.SaveContent(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetRawPost(ctx, p.ID)
+	if err != nil || got.SourceID != base.SourceID || got.Lang != "en" || got.RawContent != "<p>x</p>" || got.Content != "x" || got.Title != "T" || len(got.Authors) != 1 || !got.PostedAt.Equal(posted) || *got.Simhash != 7 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+
+	p.SourceID = ""
+	if _, err := s.SaveContent(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := s.GetRawPost(ctx, p.ID); err != nil || got.SourceID != base.SourceID {
+		t.Errorf("source kept: %+v, %v", got, err)
+	}
+}
+
+func TestListsSkipRowsWithoutContent(t *testing.T) {
+	db, s, base := rawPostDB(t)
+	ctx := context.Background()
+
+	for _, status := range []string{domain.StatusPending, domain.StatusFailed} {
+		p, _, err := s.ClaimRawPost(ctx, Claim{URL: "https://a.example/" + status, SourceID: base.SourceID})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = $2, created_at = now() - interval '1 hour' WHERE id = $1`, p.ID, status); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pending, err := s.ListPending(ctx, 20, 5*time.Minute)
+	if err != nil || len(pending) != 0 {
+		t.Errorf("pending %v, %v", pending, err)
+	}
+
+	unenriched, err := s.ListUnenriched(ctx, 20, 5*time.Minute, 10)
+	if err != nil || len(unenriched) != 0 {
+		t.Errorf("unenriched %v, %v", unenriched, err)
+	}
+}
+
+func TestClaimRawPostSameLinkAgain(t *testing.T) {
+	db, s, _ := rawPostDB(t)
+	ctx := context.Background()
+
+	var fromPost, link string
+	if err := db.QueryRow(ctx, `
+		INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content)
+		SELECT id, 'https://a.example/from', 'sv', domain_id, 't', 's', 'c' FROM sources LIMIT 1 RETURNING id
+		`).Scan(&fromPost); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.QueryRow(ctx, `INSERT INTO discovery_posts (url, from_post_id) VALUES ('https://b.example/x', $1) RETURNING id`, fromPost).Scan(&link); err != nil {
+		t.Fatal(err)
+	}
+
+	c := Claim{URL: "https://b.example/x", DiscoveryPostID: link}
+
+	first, _, err := s.ClaimRawPost(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The same link, retried by the catch-up after an error, claims its own pending row again.
+	again, ok, err := s.ClaimRawPost(ctx, c)
+	if err != nil || !ok || again.ID != first.ID {
+		t.Errorf("again %v, %v, %+v", ok, err, again)
+	}
+}
+
+func TestClaimRawPostAfterReclaim(t *testing.T) {
+	db, s, base := rawPostDB(t)
+	ctx := context.Background()
+	c := Claim{URL: "https://a.example/again", SourceID: base.SourceID}
+
+	p, _, err := s.ClaimRawPost(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.Exec(ctx, `UPDATE raw_posts SET status = 'failed', created_at = now() - interval '1 hour' WHERE id = $1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := s.ClaimRawPost(ctx, c); err != nil || !ok {
+		t.Fatalf("reclaim %v, %v", ok, err)
+	}
+
+	// A second lane right after the reclaim must not take the row too.
+	if _, ok, err := s.ClaimRawPost(ctx, c); err != nil || ok {
+		t.Errorf("second lane claimed %v, %v", ok, err)
+	}
+}
+
+func TestHasDuplicateByContentTime(t *testing.T) {
+	_, s, base := rawPostDB(t)
+	ctx := context.Background()
+	hash := int64(0b1111)
+
+	// a is claimed first, but b's content arrives and is checked first.
+	a, _, err := s.ClaimRawPost(ctx, Claim{URL: "https://a.example/a", SourceID: base.SourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, _, err := s.ClaimRawPost(ctx, Claim{URL: "https://a.example/b", SourceID: base.SourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range []*domain.RawPost{&b, &a} {
+		p.Content, p.Simhash = "c", &hash
+
+		if *p, err = s.SaveContent(ctx, *p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if dup, err := s.HasDuplicate(ctx, b); err != nil || dup {
+		t.Errorf("b: %v, %v", dup, err)
+	}
+
+	if dup, err := s.HasDuplicate(ctx, a); err != nil || !dup {
+		t.Errorf("a must be the duplicate: %v, %v", dup, err)
 	}
 }

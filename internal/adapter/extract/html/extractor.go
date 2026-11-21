@@ -12,6 +12,7 @@ import (
 	adapter "github.com/dagulv/kharoborathus/internal/adapter/robot"
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/core/port"
+	"github.com/dagulv/kharoborathus/internal/lib/pace"
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 )
 
@@ -19,6 +20,7 @@ const fetchTimeout = 20 * time.Second
 
 type DomainStore interface {
 	SetExtractRule(ctx context.Context, id, key string, rule json.RawMessage) error
+	ListPages(ctx context.Context, domainID string, limit int) ([]domain.RawPost, error)
 }
 
 var _ port.Extractor = (*htmlExtractor)(nil)
@@ -28,7 +30,10 @@ type htmlExtractor struct {
 	model   string
 	domains DomainStore
 	client  *http.Client
-	l       *slog.Logger
+	pacer   *pace.Pacer
+	// Domain ids whose links or pages rule was just saved.
+	ruled chan<- string
+	l     *slog.Logger
 
 	generating chan struct{}
 
@@ -41,14 +46,17 @@ type htmlExtractor struct {
 	listings  map[string][]sample
 	listedAt  map[string]time.Time
 	triedOne  map[string]bool
+	learning  map[string]bool
 }
 
-func New(llm port.LLM, domains DomainStore, l *slog.Logger) port.Extractor {
-	return newExtractor(llm, domains, l)
+func New(llm port.LLM, domains DomainStore, pacer *pace.Pacer, ruled chan<- string, l *slog.Logger) port.Extractor {
+	return newExtractor(llm, domains, pacer, ruled, l)
 }
 
-func newExtractor(llm port.LLM, domains DomainStore, l *slog.Logger) *htmlExtractor {
+func newExtractor(llm port.LLM, domains DomainStore, pacer *pace.Pacer, ruled chan<- string, l *slog.Logger) *htmlExtractor {
 	return &htmlExtractor{
+		pacer:      pacer,
+		ruled:      ruled,
 		llm:        llm,
 		model:      adapter.ModelFlash,
 		domains:    domains,
@@ -62,6 +70,7 @@ func newExtractor(llm port.LLM, domains DomainStore, l *slog.Logger) *htmlExtrac
 		listings:   make(map[string][]sample),
 		listedAt:   make(map[string]time.Time),
 		triedOne:   make(map[string]bool),
+		learning:   make(map[string]bool),
 	}
 }
 
@@ -148,5 +157,19 @@ func (t *htmlExtractor) saveRule(ctx context.Context, domainID string, f field, 
 		return fmt.Errorf("err marshal %s rule: %w", f, err)
 	}
 
-	return t.domains.SetExtractRule(ctx, domainID, string(f), raw)
+	if err := t.domains.SetExtractRule(ctx, domainID, string(f), raw); err != nil {
+		return err
+	}
+
+	if t.ruled == nil || (f != fieldLinks && f != fieldPages) {
+		return nil
+	}
+
+	select {
+	case t.ruled <- domainID:
+	default:
+		t.l.Warn("rule event dropped", "domain_id", domainID)
+	}
+
+	return nil
 }

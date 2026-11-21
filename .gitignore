@@ -10,3 +10,4 @@ admin/.svelte-kit
 admin/build
 admin/node_modules
 .claude
+.superpowers/

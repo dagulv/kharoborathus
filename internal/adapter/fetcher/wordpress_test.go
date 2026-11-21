@@ -2,6 +2,7 @@ package fetcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dagulv/kharoborathus/internal/core/port"
 	"github.com/dagulv/kharoborathus/internal/lib/pace"
 )
 
@@ -22,6 +24,17 @@ func wordpressServer(t *testing.T, root string) *httptest.Server {
 		w.Header().Set("Link", fmt.Sprintf(`<%s>; rel="%s", <https://x.example/>; rel="canonical"`, root, wordpressRel))
 		w.Header().Set("Content-Type", "application/rss+xml")
 		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel><title>T</title><language>sv-SE</language></channel></rss>`))
+	})
+
+	mux.HandleFunc("/category/x/feed", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", fmt.Sprintf(`<%s>; rel="%s"`, root, wordpressRel))
+		w.Header().Set("Content-Type", "application/rss+xml")
+		w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel><title>T</title></channel></rss>`))
+	})
+
+	mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html lang="sv"><head><link rel="%s" href="%s"></head></html>`, wordpressRel, root)
 	})
 
 	mux.HandleFunc("/blog/", func(w http.ResponseWriter, r *http.Request) {
@@ -102,18 +115,18 @@ func TestFindWordPressNone(t *testing.T) {
 	}
 }
 
-func TestWordPressFetchesEveryPage(t *testing.T) {
+func TestRSSBackfillWordPress(t *testing.T) {
 	srv := wordpressServer(t, "/wp-json/")
 	l := slog.New(slog.DiscardHandler)
 
 	gap := 50 * time.Millisecond
-	wp := wordpress{rss{client: srv.Client(), pacer: pace.New(gap), l: l}}
+	r := rss{client: srv.Client(), pacer: pace.New(gap)}
 
 	start := time.Now()
 
-	docs, err := wp.FetchFeed(context.Background(), l, srv.URL+"/wp-json/wp/v2/posts")
-	if err != nil {
-		t.Fatal(err)
+	docs, ok, err := r.wordpress(context.Background(), l, srv.URL+"/feed")
+	if err != nil || !ok {
+		t.Fatalf("ok %v, err %v", ok, err)
 	}
 
 	var got []rssDocument
@@ -123,6 +136,12 @@ func TestWordPressFetchesEveryPage(t *testing.T) {
 
 	if len(got) != 3 || got[2].URL != "https://x.example/c" {
 		t.Fatalf("got %+v", got)
+	}
+
+	for _, doc := range got {
+		if doc.Lang != "sv-SE" {
+			t.Errorf("%s: lang %q", doc.URL, doc.Lang)
+		}
 	}
 
 	if elapsed := time.Since(start); elapsed < gap {
@@ -137,5 +156,28 @@ func TestWordPressFetchesEveryPage(t *testing.T) {
 
 	if !slices.Equal(a.Authors, []string{"Olle"}) || !slices.Equal(a.Tags, []string{"Aktier & ekonomi", "fonder"}) {
 		t.Errorf("authors %v tags %v", a.Authors, a.Tags)
+	}
+}
+
+func TestRSSBackfillNone(t *testing.T) {
+	srv := wordpressServer(t, "/wp-json/")
+	l := slog.New(slog.DiscardHandler)
+
+	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond)}
+
+	if _, err := r.Backfill(context.Background(), l, srv.URL+"/plain"); !errors.Is(err, port.ErrNoArchive) {
+		t.Errorf("err %v, want ErrNoArchive", err)
+	}
+}
+
+func TestRSSBackfillCategoryFeed(t *testing.T) {
+	srv := wordpressServer(t, "/wp-json/")
+	l := slog.New(slog.DiscardHandler)
+
+	r := rss{client: srv.Client(), pacer: pace.New(time.Millisecond)}
+
+	// The API lists every post on the site, not only the category's.
+	if _, err := r.Backfill(context.Background(), l, srv.URL+"/category/x/feed"); !errors.Is(err, port.ErrNoArchive) {
+		t.Errorf("err %v, want ErrNoArchive", err)
 	}
 }

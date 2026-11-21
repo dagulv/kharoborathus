@@ -30,6 +30,28 @@ type Source struct {
 type SourceFilter struct {
 	query.Filter
 
-	Enabled sql.Null[bool]   `json:"enabled"`
-	Status  sql.Null[string] `json:"status"`
+	Enabled  sql.Null[bool]   `json:"enabled"`
+	Status   sql.Null[string] `json:"status"`
+	DomainID sql.Null[string] `json:"domainId"`
+	Adapter  sql.Null[string] `json:"adapter"`
+}
+
+// What a url can be added as, best first, for the admin.
+type Listing struct {
+	Candidates []Candidate `json:"candidates"`
+	Archive    *Archive    `json:"archive,omitempty"`
+}
+
+type Candidate struct {
+	Adapter string    `json:"adapter"`
+	URL     string    `json:"url"`
+	Title   string    `json:"title,omitzero"`
+	Items   int       `json:"items,omitzero"`
+	Latest  time.Time `json:"latest,omitzero"`
+}
+
+// A site's whole history, read once on backfill.
+type Archive struct {
+	URL   string `json:"url"`
+	Total int    `json:"total"`
 }

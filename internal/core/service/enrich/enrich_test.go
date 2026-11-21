@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/dagulv/kharoborathus/internal/lib/dbtest"
 	"github.com/dagulv/kharoborathus/internal/lib/schedule"
+	"github.com/jackc/pgx/v5"
 )
 
 type fakeLLM struct {
@@ -24,7 +26,9 @@ type fakeLLM struct {
 	err      error
 	schedule schedule.Schedule
 	calls    int
+	prompt   string
 	cancel   context.CancelFunc
+	l        *slog.Logger
 }
 
 func (f *fakeLLM) Schedule() schedule.Schedule { return f.schedule }
@@ -33,8 +37,10 @@ func (f *fakeLLM) Prompt(context.Context, *slog.Logger, port.Request) (string, e
 	return "", nil
 }
 
-func (f *fakeLLM) Unmarshal(_ context.Context, _ *slog.Logger, _ port.Request, out any) error {
+func (f *fakeLLM) Unmarshal(_ context.Context, l *slog.Logger, req port.Request, out any) error {
 	f.calls++
+	f.l = l
+	f.prompt = req.Prompt
 
 	if f.cancel != nil {
 		f.cancel()
@@ -60,9 +66,10 @@ var closed = schedule.Schedule{Closed: []schedule.Window{{
 const article = "Volvo Cars köper Northvolt. [Läs mer](https://news.example/a)"
 
 var goodAnswer = answer{
-	Summary: "Volvo Cars köper Northvolt.",
-	Tags:    []postgres.Proposal{{Key: "New Factory", Term: "ny fabrik"}, {Key: "acquisition", Term: "förvärv"}},
-	Events:  []discovery.Keyword{{Entity: "Volvo Cars", Action: "takeover", Query: "Volvo Cars köper Northvolt"}},
+	Summary:  "Volvo Cars köper Northvolt.",
+	Tags:     []postgres.Proposal{{Key: "New Factory", Term: "ny fabrik"}, {Key: "acquisition", Term: "förvärv"}},
+	Events:   []discovery.Keyword{{Entity: "Volvo Cars", Action: "takeover", Query: "Volvo Cars köper Northvolt"}},
+	Entities: []postgres.ExtractedEntity{{Key: "Volvo Cars", Name: "Volvo Cars", Term: "volvo cars", Kind: "company"}},
 }
 
 type fixture struct {
@@ -83,6 +90,8 @@ func setup(t *testing.T) fixture {
 		`INSERT INTO tags (key) VALUES ('acquisition')`,
 		`INSERT INTO tag_terms (key, lang, term) VALUES ('acquisition', 'sv', 'förvärv')`,
 		`INSERT INTO tag_aliases (alias, key) VALUES ('takeover', 'acquisition')`,
+		`INSERT INTO categories (key) VALUES ('deals')`,
+		`INSERT INTO category_tags (category, tag) VALUES ('deals', 'acquisition')`,
 	} {
 		if _, err := db.Exec(ctx, q); err != nil {
 			t.Fatal(err)
@@ -92,18 +101,29 @@ func setup(t *testing.T) fixture {
 	rawPosts := postgres.NewRawPostStore(db)
 	posts := postgres.NewPostStore(db)
 	tags := postgres.NewTagStore(db)
+	categories := postgres.NewCategoryStore(db)
+	entities := postgres.NewEntityStore(db)
 
 	f := fixture{
 		db:       db,
 		llm:      &fakeLLM{answer: goodAnswer},
-		jev:      &fakeClassifier{scores: map[string]float64{"acquisition": 0.9}},
+		jev:      &fakeClassifier{scores: map[string]float64{"deals": 0.9, "acquisition": 0.9}},
 		ids:      make(chan string, 10),
 		links:    make(chan string, 10),
 		rawPosts: &rawPosts,
 	}
-	f.s = &Service{DB: db, RawPosts: &rawPosts, Posts: &posts, Tags: &tags, LLM: f.llm, Classifier: f.jev, SearchIDs: f.ids, DiscoveredIDs: f.links}
+	f.s = &Service{DB: db, RawPosts: &rawPosts, Posts: &posts, Tags: &tags, Categories: &categories, Entities: &entities, LLM: f.llm, Classifier: f.jev, SearchIDs: f.ids, DiscoveredIDs: f.links, Calls: slog.New(slog.DiscardHandler)}
 
 	return f
+}
+
+// Events only search for active or focused entities.
+func (f fixture) activeVolvo(t *testing.T) {
+	t.Helper()
+
+	if _, err := f.db.Exec(context.Background(), `INSERT INTO entities (key, name, kind, status) VALUES ('volvo_cars', 'Volvo Cars', 'company', 'active')`); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (f fixture) rawPost(t *testing.T, trusted bool, url, status string, retries int) domain.RawPost {
@@ -121,10 +141,17 @@ func (f fixture) rawPost(t *testing.T, trusted bool, url, status string, retries
 		t.Fatal(err)
 	}
 
-	posted := time.Date(2026, 11, 8, 8, 0, 0, 0, time.UTC)
+	// Recent, since discovery starts no search for posts older than its window.
+	posted := time.Now().UTC().Truncate(time.Hour)
 
-	p, err := f.rawPosts.CreateRawPost(ctx, domain.RawPost{SourceID: sourceID, DomainID: domainID, URL: url, Lang: "sv", Content: article, Title: "Volvo köper", Authors: []string{"TT"}, PostedAt: &posted})
+	p, _, err := f.rawPosts.ClaimRawPost(ctx, postgres.Claim{URL: url, SourceID: sourceID})
 	if err != nil {
+		t.Fatal(err)
+	}
+
+	p.SourceID, p.DomainID, p.Lang, p.Content, p.Title, p.Authors, p.PostedAt = sourceID, domainID, "sv", article, "Volvo köper", []string{"TT"}, &posted
+
+	if _, err := f.rawPosts.SaveContent(ctx, p); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,6 +191,7 @@ func enrich(f fixture, id string) error {
 
 func TestEnrich(t *testing.T) {
 	f := setup(t)
+	f.activeVolvo(t)
 	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
 
 	if err := enrich(f, raw.ID); err != nil {
@@ -185,6 +213,78 @@ func TestEnrich(t *testing.T) {
 
 	if len(f.ids) != 1 || len(f.links) != 1 {
 		t.Errorf("enqueued %d query ids, %d links", len(f.ids), len(f.links))
+	}
+}
+
+func TestEnrichCategoryMiss(t *testing.T) {
+	f := setup(t)
+	f.jev.scores["deals"] = 0
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if p, _ := f.post(t, raw.URL); !slices.Equal(p.Tags, []string{"new_factory"}) {
+		t.Errorf("tags %v", p.Tags)
+	}
+
+	if len(f.jev.requests) != 1 {
+		t.Errorf("jev requests %d", len(f.jev.requests))
+	}
+}
+
+func TestEnrichPromotes(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+
+	if _, err := f.db.Exec(ctx, `INSERT INTO tags (key, status) VALUES ('wind', 'proposed')`); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range 4 {
+		if _, err := f.db.Exec(ctx, `
+			WITH d AS (
+				INSERT INTO domains (base_url) VALUES ($1) ON CONFLICT (base_url) DO UPDATE SET base_url = EXCLUDED.base_url RETURNING id
+			), s AS (
+				INSERT INTO sources (domain_id, adapter, url, enabled) SELECT id, 'rss', $1 || '/feed', true FROM d RETURNING id, domain_id
+			)
+			INSERT INTO posts (source_id, url, lang, domain_id, title, short_content, content, tags)
+			SELECT id, $2, 'sv', domain_id, 't', 's', 'c', '{wind}' FROM s
+			`, fmt.Sprintf("https://seed%d.example", i%3), fmt.Sprintf("https://seed.example/%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	f.jev.scores["wind"] = 0.9
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	var status string
+
+	if err := f.db.QueryRow(ctx, `SELECT status FROM tags WHERE key = 'wind'`).Scan(&status); err != nil || status != domain.StatusActive {
+		t.Errorf("status %q, %v", status, err)
+	}
+}
+
+func TestEnrichProposedQualityTagNotAnEventAction(t *testing.T) {
+	f := setup(t)
+
+	if _, err := f.db.Exec(context.Background(), `INSERT INTO tags (key, status) VALUES ('rumor', 'proposed')`); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(f.llm.prompt, "- Quality tag keys: acquisition\n") {
+		t.Errorf("prompt %q", f.llm.prompt)
 	}
 }
 
@@ -217,6 +317,31 @@ func TestEnrichUntrusted(t *testing.T) {
 	var n int
 	if err := f.db.QueryRow(context.Background(), `SELECT count(*) FROM tags WHERE key = 'new_factory'`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("untrusted post created %d tags, %v", n, err)
+	}
+
+	if err := f.db.QueryRow(context.Background(), `SELECT count(*) FROM entities`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("untrusted post created %d entities, %v", n, err)
+	}
+}
+
+func TestEnrichEntities(t *testing.T) {
+	f := setup(t)
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	var key, status string
+
+	err := f.db.QueryRow(context.Background(), `
+		SELECT pe.entity, e.status FROM post_entities pe
+		JOIN entities e ON e.key = pe.entity
+		JOIN posts p ON p.id = pe.post_id
+		WHERE p.url = $1
+		`, raw.URL).Scan(&key, &status)
+	if err != nil || key != "volvo_cars" || status != domain.StatusProposed {
+		t.Errorf("entity %q %q, %v", key, status, err)
 	}
 }
 
@@ -296,6 +421,7 @@ func TestEnrichCancelled(t *testing.T) {
 
 func TestEnrichExistingPost(t *testing.T) {
 	f := setup(t)
+	f.activeVolvo(t)
 	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
 
 	if err := enrich(f, raw.ID); err != nil {
@@ -307,6 +433,32 @@ func TestEnrichExistingPost(t *testing.T) {
 
 	if err := enrich(f, raw.ID); err != nil || f.llm.calls != calls || len(f.ids) != 0 {
 		t.Errorf("err %v, llm calls %d, enqueued %d", err, f.llm.calls-calls, len(f.ids))
+	}
+}
+
+// A resync saves new content after the post, so enrich writes the post again in place.
+func TestEnrichResyncedPost(t *testing.T) {
+	f := setup(t)
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	before, _ := f.post(t, raw.URL)
+
+	raw.Title = "Volvo köper igen"
+	if _, err := f.rawPosts.SaveContent(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	after, _ := f.post(t, raw.URL)
+	if after.ID != before.ID || after.Title != "Volvo köper igen" {
+		t.Errorf("post %s %q, want %s with the new title", after.ID, after.Title, before.ID)
 	}
 }
 
@@ -367,5 +519,103 @@ func TestEnrichProposalLimits(t *testing.T) {
 	var n int
 	if err := f.db.QueryRow(context.Background(), `SELECT count(*) FROM tags WHERE key IN ('', '_', 'p6')`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("bad proposals saved: %d, %v", n, err)
+	}
+}
+
+func TestEnrichSteps(t *testing.T) {
+	f := setup(t)
+	rec := newCapture()
+	f.s.Calls = slog.New(rec)
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := rec.stepLine(raw.ID); got != "enrich:passed discover:passed" {
+		t.Fatalf("steps %q", got)
+	}
+
+	p, _ := f.post(t, raw.URL)
+
+	if out, _ := rec.steps(raw.ID)[0].attrs["response"].(map[string]any); out["postId"] != p.ID {
+		t.Errorf("enrich output %v, post %s", out, p.ID)
+	}
+
+	if err := enrich(f, raw.ID); err != nil || rec.stepLine(raw.ID) != "enrich:passed discover:passed" {
+		t.Errorf("existing post: %v, steps %q", err, rec.stepLine(raw.ID))
+	}
+}
+
+func TestEnrichStepsFailure(t *testing.T) {
+	f := setup(t)
+	rec := newCapture()
+	f.s.Calls = slog.New(rec)
+	f.llm.err = errors.New("deepseek: 500")
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	enrich(f, raw.ID)
+	enrich(f, raw.ID)
+
+	if got := rec.stepLine(raw.ID); got != "enrich:error enrich:error" {
+		t.Errorf("steps %q", got)
+	}
+
+	if reason, _ := rec.last(raw.ID).attrs["reason"].(string); reason == "" {
+		t.Error("error step without a reason")
+	}
+}
+
+func TestEnrichCallsCarryRawPostID(t *testing.T) {
+	f := setup(t)
+	rec := newCapture()
+	f.s.Calls = slog.New(rec)
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, l := range map[string]*slog.Logger{"llm": f.llm.l, "jev": f.jev.l} {
+		l.Info("probe")
+
+		got := (*rec.records)[len(*rec.records)-1]
+
+		if got.msg != "probe" || got.attrs["raw_post_id"] != raw.ID || got.attrs["step"] != domain.StepEnrich {
+			t.Errorf("%s: record %+v", name, got)
+		}
+	}
+}
+
+func TestEnrichProposalCategories(t *testing.T) {
+	f := setup(t)
+
+	if _, err := f.db.Exec(context.Background(), `INSERT INTO categories (key) VALUES ('energy'), ('real_estate')`); err != nil {
+		t.Fatal(err)
+	}
+
+	f.llm.answer = answer{Summary: "s", Tags: []postgres.Proposal{{Key: "solar_park", Term: "solpark", Categories: []string{"Energy ", "real estate", " - "}}}}
+	raw := f.rawPost(t, true, "https://own.example/1", domain.StatusAccepted, 0)
+
+	if err := enrich(f, raw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := f.db.Query(context.Background(), `SELECT category FROM category_tags WHERE tag = 'solar_park' ORDER BY category`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{"energy", "real_estate"}; !slices.Equal(got, want) {
+		t.Errorf("categories %v", got)
+	}
+
+	if want := "Categories: deals, energy, real_estate"; !strings.Contains(f.llm.prompt, want) {
+		t.Errorf("prompt misses %q", want)
 	}
 }

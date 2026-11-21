@@ -5,54 +5,60 @@
 
 ## Summary
 
-A feed shows only its newest posts. A WordPress site also serves its whole archive through the REST API, so every scraped WordPress source is backfilled once. AI work on the backfilled posts runs in background queues.
+A feed shows only a source's newest posts. Backfill reads a source's history once, through strategies its adapter supports. It runs when a source is created, when a proposed source is approved, and when the Backfill button is pressed.
 
 ## Current state
 
-- [wordpress.go](../../internal/service/source/adapter/wordpress.go) finds the API and reads every post.
-- [backfill.go](../../internal/service/source/backfill.go) checks each scraped source once and sends WordPress ones to the `wordpress` pipeline in [sourced.go](../../internal/service/source/sourced.go).
-- [summaries.go](../../internal/service/source/summaries.go) summarizes active posts in the background, backfilled or not.
-- The admin source check shows the post total, see [route.go](../../internal/service/source/route.go).
+- [port/fetcher.go](../../internal/core/port/fetcher.go) defines `Backfiller`, a `Fetcher` that can also read a source's history. Both stream raw posts.
+- [rss.go](../../internal/adapter/fetcher/rss.go) backfills through the WordPress REST API in [wordpress.go](../../internal/adapter/fetcher/wordpress.go).
+- [paging.go](../../internal/adapter/fetcher/paging.go) backfills page sources: WordPress, `rel="next"`, URL patterns, then a learned pagination rule.
+- [pages.go](../../internal/adapter/extract/html/pages.go) learns the pagination rule per domain, like the link rule.
+- [ruled.go](../../internal/core/service/source/ruled.go) backfills a domain's page sources when its links or pages rule is saved.
+- [sourced.go](../../internal/core/service/source/sourced.go) gives every `Backfiller` its own lane and routes backfills to it.
+- [route.go](../../internal/core/service/source/route.go) serves `POST /admin/sources/{id}/backfill`.
 
 ## Design
 
-1. Every minute the source worker takes up to 10 sources that are enabled, `active` and not yet backfilled.
-2. It fetches the source URL and looks for the REST API root: the `Link` header with `rel="https://api.w.org/"`, sent on pages and feeds, or the same `<link>` in the page head.
-3. It probes `wp/v2/posts?per_page=1`, whose `X-WP-Total` header gives the post total.
-4. It sets `backfilled_at`, then sends a copy of the source with adapter `wordpress` and the posts endpoint as URL.
-5. The `wordpress` adapter pages through the API, 20 posts per request, newest first, until `X-WP-TotalPages`. Requests to one host go at least 5 seconds apart, so 420 posts take about 2 minutes. `_embed=author,wp:term` gives author and category names.
-6. The pipeline skips posts already stored, like any other source, and inserts the rest as pending for the [quality gate](quality-gate.md).
-7. `RunSummaries` summarizes 20 active posts a minute while DeepSeek is off peak. Until then a post shows its excerpt.
+1. `POST /admin/sources` queues a backfill after inserting a source, and approving a proposed source does too, both in [admin/sources.go](../../internal/core/service/admin/sources.go). The admin's Backfill button calls `POST /admin/sources/{id}/backfill`.
+2. The handler sends an enabled, active source on the backfill channel without blocking. It answers `202`, or `503` when the queue is full.
+3. A backfill route sends the source to its adapter's backfill lane. An adapter that is no `Backfiller` logs `no backfill strategy`.
+4. The rss adapter reads the WordPress REST API. A site without one means `no archive`, logged at info.
+5. The WordPress strategy runs only for the site root or its main feed, since `wp/v2/posts` lists every post on the site. It finds the REST API through the `Link` header or `<link>` tag, with the shared pacer. A failed detection, such as a closed API answering 401 or 404, counts as no API.
+6. It pages through `wp/v2/posts`, 20 posts per request, newest first, and sends each post as soon as it is read. Each post takes the language of the page or feed the API was found on.
+7. The adapter skips stored posts, fetches every article page through the pacer and streams each post.
+
+**Page sources**
+
+8. A page source on the site root tries WordPress first. Each API post keeps only its link and language, and is fetched like any listing link.
+9. Otherwise it fetches the listing and reads its article links through the domain's `links` rule. Without one there is no archive yet.
+10. It picks the first pager that finds page 2: `<link rel="next">` or `<a rel="next">`, then `/page/2/`, `?page=2`, `?paged=2` and `?p=2`, then the domain's `pages` rule. A pattern counts only when its page 2 shows a link page 1 did not.
+11. It reads page after page and sends each new link at once. It stops on an error status, a page with no new links, no next url, or a url already read.
+12. A missing `pages` rule is learned off-peak in the background. One goroutine per domain waits for off-peak and a free generation slot. A template rule keeps the listing it was learned on and applies only from there. The prompt lists the page's same-host link and button candidates with their classes, `rel`, `aria-label` and text, since the skeleton keeps none of those. A rule passes when page 2 brings mostly new articles, and a `next` rule also moves on to page 3.
+13. Saving a `links` or `pages` rule sends the domain id. Its enabled, active page sources then backfill, so a new page source backfills once its rules exist.
 
 Rules:
 
-- Backfill is automatic. A new source, an existing one and a promoted one are all checked once.
-- `backfilled_at` is set before the backfill runs. A failed check or an interrupted backfill is not retried. Clearing `backfilled_at` runs it again, and stored posts are skipped.
-- The API gives no language, so posts take the `<html lang>` of the page or the `<language>` of the feed the API was found on.
-- Without pretty permalinks the API root is `/?rest_route=/`, and the route goes in that query value.
-- A closed API, which answers 401 or 404, means no backfill.
-- Tagging, event extraction, search and link extraction already work through background queues with their own batch sizes and budgets. Backfilled posts join them by `created_at`, so a large backfill delays newer posts in those queues.
+- Plain HTTP only. No headless browser and no JavaScript. Infinite scroll is covered when the next batch has a url in the page.
+- Backfill keeps no state. A rerun starts from the first page and skips stored posts.
+- Backfills never pass `sourceStream`, so they never pause a source's rate.
+- Backfill plugins have their own workers. A long archive never holds up live sources.
+- Posts dated more than 7 days back start no Brave search. They still join a recent search for the same event.
 - API requests log as type `wordpress`.
 
 ## Schema changes
 
-```sql
-ALTER TABLE sources ADD COLUMN backfilled_at TIMESTAMPTZ;
-ALTER TABLE posts ADD COLUMN summary_pending BOOLEAN NOT NULL DEFAULT false;
-CREATE INDEX posts_summary_pending_idx ON posts (created_at) WHERE summary_pending;
-```
-
-These are in `001_init.sql`. `summary_pending` is replaced by `summary_checked` and dropped in `004_drop_summary_pending.sql`, see [quality gate](quality-gate.md).
+None. `backfilled_at` and `summary_pending` from the first design are gone.
 
 ## Defaults
 
-| Parameter                      | Value | Why                                                                           |
-| ------------------------------ | ----- | ----------------------------------------------------------------------------- |
-| Sources checked per minute     | 10    | A first run on many existing sources stays gentle.                            |
-| Posts per API request          | 20    | Full content fits well under the 5 MB body cap.                               |
-| Summaries per minute           | 20    | Same batch as tagging and discovery.                                          |
-| Gap between requests to a host | 5 s   | The site serves full posts per request, which is heavy work for a small host. |
+| Parameter                      | Value | Why                                                    |
+| ------------------------------ | ----- | ------------------------------------------------------ |
+| Posts per API request          | 20    | Full content fits well under the 5 MB body cap.        |
+| Gap between requests to a host | 5 s   | `DomainPace`, shared by live fetches and backfills.    |
+| Backfill queue                 | 16    | `BackfillQueue`. A full queue answers `503`.           |
+| Rule event queue               | 16    | `RuledQueue`. A full queue drops the event.            |
+| Pagination candidates          | 80    | Enough for any pager, small enough for one prompt.     |
 
 ## Open questions
 
-- Other platforms with an archive API, like Ghost or Substack.
+- Strategies for other platforms, like Ghost, Substack or RFC 5005 feed paging.

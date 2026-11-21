@@ -35,3 +35,62 @@ func TestValidSession(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateSession(t *testing.T) {
+	db := dbtest.New(t)
+	ctx := context.Background()
+	expired := sha256.Sum256([]byte("expired"))
+
+	var userID string
+	if err := db.QueryRow(ctx, `
+		WITH u AS (INSERT INTO users (email, password_hash) VALUES ('a@example.com', 'x') RETURNING id),
+		s AS (INSERT INTO sessions (token_hash, user_id, expires_at) SELECT $1::bytea, id, now() - interval '1 day' FROM u)
+		SELECT id FROM u
+		`, expired[:]).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewSessionStore(db)
+	h := sha256.Sum256([]byte("new"))
+
+	if err := s.CreateSession(ctx, h[:], userID, 30); err != nil {
+		t.Fatal(err)
+	}
+
+	if ok, err := s.ValidSession(ctx, h[:]); !ok || err != nil {
+		t.Errorf("new session: %v, %v", ok, err)
+	}
+
+	var left int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE token_hash = $1`, expired[:]).Scan(&left); err != nil || left != 0 {
+		t.Errorf("expired session left: %d, %v", left, err)
+	}
+}
+
+func TestDeleteSession(t *testing.T) {
+	db := dbtest.New(t)
+	ctx := context.Background()
+	h := sha256.Sum256([]byte("valid"))
+
+	if _, err := db.Exec(ctx, `
+		WITH u AS (INSERT INTO users (email, password_hash) VALUES ('a@example.com', 'x') RETURNING id)
+		INSERT INTO sessions (token_hash, user_id, expires_at) SELECT $1::bytea, id, now() + interval '1 day' FROM u
+		`, h[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewSessionStore(db)
+
+	if err := s.DeleteSession(ctx, h[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	if ok, _ := s.ValidSession(ctx, h[:]); ok {
+		t.Error("session still valid")
+	}
+
+	unknown := sha256.Sum256([]byte("unknown"))
+	if err := s.DeleteSession(ctx, unknown[:]); err != nil {
+		t.Errorf("unknown: %v", err)
+	}
+}

@@ -2,13 +2,16 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/core/domain"
 	"github.com/dagulv/kharoborathus/internal/lib/database"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -27,7 +30,8 @@ const rawPostColumns = `
 	simhash,
 	status,
 	retry_count,
-	created_at`
+	created_at,
+	discovery_post_id`
 
 // The content column, which carries what the fetch and extraction found until the post is created.
 type rawContent struct {
@@ -47,38 +51,115 @@ func NewRawPostStore(db *database.Database) RawPostStore {
 	}
 }
 
-// Returns pgx.ErrNoRows when the url is already stored.
-func (s *RawPostStore) CreateRawPost(ctx context.Context, p domain.RawPost) (domain.RawPost, error) {
-	status := domain.StatusPending
-	if p.Status != "" {
-		status = p.Status
+// An empty SourceID or DiscoveryPostID is stored as NULL.
+type Claim struct {
+	URL             string
+	Lang            string
+	SourceID        string
+	DiscoveryPostID string
+}
+
+// ClaimRawPost stores the url as pending before it is fetched, so every step can log against its id.
+// A url already stored is claimed again only when it stopped before it had content, as a link
+// with no row always was, or when the same discovered link retries after an error.
+// claimed is false when another sync owns the url or it is done.
+func (s *RawPostStore) ClaimRawPost(ctx context.Context, c Claim) (p domain.RawPost, claimed bool, err error) {
+	baseURL, err := domain.BaseURL(c.URL)
+	if err != nil {
+		return p, false, fmt.Errorf("err claim raw post %s: %w", c.URL, err)
 	}
 
+	p, err = scanRawPost(s.db.QueryRow(ctx, `
+		WITH d AS (
+			INSERT INTO domains (base_url) VALUES ($1)
+			ON CONFLICT (base_url) DO UPDATE SET base_url = EXCLUDED.base_url
+			RETURNING id
+		)
+		INSERT INTO raw_posts (source_id, discovery_post_id, url, lang, domain_id)
+		SELECT NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, $4, $5, d.id FROM d
+		ON CONFLICT (url) DO UPDATE SET status = 'pending', created_at = now()
+		WHERE raw_posts.content IS NULL AND (
+			raw_posts.status IN ('failed', 'missing')
+			OR (raw_posts.status = 'pending' AND raw_posts.created_at < now() - interval '5 minutes')
+			OR (raw_posts.status = 'pending' AND raw_posts.discovery_post_id = EXCLUDED.discovery_post_id)
+		)
+		RETURNING `+rawPostColumns,
+		baseURL, c.SourceID, c.DiscoveryPostID, c.URL, c.Lang,
+	), domain.RawPost{})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return p, false, nil
+	}
+
+	if err != nil {
+		return p, false, fmt.Errorf("err claim raw post %s: %w", c.URL, err)
+	}
+
+	return p, true, nil
+}
+
+// An empty SourceID keeps the stored one. created_at moves to now, since the duplicate check and
+// the catch-up jobs count a post's age from when its content arrived.
+func (s *RawPostStore) SaveContent(ctx context.Context, p domain.RawPost) (domain.RawPost, error) {
 	content, err := json.Marshal(rawContent{Content: p.Content, Title: p.Title, Authors: p.Authors, PostedAt: p.PostedAt})
 	if err != nil {
 		return p, fmt.Errorf("err marshal raw post content %s: %w", p.URL, err)
 	}
 
-	out, err := scanRawPost(s.db.QueryRow(ctx, `
-		INSERT INTO raw_posts (source_id, url, lang, domain_id, raw_content, content, simhash, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (url) DO NOTHING
-		RETURNING `+rawPostColumns,
-		p.SourceID, p.URL, p.Lang, p.DomainID, p.RawContent, content, p.Simhash, status,
-	), p)
-	if err != nil {
-		return out, fmt.Errorf("err create raw post %s: %w", p.URL, err)
+	if err := s.db.QueryRow(ctx, `
+		UPDATE raw_posts
+		SET source_id = coalesce(NULLIF($2, '')::uuid, source_id), domain_id = $3, lang = $4, raw_content = $5, content = $6, simhash = $7, created_at = now()
+		WHERE id = $1
+		RETURNING created_at
+		`, p.ID, p.SourceID, p.DomainID, p.Lang, p.RawContent, content, p.Simhash).Scan(&p.CreatedAt); err != nil {
+		return p, fmt.Errorf("err save raw post content %s: %w", p.URL, err)
 	}
 
-	return out, nil
+	return p, nil
 }
 
-func (s *RawPostStore) RawPostExists(ctx context.Context, url string) (exists bool, err error) {
-	if err = s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM raw_posts WHERE url = $1)`, url).Scan(&exists); err != nil {
-		return false, fmt.Errorf("err raw post exists: %w", err)
+// MoveURL gives a raw post the url it redirected to. moved is false when another raw post has it.
+func (s *RawPostStore) MoveURL(ctx context.Context, id, url string) (moved bool, err error) {
+	_, err = s.db.Exec(ctx, `UPDATE raw_posts SET url = $2 WHERE id = $1`, id, url)
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+		return false, nil
 	}
 
-	return exists, nil
+	if err != nil {
+		return false, fmt.Errorf("err move raw post %s: %w", id, err)
+	}
+
+	return true, nil
+}
+
+// Reclaim puts a raw post back to pending for a resync, as a fresh claim with no content. The
+// returned post keeps its old content, which the resync falls back to when the page fails to fetch.
+// claimed is false when the post is unknown or still in the pipeline.
+func (s *RawPostStore) Reclaim(ctx context.Context, id string) (p domain.RawPost, claimed bool, err error) {
+	p, err = scanRawPost(s.db.QueryRow(ctx, `
+		WITH old AS (
+			SELECT `+rawPostColumns+` FROM raw_posts
+			WHERE id = $1 AND (status <> 'pending' OR created_at < now() - interval '5 minutes')
+			FOR UPDATE
+		), reset AS (
+			UPDATE raw_posts r
+			SET status = 'pending', raw_content = NULL, content = NULL, simhash = NULL, retry_count = 0, created_at = now()
+			FROM old WHERE r.id = old.id
+		)
+		SELECT `+rawPostColumns+` FROM old
+		`, id), domain.RawPost{})
+	if errors.Is(err, pgx.ErrNoRows) || isInvalidText(err) {
+		return p, false, nil
+	}
+
+	if err != nil {
+		return p, false, fmt.Errorf("err reclaim raw post %s: %w", id, err)
+	}
+
+	p.Status = domain.StatusPending
+
+	return p, true, nil
 }
 
 // Only earlier rows count, so of two near-identical posts exactly one is the duplicate.
@@ -122,7 +203,7 @@ func (s *RawPostStore) GetRawPost(ctx context.Context, id string) (domain.RawPos
 func (s *RawPostStore) ListPending(ctx context.Context, limit int, minAge time.Duration) ([]domain.RawPost, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT `+rawPostColumns+` FROM raw_posts
-		WHERE status = 'pending' AND created_at < now() - $2::interval
+		WHERE status = 'pending' AND content IS NOT NULL AND created_at < now() - $2::interval
 		ORDER BY created_at
 		LIMIT $1
 		`, limit, minAge)
@@ -145,8 +226,9 @@ func (s *RawPostStore) ListUnenriched(ctx context.Context, limit int, minAge tim
 	rows, err := s.db.Query(ctx, `
 		SELECT r.id FROM raw_posts r
 		WHERE (r.status = 'accepted' OR (r.status = 'failed' AND r.retry_count < $3))
+			AND r.content IS NOT NULL
 			AND r.created_at < now() - $2::interval
-			AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = r.url)
+			AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.url = r.url AND p.updated_at >= r.created_at)
 		ORDER BY r.retry_count, r.created_at
 		LIMIT $1
 		`, limit, minAge, maxRetries)
@@ -171,22 +253,32 @@ func (s *RawPostStore) FailEnrich(ctx context.Context, id string) error {
 }
 
 func scanRawPost(row pgx.Row, p domain.RawPost) (domain.RawPost, error) {
-	var content rawContent
+	var sourceID, rawContentText, discoveryPostID sql.NullString
+	var content *rawContent
 
 	if err := row.Scan(
 		&p.ID,
-		&p.SourceID,
+		&sourceID,
 		&p.URL,
 		&p.Lang,
 		&p.DomainID,
-		&p.RawContent,
+		&rawContentText,
 		&content,
 		&p.Simhash,
 		&p.Status,
 		&p.RetryCount,
 		&p.CreatedAt,
+		&discoveryPostID,
 	); err != nil {
 		return p, err
+	}
+
+	p.SourceID = sourceID.String
+	p.DiscoveryPostID = discoveryPostID.String
+	p.RawContent = rawContentText.String
+
+	if content == nil {
+		return p, nil
 	}
 
 	p.Content, p.Title, p.Authors, p.PostedAt = content.Content, content.Title, content.Authors, content.PostedAt

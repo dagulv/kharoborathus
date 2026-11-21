@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/dagulv/kharoborathus/internal/adapter/fetcher"
@@ -27,6 +28,8 @@ var articleFields = []field{fieldContent, fieldTitle, fieldAuthors, fieldPostedA
 
 // Only requested fields get rules, so a feed that carries its own authors never pays for an authors rule.
 func (t *htmlExtractor) collect(ctx context.Context, l *slog.Logger, d domain.Domain, f field, s sample) {
+	stored := t.storedSamples(ctx, l, d.ID, f)
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -40,20 +43,20 @@ func (t *htmlExtractor) collect(ctx context.Context, l *slog.Logger, d domain.Do
 
 	t.requested[d.ID][f] = true
 
-	samples := t.samples[d.ID]
-
-	for _, have := range samples {
-		if have.URL == s.URL {
-			return
-		}
+	samples, ok := t.samples[d.ID]
+	if !ok {
+		samples = stored
 	}
 
-	if len(samples) < ruleSamples {
-		if samples == nil && len(t.samples) >= maxSampleDomains {
+	if !slices.ContainsFunc(samples, func(have sample) bool { return have.URL == s.URL }) && len(samples) < ruleSamples {
+		samples = append(samples, s)
+	}
+
+	if !ok || len(samples) > len(t.samples[d.ID]) {
+		if !ok && len(t.samples) >= maxSampleDomains {
 			t.evictOldestSamples()
 		}
 
-		samples = append(samples, s)
 		t.samples[d.ID] = samples
 		t.sampleSeq++
 		t.sampledAt[d.ID] = t.sampleSeq
@@ -86,6 +89,33 @@ func (t *htmlExtractor) collect(ctx context.Context, l *slog.Logger, d domain.Do
 
 		t.generate(ctx, l, d, fields, samples)
 	}()
+}
+
+// A domain's pages from earlier runs seed its samples, since a restart drops them before a slow domain
+// reaches ruleSamples.
+func (t *htmlExtractor) storedSamples(ctx context.Context, l *slog.Logger, domainID string, f field) []sample {
+	t.mu.Lock()
+	_, ok := t.samples[domainID]
+	skip := ok || t.failing(f, domainID)
+	t.mu.Unlock()
+
+	if skip || t.domains == nil {
+		return nil
+	}
+
+	pages, err := t.domains.ListPages(ctx, domainID, ruleSamples)
+	if err != nil {
+		l.Error("stored samples", "domain_id", domainID, "err", err)
+		return nil
+	}
+
+	samples := make([]sample, 0, len(pages))
+
+	for _, p := range pages {
+		samples = append(samples, sample{URL: p.URL, Data: []byte(p.RawContent)})
+	}
+
+	return samples
 }
 
 // Callers hold t.mu.
@@ -179,68 +209,70 @@ func (t *htmlExtractor) Links(ctx context.Context, l *slog.Logger, d domain.Doma
 	return links, nil
 }
 
+// The pipeline never waits on generation. A new source gets its posts on the tick after the rule is saved.
 func (t *htmlExtractor) withoutLinkRule(ctx context.Context, l *slog.Logger, d domain.Domain, s sample) []string {
-	if links, ok := t.linksFromOneListing(ctx, l, d, s); ok {
-		return links
+	if !t.oneListing(ctx, l, d, s) {
+		t.collectListing(ctx, l, d, s)
 	}
-
-	t.collectListing(ctx, l, d, s)
 
 	return nil
 }
 
-// A new source gets its posts on the first fetch. One listing cannot show which headlines change,
-// so a failure falls back to collecting listingSamples and is not tried again until a restart.
-func (t *htmlExtractor) linksFromOneListing(ctx context.Context, l *slog.Logger, d domain.Domain, s sample) ([]string, bool) {
+// oneListing tries a rule from a single listing in the background, and reports whether it started.
+// One listing cannot show which headlines change, so a failure falls back to collecting listingSamples
+// and is not tried again until a restart.
+func (t *htmlExtractor) oneListing(ctx context.Context, l *slog.Logger, d domain.Domain, s sample) bool {
 	t.mu.Lock()
 	skip := t.triedOne[d.ID] || t.failing(fieldLinks, d.ID)
 	t.mu.Unlock()
 
 	if skip || !t.llm.Schedule().Active(time.Now()) {
-		return nil, false
+		return false
 	}
 
 	select {
 	case t.generating <- struct{}{}:
 	default:
-		return nil, false
+		return false
 	}
 
-	defer func() { <-t.generating }()
+	go func() {
+		defer func() { <-t.generating }()
 
-	rule, err := t.generateLinkRule(ctx, l, []sample{s}, t.fetcher(l))
-	if errors.Is(err, port.ErrUnavailable) || ctx.Err() != nil {
-		return nil, false
-	}
+		rule, err := t.generateLinkRule(ctx, l, []sample{s}, t.fetcher(l))
+		if errors.Is(err, port.ErrUnavailable) || ctx.Err() != nil {
+			return
+		}
 
-	t.mu.Lock()
-	t.triedOne[d.ID] = true
-	t.mu.Unlock()
+		t.mu.Lock()
+		t.triedOne[d.ID] = true
+		t.mu.Unlock()
 
-	if err != nil {
-		t.l.Info("link rule from one listing failed, collecting more", "domain", d.BaseURL, "err", err)
-		return nil, false
-	}
+		if err != nil {
+			t.l.Info("link rule from one listing failed, collecting more", "domain", d.BaseURL, "err", err)
+			t.collectListing(ctx, l, d, s)
+			return
+		}
 
-	if err := t.saveRule(ctx, d.ID, fieldLinks, rule); err != nil {
-		t.l.Error("save link rule", "domain", d.BaseURL, "err", err)
-	} else {
+		if err := t.saveRule(ctx, d.ID, fieldLinks, rule); err != nil {
+			t.l.Error("save link rule", "domain", d.BaseURL, "err", err)
+			return
+		}
+
 		t.l.Info("link rule generated from one listing", "domain", d.BaseURL, "reasoning", rule.Reasoning)
-	}
+	}()
 
-	links, err := applyLinks(rule, s)
-	if err != nil {
-		t.l.Error("links", "domain", d.BaseURL, "err", err)
-		return nil, false
-	}
-
-	return links, true
+	return true
 }
 
 func (t *htmlExtractor) fetcher(l *slog.Logger) fetchFunc {
 	client := logs.Client(t.client, l, "trim")
 
 	return func(ctx context.Context, url string) ([]byte, error) {
+		if err := t.pacer.Wait(ctx, url); err != nil {
+			return nil, err
+		}
+
 		return fetcher.FetchHTML(ctx, client, url)
 	}
 }

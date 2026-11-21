@@ -15,6 +15,7 @@ const (
 	StatusRejected  = "rejected"
 	StatusDuplicate = "duplicate"
 	StatusFailed    = "failed"
+	StatusMissing   = "missing"
 )
 
 type RawPost struct {
@@ -26,12 +27,24 @@ type RawPost struct {
 	RawContent string     `json:"rawContent"` // Different types depending on type of source, e.g. HTML etc.
 	Content    string     `json:"content"`
 	Simhash    *int64     `json:"-"`      // NULL when the content has no words
-	Status     string     `json:"status"` // pending | accepted | rejected | duplicate | failed
+	Status     string     `json:"status"` // pending | accepted | rejected | duplicate | failed | missing
 	RetryCount int        `json:"retryCount"`
 	CreatedAt  time.Time  `json:"createdAt"`
 	Title      string     `json:"title"`
 	Authors    []string   `json:"authors"`
 	PostedAt   *time.Time `json:"postedAt"`
+	// The discovery_posts row this url came from, empty for sourced posts.
+	DiscoveryPostID string `json:"discoveryPostId"`
+	// The url after redirects, set by the fetch step and never stored.
+	FinalURL string `json:"-"`
+	// Passes the date window and quality check, for an admin resync of a rejected post. Never stored.
+	Override bool `json:"-"`
+}
+
+// An admin's request to run a raw post through step 1 again.
+type Resync struct {
+	RawPostID string
+	Override  bool
 }
 
 type Post struct {
@@ -45,6 +58,7 @@ type Post struct {
 	ShortContent string     `json:"shortContent"`      // Plain text short content, llm summary of content
 	Content      string     `json:"content,omitempty"` // Markdown content, left out of lists
 	Tags         []string   `json:"tags"`
+	Entities     []string   `json:"entities"` // Keys of enabled, active linked entities
 	PostedAt     *time.Time `json:"postedAt"`
 	Authors      []string   `json:"authors"`
 	CreatedAt    time.Time  `json:"createdAt"`
@@ -56,7 +70,9 @@ var ErrInvalidFilter = errors.New("invalid filter")
 type PostFilter struct {
 	query.Filter
 
-	Tags []string `query:"tag"`
+	Tags       []string `query:"tag"`
+	Categories []string `query:"category"`
+	Entities   []string `query:"entity"`
 	// A keyset cursor: the id of the last post already seen. Only valid with the default order.
 	After string `query:"after"`
 }

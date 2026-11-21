@@ -16,15 +16,11 @@ import (
 	"github.com/dagulv/kharoborathus/internal/lib/safehttp"
 )
 
-var _ port.Fetcher[pageDocument] = page{}
-
-// A url already in raw_posts is not fetched again.
-type PostStore interface {
-	RawPostExists(ctx context.Context, url string) (bool, error)
-}
+var _ port.Backfiller = page{}
 
 type Linker interface {
 	Links(ctx context.Context, l *slog.Logger, d domain.Domain, url string, listing []byte) ([]string, error)
+	Next(ctx context.Context, l *slog.Logger, d domain.Domain, url string, listing []byte, n int) (string, error)
 }
 
 type DomainStore interface {
@@ -34,30 +30,62 @@ type DomainStore interface {
 type pageDocument struct {
 	URL  string
 	Lang string
-	Page []byte
 }
 
 type page struct {
 	client  *http.Client
 	pacer   *pace.Pacer
-	posts   PostStore
 	domains DomainStore
 	linker  Linker
-	l       *slog.Logger
 }
 
-func NewPage(posts PostStore, domains DomainStore, linker Linker, pacer *pace.Pacer, l *slog.Logger) port.Fetcher[pageDocument] {
+func NewPage(domains DomainStore, linker Linker, pacer *pace.Pacer) port.Backfiller {
 	return page{
 		client:  safehttp.NewClient(time.Second * 20),
 		pacer:   pacer,
-		posts:   posts,
 		domains: domains,
 		linker:  linker,
-		l:       l,
 	}
 }
 
-func (r page) FetchFeed(ctx context.Context, l *slog.Logger, rawURL string) (<-chan pageDocument, error) {
+func (r page) Fetch(ctx context.Context, l *slog.Logger, rawURL string) (<-chan domain.RawPost, error) {
+	links, err := r.links(ctx, l, rawURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.posts(ctx, links), nil
+}
+
+func (r page) Backfill(ctx context.Context, l *slog.Logger, rawURL string) (<-chan domain.RawPost, error) {
+	links, err := r.history(ctx, l, rawURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.posts(ctx, links), nil
+}
+
+// The pipeline claims and fetches each article.
+func (r page) posts(ctx context.Context, links <-chan pageDocument) <-chan domain.RawPost {
+	out := make(chan domain.RawPost)
+
+	go func() {
+		defer close(out)
+
+		for link := range links {
+			select {
+			case out <- domain.RawPost{URL: link.URL, Lang: link.Lang}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return out
+}
+
+func (r page) links(ctx context.Context, l *slog.Logger, rawURL string) (<-chan pageDocument, error) {
 	if err := r.pacer.Wait(ctx, rawURL); err != nil {
 		return nil, err
 	}
@@ -99,37 +127,4 @@ func (r page) FetchFeed(ctx context.Context, l *slog.Logger, rawURL string) (<-c
 	}()
 
 	return out, nil
-}
-
-func (r page) Filter(ctx context.Context, data pageDocument) (bool, error) {
-	exists, err := r.posts.RawPostExists(ctx, data.URL)
-	if err != nil {
-		return false, fmt.Errorf("err raw post exists: %w", err)
-	}
-
-	return !exists, nil
-}
-
-func (r page) FetchPost(ctx context.Context, l *slog.Logger, data pageDocument) (pageDocument, error) {
-	if err := r.pacer.Wait(ctx, data.URL); err != nil {
-		return data, err
-	}
-
-	page, err := FetchHTML(ctx, logs.Client(r.client, l, "page"), data.URL)
-	if err != nil {
-		return data, fmt.Errorf("err fetch article: %w", err)
-	}
-
-	data.Page = page
-
-	return data, nil
-}
-
-// The page goes to trim as raw content, which fills the content.
-func (r page) ProcessFeed(ctx context.Context, data pageDocument) (domain.RawPost, error) {
-	return domain.RawPost{
-		URL:        data.URL,
-		Lang:       data.Lang,
-		RawContent: string(data.Page),
-	}, nil
 }

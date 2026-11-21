@@ -7,7 +7,7 @@ import (
 
 type Log struct {
 	ID         int64           `json:"id"`
-	Type       string          `json:"type"` // deepseek | jev | brave | rss | page | trim | ingest | robots | homepage | wordpress
+	Type       string          `json:"type"` // deepseek | jev | brave | rss | page | trim | ingest | robots | homepage | wordpress | step
 	Level      string          `json:"level"`
 	Request    json.RawMessage `json:"request"`
 	Response   json.RawMessage `json:"response"` // nil when the call got no response
@@ -17,3 +17,6 @@ type Log struct {
 	Metadata   map[string]any  `json:"metadata"`
 	CreatedAt  time.Time       `json:"createdAt"`
 }
+
+// Mirrors the type comment above and docs/kb/request-logs.md.
+var LogTypes = []string{"deepseek", "jev", "brave", "rss", "page", "trim", "ingest", "robots", "homepage", "wordpress", "step"}
