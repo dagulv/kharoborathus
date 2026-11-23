@@ -20,7 +20,7 @@ Tools:
 
 | Tool | Job | Why |
 |---|---|---|
-| OpenTofu with the `UpCloudLtd/upcloud` provider | Creates the server and its backups | Infra as code, as asked. |
+| OpenTofu with the `UpCloudLtd/upcloud` provider | Creates the server | Infra as code, as asked. |
 | cloud-init | Installs Docker, a firewall, haloyd and a `deploy` user on first boot | Ships with the Ubuntu template, so no extra tool is needed. |
 | Haloy v0.1.0-beta.73 | Builds, ships and runs the three services. Its proxy serves HTTPS | One config file replaces kustomize overlays, with zero-downtime deploys, rollbacks and certificates and no registry. |
 | SOPS with age | Encrypts secrets in git | Same format as the other infra repos. The age key lives in Bitwarden, never on disk. |
@@ -38,7 +38,7 @@ Layout:
 Server:
 
 - Ubuntu 24.04 LTS template, metadata service on, one public interface.
-- Daily UpCloud storage backups, kept 7 days. They cover the Postgres volume.
+- No backups yet. The Postgres volume has no copy outside its disk.
 - A `deploy` user with your SSH key. Root login and password login are off. Cloud-init copies the Haloy API token to its home.
 - ufw allows SSH, HTTP and HTTPS in and denies the rest. haloy-proxy binds 80 and 443 on the host and no container publishes a port, so ufw's known Docker bypass exposes nothing.
 - Unattended security upgrades are on.
@@ -95,9 +95,9 @@ None.
 | Plan | `STARTER-2xCPU-4GB` | Postgres, two app processes and Haloy fit with headroom. The cheapest current plan with Standard storage. General Purpose plans like `2xCPU-4GB` are discontinued. |
 | Disk | 50 GB | Posts are text. Grows with `size`. The plan includes 30 GB, the rest bills per GB. |
 | Disk tier | Standard | Half the price of MaxIOPS, up to 10k IOPS. |
-| Backups | Daily, 7 kept | UpCloud storage backups, no extra tooling. |
+| Backups | None | Not needed yet. A simple Week plan adds 7 daily backups for 20% of the plan price. |
 | Disk encryption | On | Free, and backups inherit it. Costs about 10-20% of disk speed. It can only be set when the server is created. |
 
 ## Open questions
 
-- Off-site Postgres dumps, for example to UpCloud Managed Object Storage, once the data is worth more than a week of backups.
+- Off-site Postgres dumps, for example to UpCloud Managed Object Storage, once the data is worth keeping.

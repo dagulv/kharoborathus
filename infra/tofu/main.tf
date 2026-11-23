@@ -13,12 +13,6 @@ resource "upcloud_server" "app" {
     tier    = "standard"
     # Free, and backups inherit it. It forces a replacement, which prevent_destroy blocks, so it is set from the start.
     encrypt = true
-
-    backup_rule {
-      interval  = "daily"
-      time      = "0200"
-      retention = 7
-    }
   }
 
   network_interface {
