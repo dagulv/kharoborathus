@@ -10,6 +10,7 @@ resource "upcloud_server" "app" {
   template {
     storage = "Ubuntu Server 24.04 LTS (Noble Numbat)"
     size    = var.storage_size
+    tier    = "standard"
     # Free, and backups inherit it. It forces a replacement, which prevent_destroy blocks, so it is set from the start.
     encrypt = true
 

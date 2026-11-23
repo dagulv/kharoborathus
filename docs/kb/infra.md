@@ -92,8 +92,9 @@ None.
 | Parameter | Value | Why |
 |---|---|---|
 | Zone | `se-sto1` | Stockholm, close to Swedish sources and readers. |
-| Plan | `2xCPU-4GB` | Postgres, two app processes and Haloy fit with headroom. |
-| Disk | 50 GB | Posts are text. Grows with `size`. |
+| Plan | `STARTER-2xCPU-4GB` | Postgres, two app processes and Haloy fit with headroom. The cheapest current plan with Standard storage. General Purpose plans like `2xCPU-4GB` are discontinued. |
+| Disk | 50 GB | Posts are text. Grows with `size`. The plan includes 30 GB, the rest bills per GB. |
+| Disk tier | Standard | Half the price of MaxIOPS, up to 10k IOPS. |
 | Backups | Daily, 7 kept | UpCloud storage backups, no extra tooling. |
 | Disk encryption | On | Free, and backups inherit it. Costs about 10-20% of disk speed. It can only be set when the server is created. |
 

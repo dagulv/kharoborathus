@@ -46,7 +46,7 @@ variable "zone" {
 variable "plan" {
   description = "UpCloud server plan. List them with `upctl server plans`."
   type        = string
-  default     = "2xCPU-4GB"
+  default     = "STARTER-2xCPU-4GB"
 }
 
 variable "storage_size" {
