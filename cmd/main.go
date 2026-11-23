@@ -256,6 +256,11 @@ func app(ctx context.Context) (err error) {
 	})
 
 	g.Go(func() error {
+		logs.Prune(ctx, db, l.WithGroup("prune"))
+		return nil
+	})
+
+	g.Go(func() error {
 		return source.RunResyncs(ctx, discovered, resyncs, l.WithGroup("resync"))
 	})
 

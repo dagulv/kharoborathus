@@ -52,5 +52,5 @@ variable "plan" {
 variable "storage_size" {
   description = "System disk in GB. It also holds the Postgres volume."
   type        = number
-  default     = 50
+  default     = 30
 }

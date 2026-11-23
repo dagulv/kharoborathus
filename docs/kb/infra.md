@@ -93,11 +93,12 @@ None.
 |---|---|---|
 | Zone | `se-sto1` | Stockholm, close to Swedish sources and readers. |
 | Plan | `STARTER-2xCPU-4GB` | Postgres, two app processes and Haloy fit with headroom. The cheapest current plan with Standard storage. General Purpose plans like `2xCPU-4GB` are discontinued. |
-| Disk | 50 GB | Posts are text. Grows with `size`. The plan includes 30 GB, the rest bills per GB. |
+| Disk | 30 GB | The Starter plan includes 30 GB. Postgres fits for years with 30-day `logs` retention. Grows with `size`, billed per extra GB. |
 | Disk tier | Standard | Half the price of MaxIOPS, up to 10k IOPS. |
 | Backups | None | Not needed yet. A simple Week plan adds 7 daily backups for 20% of the plan price. |
 | Disk encryption | On | Free, and backups inherit it. Costs about 10-20% of disk speed. It can only be set when the server is created. |
 
 ## Open questions
 
+- Haloy's image history and Docker build cache on the 30 GB disk. Check `docker system df` after the first deploys.
 - Off-site Postgres dumps, for example to UpCloud Managed Object Storage, once the data is worth keeping.
