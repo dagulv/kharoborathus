@@ -16,7 +16,7 @@ const (
 )
 
 // Prune deletes rows older than the retention once at start, then daily.
-// Step rows stay, since post traces are built from them and they are small.
+// Step rows and domain rule calls stay, since post traces link to them and they are few or small.
 func Prune(ctx context.Context, db *database.Database, l *slog.Logger) {
 	for range schedule.Always.Tick(ctx, 24*time.Hour) {
 		n, err := deleteBefore(ctx, db, time.Now().Add(-retention), pruneBatch)
@@ -39,7 +39,9 @@ func deleteBefore(ctx context.Context, db *database.Database, before time.Time, 
 	for {
 		tag, err := db.Exec(ctx, `
 			DELETE FROM logs WHERE id IN (
-				SELECT id FROM logs WHERE created_at < $1 AND type <> 'step' ORDER BY id LIMIT $2
+				SELECT id FROM logs
+				WHERE created_at < $1 AND type <> 'step' AND NOT (type = 'deepseek' AND metadata ? 'domain_id')
+				ORDER BY id LIMIT $2
 			)
 		`, before, batch)
 		if err != nil {

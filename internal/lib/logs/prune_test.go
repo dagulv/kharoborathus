@@ -91,3 +91,33 @@ func TestPruneDeletesAllBatches(t *testing.T) {
 		t.Errorf("remaining %v, want none", got)
 	}
 }
+
+// Rules are generated once per domain, so a trace links to a rule call that can be months old.
+func TestPruneKeepsRuleCalls(t *testing.T) {
+	db := dbtest.New(t)
+	insertLog(t, db, "deepseek", 90*day)
+
+	if _, err := db.Exec(context.Background(), `
+		INSERT INTO logs (type, level, request, metadata, created_at) VALUES ('deepseek', 'INFO', '{}', '{"domain_id": "d"}', $1)
+	`, time.Now().Add(-90*day)); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := deleteBefore(context.Background(), db, time.Now().Add(-30*day), 10_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n != 1 {
+		t.Errorf("deleted %d, want 1", n)
+	}
+
+	var kept int
+	if err := db.QueryRow(context.Background(), `SELECT count(*) FROM logs WHERE metadata ? 'domain_id'`).Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+
+	if kept != 1 {
+		t.Errorf("kept %d rule calls, want 1", kept)
+	}
+}

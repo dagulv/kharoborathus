@@ -36,7 +36,7 @@ Writes and retention, chosen as the simplest option for now:
 | Synchronous insert in `Handle` | No goroutine, no queue, no lost rows on shutdown. A row exists as soon as the call returns. | Every request waits for an insert. A slow or down database slows or stalls scraping and AI calls. Pool connections are shared with the workers. |
 | One insert per request | Simple. | Many small transactions. A batch insert of many rows would cost less. |
 | Full bodies | Every prompt and page can be read back. | Pages up to 5 MB and long prompts make the table grow fast. A listing every 15 minutes is about 10 MB a day per source. |
-| 30-day retention, `step` rows kept | The table stays a few GB, and post traces keep their steps. [prune.go](../../internal/lib/logs/prune.go) deletes older rows at startup and daily, 10,000 per statement. | A trace older than 30 days loses its calls, and the rule call it links to. |
+| 30-day retention, `step` rows and domain rule calls kept | The table stays a few GB, and post traces keep their steps and rule call. [prune.go](../../internal/lib/logs/prune.go) deletes older rows at startup and daily, 10,000 per statement. | A trace older than 30 days loses its per-post calls. |
 
 Ways to change it later:
 
@@ -69,7 +69,7 @@ CREATE INDEX IF NOT EXISTS logs_metadata_idx ON logs USING gin (metadata jsonb_p
 | Parameter | Value | Why |
 |---|---|---|
 | Write mode | Synchronous | Simplest. See the table above. |
-| Retention | 30 days, `step` rows kept | Keeps Postgres inside the 30 GB disk. `logs` was 82% of the dev database. |
+| Retention | 30 days, `step` rows and domain rule calls kept | Keeps Postgres inside the 30 GB disk. `logs` was 82% of the dev database. |
 
 ## Open questions
 
